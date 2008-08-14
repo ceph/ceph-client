@@ -2605,8 +2605,6 @@ static int vfs_rename_dir(struct inode *old_dir, struct dentry *old_dentry,
 		if (!error)
 			target->i_flags |= S_DEAD;
 		mutex_unlock(&target->i_mutex);
-		if (d_unhashed(new_dentry))
-			d_rehash(new_dentry);
 		dput(new_dentry);
 	}
 	if (!error)
