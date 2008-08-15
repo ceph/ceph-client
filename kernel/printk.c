@@ -760,7 +760,8 @@ asmlinkage int vprintk(const char *fmt, va_list args)
 
 				t = cpu_clock(printk_cpu);
 				nanosec_rem = do_div(t, 1000000000);
-				tlen = sprintf(tbuf, "[%5lu.%06lu] ",
+				tlen = sprintf(tbuf, "[%5u %5lu.%06lu] ",
+					       current->pid,
 						(unsigned long) t,
 						nanosec_rem / 1000);
 
