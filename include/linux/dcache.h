@@ -330,13 +330,10 @@ extern char *dentry_path(struct dentry *, char *, int);
  *	and call dget_locked() instead of dget().
  */
  
+extern struct dentry *__dget(struct dentry *dentry);
 static inline struct dentry *dget(struct dentry *dentry)
 {
-	if (dentry) {
-		BUG_ON(!atomic_read(&dentry->d_count));
-		atomic_inc(&dentry->d_count);
-	}
-	return dentry;
+	return __dget(dentry);
 }
 
 extern struct dentry * dget_locked(struct dentry *);

@@ -200,6 +200,23 @@ static struct dentry *d_kill(struct dentry *dentry)
  * Real recursion would eat up our stack space.
  */
 
+struct dentry *__dget(struct dentry *dentry)
+{
+	if (dentry) {
+                if (dentry->d_sb &&
+		    dentry->d_sb->s_type && 
+                    dentry->d_sb->s_type->name &&
+                    dentry->d_sb->s_type->name[0] == 'c')
+                        printk(KERN_WARNING "dget %p %d -> %d\n", dentry, 
+                               atomic_read(&dentry->d_count),
+			       atomic_read(&dentry->d_count)+1);
+		BUG_ON(!atomic_read(&dentry->d_count));
+		atomic_inc(&dentry->d_count);
+	}
+	return dentry;
+}
+EXPORT_SYMBOL(__dget);
+
 /*
  * dput - release a dentry
  * @dentry: dentry to release 
@@ -216,6 +233,15 @@ void dput(struct dentry *dentry)
 {
 	if (!dentry)
 		return;
+
+	if (dentry->d_sb &&
+	    dentry->d_sb->s_type && 
+	    dentry->d_sb->s_type->name &&
+	    dentry->d_sb->s_type->name[0] == 'c')
+		printk(KERN_WARNING "dput %p %d -> %d\n", dentry, 
+		       atomic_read(&dentry->d_count),
+		       atomic_read(&dentry->d_count)-1);
+	BUG_ON(atomic_read(&dentry->d_count) == 0);
 
 repeat:
 	if (atomic_read(&dentry->d_count) == 1)
@@ -319,6 +345,14 @@ int d_invalidate(struct dentry * dentry)
 
 static inline struct dentry * __dget_locked(struct dentry *dentry)
 {
+	if (dentry->d_sb &&
+	    dentry->d_sb->s_type && 
+	    dentry->d_sb->s_type->name &&
+	    dentry->d_sb->s_type->name[0] == 'c')
+		printk(KERN_WARNING "dget %p %d -> %d (dget_locked)\n", dentry, 
+		       atomic_read(&dentry->d_count),
+		       atomic_read(&dentry->d_count)+1);
+
 	atomic_inc(&dentry->d_count);
 	dentry_lru_del_init(dentry);
 	return dentry;
@@ -1406,8 +1440,17 @@ struct dentry * __d_lookup(struct dentry * parent, struct qstr * name)
 				goto next;
 		}
 
+		if (dentry->d_sb &&
+		    dentry->d_sb->s_type && 
+		    dentry->d_sb->s_type->name &&
+		    dentry->d_sb->s_type->name[0] == 'c')
+			printk(KERN_WARNING "dget %p %d -> %d (dlookup)\n", dentry, 
+			       atomic_read(&dentry->d_count),
+			       atomic_read(&dentry->d_count)+1);
+
 		atomic_inc(&dentry->d_count);
 		found = dentry;
+
 		spin_unlock(&dentry->d_lock);
 		break;
 next:
