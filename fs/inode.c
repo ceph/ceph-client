@@ -297,6 +297,13 @@ static void init_once(void *foo)
  */
 void __iget(struct inode *inode)
 {
+	if (inode->i_sb &&
+	    inode->i_sb->s_type && 
+	    inode->i_sb->s_type->name &&
+	    inode->i_sb->s_type->name[0] == 'c')
+		printk("iget %p %d -> %d\n", inode,
+		       atomic_read(&inode->i_count), 
+		       atomic_read(&inode->i_count)+1);
 	if (atomic_read(&inode->i_count)) {
 		atomic_inc(&inode->i_count);
 		return;
@@ -405,7 +412,8 @@ static int invalidate_list(struct list_head *head, struct list_head *dispose)
 			count++;
 			continue;
 		}
-		busy = 1;
+		printk("busy %p ref %d\n", inode, atomic_read(&inode->i_count));
+		busy++;
 	}
 	/* only unused inodes may be cached with i_count zero */
 	inodes_stat.nr_unused -= count;
@@ -1341,6 +1349,14 @@ void iput(struct inode *inode)
 {
 	if (inode) {
 		BUG_ON(inode->i_state == I_CLEAR);
+
+		if (inode->i_sb &&
+		    inode->i_sb->s_type && 
+		    inode->i_sb->s_type->name &&
+		    inode->i_sb->s_type->name[0] == 'c')
+			printk("iput %p %d -> %d\n", inode,
+			       atomic_read(&inode->i_count), 
+			       atomic_read(&inode->i_count)-1);
 
 		if (atomic_dec_and_lock(&inode->i_count, &inode_lock))
 			iput_final(inode);

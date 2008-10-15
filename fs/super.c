@@ -299,6 +299,7 @@ void generic_shutdown_super(struct super_block *sb)
 
 
 	if (sb->s_root) {
+		int count;
 		shrink_dcache_for_umount(sb);
 		sync_filesystem(sb);
 		get_fs_excl();
@@ -311,10 +312,10 @@ void generic_shutdown_super(struct super_block *sb)
 			sop->put_super(sb);
 
 		/* Forget any remaining inodes */
-		if (invalidate_inodes(sb)) {
-			printk("VFS: Busy inodes after unmount of %s. "
+		if ((count = invalidate_inodes(sb)) > 0) {
+			printk("VFS: %d Busy inodes after unmount of %s. "
 			   "Self-destruct in 5 seconds.  Have a nice day...\n",
-			   sb->s_id);
+			       count, sb->s_id);
 		}
 		put_fs_excl();
 	}
