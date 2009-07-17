@@ -57,7 +57,7 @@ extern int ddebug_remove_module(char *mod_name);
 	{ KBUILD_MODNAME, __func__, __FILE__, fmt, DEBUG_HASH,	\
 		DEBUG_HASH2, __LINE__, _DPRINTK_FLAGS_DEFAULT };	\
 	if (__dynamic_dbg_enabled(descriptor))				\
-		printk(KERN_DEBUG KBUILD_MODNAME ":" pr_fmt(fmt),	\
+		printk(KERN_INFO KBUILD_MODNAME ":" pr_fmt(fmt),	\
 				##__VA_ARGS__);				\
 	} while (0)
 
