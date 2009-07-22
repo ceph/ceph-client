@@ -1,0 +1,103 @@
+#ifndef _FS_CEPH_MON_CLIENT_H
+#define _FS_CEPH_MON_CLIENT_H
+
+#include "messenger.h"
+#include <linux/completion.h>
+#include <linux/radix-tree.h>
+
+struct ceph_client;
+struct ceph_mount_args;
+
+/*
+ * The monitor map enumerates the set of all monitors.
+ */
+struct ceph_monmap {
+	ceph_fsid_t fsid;
+	u32 epoch;
+	u32 num_mon;
+	struct ceph_entity_inst mon_inst[0];
+};
+
+struct ceph_mon_client;
+struct ceph_mon_statfs_request;
+
+
+/*
+ * Generic mechanism for resending monitor requests.
+ */
+typedef void (*ceph_monc_request_func_t)(struct ceph_mon_client *monc,
+					 int newmon);
+
+/* a pending monitor request */
+struct ceph_mon_request {
+	struct ceph_mon_client *monc;
+	struct delayed_work delayed_work;
+	unsigned long delay;
+	ceph_monc_request_func_t do_request;
+};
+
+/*
+ * statfs() is done a bit differently because we need to get data back
+ * to the caller
+ */
+struct ceph_mon_statfs_request {
+	u64 tid;
+	int result;
+	struct ceph_statfs *buf;
+	struct completion completion;
+	unsigned long last_attempt, delay; /* jiffies */
+	struct ceph_msg *request;  /* original request */
+};
+
+struct ceph_mon_client {
+	struct ceph_client *client;
+	int last_mon;                       /* last monitor i contacted */
+	struct ceph_monmap *monmap;
+
+	/* pending statfs requests */
+	struct mutex statfs_mutex;
+	struct radix_tree_root statfs_request_tree;
+	int num_statfs_requests;
+	u64 last_tid;
+	struct delayed_work statfs_delayed_work;
+
+	/* mds/osd map or umount requests */
+	struct mutex req_mutex;
+	struct ceph_mon_request mdsreq, osdreq, umountreq;
+	u32 want_mdsmap;
+	u32 want_osdmap;
+
+	struct dentry *debugfs_file;
+};
+
+extern struct ceph_monmap *ceph_monmap_decode(void *p, void *end);
+extern int ceph_monmap_contains(struct ceph_monmap *m,
+				struct ceph_entity_addr *addr);
+
+extern int ceph_monc_init(struct ceph_mon_client *monc, struct ceph_client *cl);
+extern void ceph_monc_stop(struct ceph_mon_client *monc);
+
+/*
+ * The model here is to indicate that we need a new map of at least
+ * epoch @want, and also call in when we receive a map.  We will
+ * periodically rerequest the map from the monitor cluster until we
+ * get what we want.
+ */
+extern void ceph_monc_request_mdsmap(struct ceph_mon_client *monc, u32 want);
+extern int ceph_monc_got_mdsmap(struct ceph_mon_client *monc, u32 have);
+
+extern void ceph_monc_request_osdmap(struct ceph_mon_client *monc, u32 want);
+extern int ceph_monc_got_osdmap(struct ceph_mon_client *monc, u32 have);
+
+extern void ceph_monc_request_umount(struct ceph_mon_client *monc);
+
+extern int ceph_monc_do_statfs(struct ceph_mon_client *monc,
+			       struct ceph_statfs *buf);
+extern void ceph_monc_handle_statfs_reply(struct ceph_mon_client *monc,
+					  struct ceph_msg *msg);
+
+extern void ceph_monc_request_umount(struct ceph_mon_client *monc);
+extern void ceph_monc_handle_umount(struct ceph_mon_client *monc,
+				    struct ceph_msg *msg);
+
+#endif
