@@ -1,0 +1,6 @@
+#ifndef __CEPH_VERSION_H
+#define __CEPH_VERSION_H
+
+#define CEPH_GIT_VER 753fde14da2838f1109e70259655bb92a033b060
+
+#endif
