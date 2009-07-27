@@ -555,6 +555,11 @@ struct address_space_operations {
       should return AOP_WRITEPAGE_ACTIVATE so that the VM will not keep
       calling ->writepage on that page.
 
+      If an error occurs (EIO or ENOSPC), ->writepage should mark the
+      page via SetPageError, mark the address_space via
+      set_mapping_error, and (when possible) return an error to the
+      caller.
+
       See the file "Locking" for more details.
 
   readpage: called by the VM to read a page from backing store.
@@ -564,6 +569,10 @@ struct address_space_operations {
        some reason, it can do so, and then return AOP_TRUNCATED_PAGE.
        In this case, the page will be relocated, relocked and if
        that all succeeds, ->readpage will be called again.
+
+       If an error occurs, ->readpage should return an error code if
+       possible.  If it is an IO error, ->readpage should also mark
+       the page via SetPageError.
 
   sync_page: called by the VM to notify the backing store to perform all
   	queued I/O operations for a page. I/O operations for other pages
@@ -580,6 +589,10 @@ struct address_space_operations {
 	If no ->writepages is given, then mpage_writepages is used
   	instead.  This will choose pages from the address space that are
   	tagged as DIRTY and will pass them to ->writepage.
+
+	If an error occurs (EIO or ENOSPC), ->writepages should mark
+	the mapping via mapping_set_error(), and (when possible)
+	return an error to the caller.
 
   set_page_dirty: called by the VM to set a page dirty.
         This is particularly needed if an address space attaches
