@@ -814,8 +814,8 @@ extern void __ceph_flush_snaps(struct ceph_inode_info *ci,
 			       struct ceph_mds_session **psession);
 extern void ceph_check_caps(struct ceph_inode_info *ci, int flags,
 			    struct ceph_mds_session *session);
-extern void ceph_check_delayed_caps(struct ceph_mds_client *mdsc,
-				    int flushdirty);
+extern void ceph_check_delayed_caps(struct ceph_mds_client *mdsc);
+extern void ceph_flush_dirty_caps(struct ceph_mds_client *mdsc);
 
 extern int ceph_encode_inode_release(void **p, struct inode *inode,
 				     int mds, int drop, int unless, int force);

@@ -2327,7 +2327,7 @@ static void handle_cap_flush_ack(struct inode *inode,
 	int dirty = le32_to_cpu(m->dirty);
 	int cleaned = 0;
 	u64 flush_tid = le64_to_cpu(m->client_tid);
-	int old_dirty = 0, new_dirty = 0;
+	int drop = 0;
 	int i;
 
 	for (i = 0; i < CEPH_CAP_BITS; i++)
@@ -2344,9 +2344,7 @@ static void handle_cap_flush_ack(struct inode *inode,
 	if (ci->i_flushing_caps == (ci->i_flushing_caps & ~cleaned))
 		goto out;
 
-	old_dirty = ci->i_dirty_caps | ci->i_flushing_caps;
 	ci->i_flushing_caps &= ~cleaned;
-	new_dirty = ci->i_dirty_caps | ci->i_flushing_caps;
 
 	spin_lock(&mdsc->cap_dirty_lock);
 	if (ci->i_flushing_caps == 0) {
@@ -2360,17 +2358,19 @@ static void handle_cap_flush_ack(struct inode *inode,
 		mdsc->num_cap_flushing--;
 		wake_up(&mdsc->cap_flushing_wq);
 		dout(" inode %p now !flushing\n", inode);
-	}
-	if (old_dirty && !new_dirty) {
-		dout(" inode %p now clean\n", inode);
-		list_del_init(&ci->i_dirty_item);
+
+		if (ci->i_dirty_caps == 0) {
+			dout(" inode %p now clean\n", inode);
+			BUG_ON(!list_empty(&ci->i_dirty_item));
+			drop = 1;
+		}
 	}
 	spin_unlock(&mdsc->cap_dirty_lock);
 	wake_up(&ci->i_cap_wq);
 
 out:
 	spin_unlock(&inode->i_lock);
-	if (old_dirty && !new_dirty)
+	if (drop)
 		iput(inode);
 }
 
@@ -2676,13 +2676,10 @@ bad:
 /*
  * Delayed work handler to process end of delayed cap release LRU list.
  */
-void ceph_check_delayed_caps(struct ceph_mds_client *mdsc, int flushdirty)
+void ceph_check_delayed_caps(struct ceph_mds_client *mdsc)
 {
 	struct ceph_inode_info *ci;
 	int flags = CHECK_CAPS_NODELAY;
-
-	if (flushdirty)
-		flags |= CHECK_CAPS_FLUSH;
 
 	dout("check_delayed_caps\n");
 	while (1) {
@@ -2701,6 +2698,32 @@ void ceph_check_delayed_caps(struct ceph_mds_client *mdsc, int flushdirty)
 		ceph_check_caps(ci, flags, NULL);
 	}
 	spin_unlock(&mdsc->cap_delay_lock);
+}
+
+/*
+ * Flush all dirty caps to the mds
+ */
+void ceph_flush_dirty_caps(struct ceph_mds_client *mdsc)
+{
+	struct ceph_inode_info *ci;
+	struct inode *inode;
+
+	dout("flush_dirty_caps\n");
+	spin_lock(&mdsc->cap_dirty_lock);
+	while (!list_empty(&mdsc->cap_dirty)) {
+		ci = list_first_entry(&mdsc->cap_dirty,
+				      struct ceph_inode_info,
+				      i_dirty_item);
+		inode = igrab(&ci->vfs_inode);
+		spin_unlock(&mdsc->cap_dirty_lock);
+		if (inode) {
+			ceph_check_caps(ci, CHECK_CAPS_NODELAY|CHECK_CAPS_FLUSH,
+					NULL);
+			iput(inode);
+		}
+		spin_lock(&mdsc->cap_dirty_lock);
+	}
+	spin_unlock(&mdsc->cap_dirty_lock);
 }
 
 /*
