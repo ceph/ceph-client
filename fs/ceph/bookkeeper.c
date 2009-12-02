@@ -22,8 +22,8 @@ static size_t _total_free;
 
 struct alloc_data {
 	u32 prefix_magic;
-	struct list_head node;
 	size_t size;
+	struct list_head node;
 	char *fname;
 	int line;
 	u32 suffix_magic;

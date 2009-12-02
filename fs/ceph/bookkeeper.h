@@ -23,7 +23,7 @@ extern void ceph_kfree(const void *ptr);
 #define kmalloc(size, flags)	ceph_kmalloc(__FILE__, __LINE__, size, flags)
 #define kzalloc(size, flags)	ceph_kmalloc(__FILE__, __LINE__, size, \
 					     flags | __GFP_ZERO)
-#define kcalloc(n, size, flags)	ceph_kmalloc(__FILE__, __LINE__, n * size, \
+#define kcalloc(n, size, flags)	ceph_kmalloc(__FILE__, __LINE__, (n) * (size), \
 					     flags | __GFP_ZERO)
 #define kstrdup(src, flags)	ceph_kstrdup(__FILE__, __LINE__, \
 					              src, flags)
