@@ -27,6 +27,9 @@
  */
 
 static struct dentry *ceph_debugfs_dir;
+#ifdef CONFIG_CEPH_BOOKKEEPER
+static struct dentry *ceph_debugfs_bookkeeper;
+#endif
 
 static int monmap_show(struct seq_file *s, void *p)
 {
@@ -318,6 +321,24 @@ DEFINE_SHOW_FUNC(osdc_show)
 DEFINE_SHOW_FUNC(dentry_lru_show)
 DEFINE_SHOW_FUNC(caps_show)
 
+#ifdef CONFIG_CEPH_BOOKKEEPER
+static int debugfs_bookkeeper_set(void *data, u64 val)
+{
+	if (val)
+		ceph_bookkeeper_dump();
+	return 0;
+}
+
+static int debugfs_bookkeeper_get(void *data, u64 *val)
+{
+	*val = 0;
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(bookkeeper_fops, debugfs_bookkeeper_get,
+			debugfs_bookkeeper_set, "%llu\n");
+#endif
+
 int __init ceph_debugfs_init(void)
 {
 	ceph_debugfs_dir = debugfs_create_dir("ceph", NULL);
@@ -407,6 +428,15 @@ int ceph_debugfs_client_init(struct ceph_client *client)
 	if (!client->debugfs_caps)
 		goto out;
 
+#ifdef CONFIG_CEPH_BOOKKEEPER
+	ceph_debugfs_bookkeeper = debugfs_create_file("show_bookkeeper",
+					0600,
+					ceph_debugfs_dir,
+					NULL,
+					&bookkeeper_fops);
+	if (!ceph_debugfs_bookkeeper)
+		goto out;
+#endif
 	return 0;
 
 out:
@@ -424,6 +454,9 @@ void ceph_debugfs_client_cleanup(struct ceph_client *client)
 	debugfs_remove(client->osdc.debugfs_file);
 	debugfs_remove(client->mdsc.debugfs_file);
 	debugfs_remove(client->monc.debugfs_file);
+#ifdef CONFIG_CEPH_BOOKKEEPER
+	debugfs_remove(ceph_debugfs_bookkeeper);
+#endif
 	debugfs_remove(client->debugfs_dir);
 }
 

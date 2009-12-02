@@ -3,6 +3,9 @@
 
 #include "ceph_debug.h"
 
+#define CEPH_DISABLE_BOOKKEEPER
+#include "bookkeeper.h"
+
 #include <asm/unaligned.h>
 #include <linux/backing-dev.h>
 #include <linux/completion.h>
@@ -12,6 +15,9 @@
 #include <linux/pagemap.h>
 #include <linux/wait.h>
 
+#undef CEPH_DISABLE_BOOKKEEPER
+#include "bookkeeper.h"
+
 #include "types.h"
 #include "messenger.h"
 #include "msgpool.h"
@@ -19,6 +25,7 @@
 #include "mds_client.h"
 #include "osd_client.h"
 #include "ceph_fs.h"
+#include "bookkeeper.h"
 
 /* f_type in struct statfs */
 #define CEPH_SUPER_MAGIC 0x00c36400
