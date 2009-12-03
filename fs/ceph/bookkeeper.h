@@ -15,6 +15,16 @@ extern char *ceph_kstrndup(char *fname, int line, const char *src, int n, gfp_t 
 
 extern void ceph_kfree(const void *ptr);
 
+extern struct kmem_cache *ceph_kmem_cache_create(const char *name,
+			size_t size, size_t align,
+			unsigned long flags, void (*ctor)(void *));
+extern void ceph_kmem_cache_destroy(struct kmem_cache *cachep);
+
+extern void *ceph_kmem_cache_alloc(char *fname, int line, struct kmem_cache *cachep,
+		           gfp_t flags);
+
+extern void ceph_kmem_cache_free(struct kmem_cache *cachep, void *objp);
+
 #endif
 
 
@@ -30,6 +40,13 @@ extern void ceph_kfree(const void *ptr);
 #define kstrndup(src, n, flags)	ceph_kstrndup(__FILE__, __LINE__, \
 					              src, n, flags)
 #define kfree	ceph_kfree
+
+#define kmem_cache_create	ceph_kmem_cache_create
+#define kmem_cache_destroy	ceph_kmem_cache_destroy
+#define kmem_cache_alloc(cachep, flags) \
+			ceph_kmem_cache_alloc(__FILE__, __LINE__, cachep, flags)
+#define kmem_cache_free		ceph_kmem_cache_free
+
 #endif
 
 #ifdef CEPH_DISABLE_BOOKKEEPER
@@ -40,6 +57,10 @@ extern void ceph_kfree(const void *ptr);
 #undef kstrdup
 #undef kstrndup
 #undef kfree
+#undef kmem_cache_create
+#undef kmem_cache_destroy
+#undef kmem_cache_alloc
+#undef kmem_cache_free
 #endif
 #endif
 
