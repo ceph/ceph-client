@@ -134,8 +134,10 @@ void *ceph_kmem_cache_alloc(char *fname, int line, struct kmem_cache *cachep,
 		(struct alloc_data *)kmem_cache_alloc(ceph_cache->cache, flags);
 	void *p;
 
-	if (!header)
+	if (!header) {
+		printk(KERN_ERR "%s.%d: failed to allocate %d bytes", fname, line, (int)ceph_cache->alloc_size);
 		return NULL;
+	}
 
 	p = (void *)(header + 1);
 
@@ -165,8 +167,10 @@ void *ceph_kmalloc(char *fname, int line, size_t size, gfp_t flags)
 {
 	struct alloc_data *p = kmalloc(size+sizeof(struct alloc_data), flags);
 
-	if (!p)
+	if (!p) {
+		printk(KERN_ERR "%s.%d: failed to allocate %d bytes", fname, line, (int)size);
 		return NULL;
+	}
 
 	bk_init_header(p, size, ALLOC_TYPE_KALLOC);
 	bk_insert_alloc(p, fname, line, size);
