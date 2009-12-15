@@ -24,6 +24,7 @@ extern void *ceph_kmem_cache_alloc(char *fname, int line, struct kmem_cache *cac
 		           gfp_t flags);
 
 extern void ceph_kmem_cache_free(struct kmem_cache *cachep, void *objp);
+extern size_t ceph_bookkeeper_get_footprint(void);
 
 #endif
 

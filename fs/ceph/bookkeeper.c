@@ -257,6 +257,15 @@ char *ceph_kstrndup(char *fname, int line, const char *src, int n, gfp_t flags)
 	return dst;
 }
 
+size_t ceph_bookkeeper_get_footprint(void)
+{
+	size_t footprint;
+	spin_lock(&_bk_lock);
+	footprint = _total_alloc - _total_free;
+	spin_unlock(&_bk_lock);
+	return footprint;
+}
+
 void ceph_bookkeeper_init(void)
 {
 	printk(KERN_ERR "bookkeeper: start\n");
@@ -273,3 +282,4 @@ void ceph_bookkeeper_finalize(void)
 {
 	ceph_bookkeeper_dump();
 }
+

@@ -29,6 +29,7 @@
 static struct dentry *ceph_debugfs_dir;
 #ifdef CONFIG_CEPH_BOOKKEEPER
 static struct dentry *ceph_debugfs_bookkeeper;
+static struct dentry *ceph_debugfs_footprint;
 #endif
 
 static int monmap_show(struct seq_file *s, void *p)
@@ -335,8 +336,16 @@ static int debugfs_bookkeeper_get(void *data, u64 *val)
 	return 0;
 }
 
+static int debugfs_footprint_get(void *data, u64 *val)
+{
+	*val = (u64)ceph_bookkeeper_get_footprint();
+	return 0;
+}
+
 DEFINE_SIMPLE_ATTRIBUTE(bookkeeper_fops, debugfs_bookkeeper_get,
 			debugfs_bookkeeper_set, "%llu\n");
+DEFINE_SIMPLE_ATTRIBUTE(footprint_fops, debugfs_footprint_get,
+			NULL, "%llu\n");
 #endif
 
 int __init ceph_debugfs_init(void)
@@ -435,6 +444,14 @@ int ceph_debugfs_client_init(struct ceph_client *client)
 					NULL,
 					&bookkeeper_fops);
 	if (!ceph_debugfs_bookkeeper)
+		goto out;
+
+	ceph_debugfs_footprint = debugfs_create_file("ceph_footprint",
+					0600,
+					ceph_debugfs_dir,
+					NULL,
+					&footprint_fops);
+	if (!ceph_debugfs_footprint)
 		goto out;
 #endif
 	return 0;
