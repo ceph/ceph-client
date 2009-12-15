@@ -145,6 +145,7 @@ struct ceph_osd_request *ceph_osdc_new_request(struct ceph_osd_client *osdc,
 		ceph_osdc_put_request(req);
 		return ERR_PTR(-ENOMEM);
 	}
+	req->r_num_prealloc_reply = num_reply;
 
 	req->r_osdc = osdc;
 	req->r_mempool = use_mempool;
@@ -165,7 +166,7 @@ struct ceph_osd_request *ceph_osdc_new_request(struct ceph_osd_client *osdc,
 	else
 		msg = ceph_msg_new(CEPH_MSG_OSD_OP, msg_size, 0, 0, NULL);
 	if (IS_ERR(msg)) {
-		ceph_msgpool_resv(&osdc->msgpool_op_reply, num_reply);
+		ceph_msgpool_resv(&osdc->msgpool_op_reply, -num_reply);
 		ceph_osdc_put_request(req);
 		return ERR_PTR(PTR_ERR(msg));
 	}
@@ -465,6 +466,8 @@ static void __unregister_request(struct ceph_osd_client *osdc,
 	rb_erase(&req->r_node, &osdc->requests);
 	osdc->num_requests--;
 
+	ceph_msgpool_resv(&osdc->msgpool_op_reply, -req->r_num_prealloc_reply);
+
 	if (req->r_osd) {
 		/* make sure the original request isn't in flight. */
 		ceph_con_revoke(&req->r_osd->o_con, req->r_request);
@@ -746,8 +749,9 @@ static void handle_reply(struct ceph_osd_client *osdc, struct ceph_msg *msg)
 
 	/* either this is a read, or we got the safe response */
 	if ((flags & CEPH_OSD_FLAG_ONDISK) ||
-	    ((flags & CEPH_OSD_FLAG_WRITE) == 0))
+	    ((flags & CEPH_OSD_FLAG_WRITE) == 0)) {
 		__unregister_request(osdc, req);
+	}
 
 	mutex_unlock(&osdc->request_mutex);
 
