@@ -1563,6 +1563,7 @@ static void _d_rehash(struct dentry * entry)
  
 void d_rehash(struct dentry * entry)
 {
+	BUG_ON(!d_unhashed(entry));
 	spin_lock(&dcache_lock);
 	spin_lock(&entry->d_lock);
 	_d_rehash(entry);
