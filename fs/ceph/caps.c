@@ -1341,7 +1341,7 @@ void __ceph_mark_dirty_caps(struct ceph_inode_info *ci, int mask)
  * Add dirty inode to the flushing list.  Assigned a seq number so we
  * can wait for caps to flush without starving.
  *
- * Called under i_lock.
+ * Called under i_lock, s_mutex
  */
 static int __mark_caps_flushing(struct inode *inode,
 				 struct ceph_mds_session *session)
@@ -1874,8 +1874,16 @@ static void kick_flushing_capsnaps(struct ceph_mds_client *mdsc,
 			     cap, capsnap);
 			__ceph_flush_snaps(ci, &session);
 		} else {
+			struct rb_node *p;
+		
 			pr_err("%p auth cap %p not mds%d ???\n", inode,
 			       cap, session->s_mds);
+			for (p = rb_first(&ci->i_caps); p; p = rb_next(p)) {
+				struct ceph_cap *t =
+					rb_entry(p, struct ceph_cap, ci_node);
+				pr_info(" %p cap %p mds%d\n", inode, t,
+					t->session ? t->session->s_mds : -1);
+			}
 		}
 		spin_unlock(&inode->i_lock);
 	}
@@ -1910,8 +1918,15 @@ void ceph_kick_flushing_caps(struct ceph_mds_client *mdsc,
 				spin_unlock(&inode->i_lock);
 			}
 		} else {
+			struct rb_node *p;
 			pr_err("%p auth cap %p not mds%d ???\n", inode,
 			       cap, session->s_mds);
+			for (p = rb_first(&ci->i_caps); p; p = rb_next(p)) {
+				struct ceph_cap *t =
+					rb_entry(p, struct ceph_cap, ci_node);
+				pr_info(" %p cap %p mds%d\n", inode, t,
+					t->session ? t->session->s_mds : -1);
+			}
 			spin_unlock(&inode->i_lock);
 		}
 	}
