@@ -1020,6 +1020,7 @@ static void ceph_dentry_release(struct dentry *dentry)
 	struct ceph_dentry_info *di = ceph_dentry(dentry);
 	struct inode *parent_inode = dentry->d_parent->d_inode;
 
+	dout("dentry_release %p\n", dentry);
 	if (parent_inode) {
 		struct ceph_inode_info *ci = ceph_inode(parent_inode);
 
