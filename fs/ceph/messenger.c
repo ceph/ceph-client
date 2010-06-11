@@ -120,7 +120,7 @@ void ceph_msgr_exit(void)
 	destroy_workqueue(ceph_msgr_wq);
 }
 
-void ceph_msgr_flush()
+void ceph_msgr_flush(void)
 {
 	flush_workqueue(ceph_msgr_wq);
 }
@@ -657,7 +657,7 @@ static void prepare_write_connect(struct ceph_messenger *msgr,
 	dout("prepare_write_connect %p cseq=%d gseq=%d proto=%d\n", con,
 	     con->connect_seq, global_seq, proto);
 
-	con->out_connect.features = CEPH_FEATURE_SUPPORTED_CLIENT;
+	con->out_connect.features = cpu_to_le64(CEPH_FEATURE_SUPPORTED_CLIENT);
 	con->out_connect.host_type = cpu_to_le32(CEPH_ENTITY_TYPE_CLIENT);
 	con->out_connect.connect_seq = cpu_to_le32(con->connect_seq);
 	con->out_connect.global_seq = cpu_to_le32(global_seq);
@@ -1078,11 +1078,11 @@ static int process_banner(struct ceph_connection *con)
 		   sizeof(con->peer_addr)) != 0 &&
 	    !(addr_is_blank(&con->actual_peer_addr.in_addr) &&
 	      con->actual_peer_addr.nonce == con->peer_addr.nonce)) {
-		pr_warning("wrong peer, want %s/%lld, got %s/%lld\n",
+		pr_warning("wrong peer, want %s/%d, got %s/%d\n",
 			   pr_addr(&con->peer_addr.in_addr),
-			   le64_to_cpu(con->peer_addr.nonce),
+			   (int)le32_to_cpu(con->peer_addr.nonce),
 			   pr_addr(&con->actual_peer_addr.in_addr),
-			   le64_to_cpu(con->actual_peer_addr.nonce));
+			   (int)le32_to_cpu(con->actual_peer_addr.nonce));
 		con->error_msg = "wrong peer at address";
 		return -1;
 	}

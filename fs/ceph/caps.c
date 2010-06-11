@@ -1188,6 +1188,8 @@ static int __send_cap(struct ceph_mds_client *mdsc, struct ceph_cap *cap,
  */
 void __ceph_flush_snaps(struct ceph_inode_info *ci,
 			struct ceph_mds_session **psession)
+		__releases(ci->vfs_inode->i_lock)
+		__acquires(ci->vfs_inode->i_lock)
 {
 	struct inode *inode = &ci->vfs_inode;
 	int mds;
@@ -1433,7 +1435,6 @@ static int try_nonblocking_invalidate(struct inode *inode)
  */
 void ceph_check_caps(struct ceph_inode_info *ci, int flags,
 		     struct ceph_mds_session *session)
-	__releases(session->s_mutex)
 {
 	struct ceph_client *client = ceph_inode_to_client(&ci->vfs_inode);
 	struct ceph_mds_client *mdsc = &client->mdsc;
@@ -2265,8 +2266,7 @@ static void handle_cap_grant(struct inode *inode, struct ceph_mds_caps *grant,
 			     struct ceph_mds_session *session,
 			     struct ceph_cap *cap,
 			     struct ceph_buffer *xattr_buf)
-	__releases(inode->i_lock)
-	__releases(session->s_mutex)
+		__releases(inode->i_lock)
 {
 	struct ceph_inode_info *ci = ceph_inode(inode);
 	int mds = session->s_mds;
@@ -2870,7 +2870,7 @@ void ceph_flush_dirty_caps(struct ceph_mds_client *mdsc)
 		}
 		spin_unlock(&mdsc->cap_dirty_lock);
 		if (inode) {
-			ceph_check_caps(ci, CHECK_CAPS_NODELAY|CHECK_CAPS_FLUSH,
+			ceph_check_caps(ci,CHECK_CAPS_NODELAY|CHECK_CAPS_FLUSH,
 					NULL);
 			iput(inode);
 		}
