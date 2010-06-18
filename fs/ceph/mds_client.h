@@ -111,10 +111,9 @@ struct ceph_mds_session {
 	unsigned long     s_cap_ttl;  /* when session caps expire */
 	struct list_head  s_caps;     /* all caps issued by this session */
 	int               s_nr_caps, s_trim_caps;
-	int               s_num_cap_releases;
-	struct list_head  s_cap_releases; /* waiting cap_release messages */
 	struct list_head  s_cap_releases_done; /* ready to send */
 	struct ceph_cap  *s_cap_iterator;
+	struct ceph_msg  *s_cap_release_msg;
 
 	/* protected by mutex */
 	struct list_head  s_cap_flushing;     /* inodes w/ flushing caps */
@@ -278,15 +277,18 @@ struct ceph_mds_client {
 	 *
 	 * Reservations are 'owned' by a ceph_cap_reservation context.
 	 */
-	spinlock_t	caps_list_lock;
-	struct		list_head caps_list; /* unused (reserved or
+	spinlock_t	 caps_list_lock;
+	struct		 list_head caps_list; /* unused (reserved or
 						unreserved) */
-	int		caps_total_count;    /* total caps allocated */
-	int		caps_use_count;      /* in use */
-	int		caps_reserve_count;  /* unused, reserved */
-	int		caps_avail_count;    /* unused, unreserved */
-	int		caps_min_count;      /* keep at least this many
+	int		 caps_total_count;    /* total caps allocated */
+	int		 caps_use_count;      /* in use */
+	int		 caps_reserve_count;  /* unused, reserved */
+	int		 caps_avail_count;    /* unused, unreserved */
+	int		 caps_min_count;      /* keep at least this many
 						(unreserved) */
+	int		 caps_num_releases;
+	spinlock_t	 caps_release_lock;
+	struct list_head caps_releases;
 
 #ifdef CONFIG_DEBUG_FS
 	struct dentry 	  *debugfs_file;

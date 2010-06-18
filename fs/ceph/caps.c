@@ -117,6 +117,9 @@ void ceph_caps_init(struct ceph_mds_client *mdsc)
 {
 	INIT_LIST_HEAD(&mdsc->caps_list);
 	spin_lock_init(&mdsc->caps_list_lock);
+	INIT_LIST_HEAD(&mdsc->caps_releases);
+	spin_lock_init(&mdsc->caps_release_lock);
+	mdsc->caps_num_releases = 0;
 }
 
 void ceph_caps_finalize(struct ceph_mds_client *mdsc)
@@ -976,14 +979,22 @@ static void __queue_cap_release(struct ceph_mds_session *session,
 	struct ceph_msg *msg;
 	struct ceph_mds_cap_release *head;
 	struct ceph_mds_cap_item *item;
+	struct ceph_mds_client *mdsc = session->s_mdsc;
 
 	spin_lock(&session->s_cap_lock);
-	BUG_ON(!session->s_num_cap_releases);
-	msg = list_first_entry(&session->s_cap_releases,
-			       struct ceph_msg, list_head);
+	msg = session->s_cap_release_msg;
+	if (!msg) {
+		spin_lock(&mdsc->caps_release_lock);
+		BUG_ON(!mdsc->caps_num_releases);
+		msg = list_first_entry(&mdsc->caps_releases,
+				       struct ceph_msg, list_head);
+		spin_unlock(&mdsc->caps_release_lock);
+		session->s_cap_release_msg = msg;
+		list_del_init(&msg->list_head);
+	}
 
 	dout(" adding %llx release to mds%d msg %p (%d left)\n",
-	     ino, session->s_mds, msg, session->s_num_cap_releases);
+	     ino, session->s_mds, msg, mdsc->caps_num_releases);
 
 	BUG_ON(msg->front.iov_len + sizeof(*item) > PAGE_CACHE_SIZE);
 	head = msg->front.iov_base;
@@ -994,12 +1005,13 @@ static void __queue_cap_release(struct ceph_mds_session *session,
 	item->migrate_seq = cpu_to_le32(migrate_seq);
 	item->seq = cpu_to_le32(issue_seq);
 
-	session->s_num_cap_releases--;
+	mdsc->caps_num_releases--;
 
 	msg->front.iov_len += sizeof(*item);
 	if (le32_to_cpu(head->num) == CEPH_CAPS_PER_RELEASE) {
+		session->s_cap_release_msg = NULL;
 		dout(" release msg %p full\n", msg);
-		list_move_tail(&msg->list_head, &session->s_cap_releases_done);
+		list_add_tail(&msg->list_head, &session->s_cap_releases_done);
 	} else {
 		dout(" release msg %p at %d/%d (%d)\n", msg,
 		     (int)le32_to_cpu(head->num),
