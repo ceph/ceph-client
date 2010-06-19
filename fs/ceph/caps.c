@@ -235,8 +235,11 @@ static struct ceph_cap *get_cap(struct ceph_mds_client *mdsc,
 	struct ceph_cap *cap = NULL;
 
 	/* temporary, until we do something about cap import/export */
-	if (!ctx)
+	if (!ctx) {
+		mdsc->caps_use_count++;
+		mdsc->caps_total_count++;
 		return kmem_cache_alloc(ceph_cap_cachep, GFP_NOFS);
+	}
 
 	spin_lock(&mdsc->caps_list_lock);
 	dout("get_cap ctx=%p (%d) %d = %d used + %d resv + %d avail\n",
