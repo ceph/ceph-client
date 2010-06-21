@@ -2582,7 +2582,8 @@ static void handle_cap_trunc(struct inode *inode,
  * caller holds s_mutex
  */
 static void handle_cap_export(struct inode *inode, struct ceph_mds_caps *ex,
-			      struct ceph_mds_session *session)
+			      struct ceph_mds_session *session,
+			      int *open_target_sessions)
 {
 	struct ceph_inode_info *ci = ceph_inode(inode);
 	int mds = session->s_mds;
@@ -2614,6 +2615,12 @@ static void handle_cap_export(struct inode *inode, struct ceph_mds_caps *ex,
 			ci->i_cap_exporting_mds = mds;
 			ci->i_cap_exporting_mseq = mseq;
 			ci->i_cap_exporting_issued = cap->issued;
+
+			/*
+			 * make sure we have open sessions with all possible
+			 * export targets, so that we get the matching IMPORT
+			 */
+			*open_target_sessions = 1;
 		}
 		__ceph_remove_cap(cap);
 	}
@@ -2689,6 +2696,7 @@ void ceph_handle_caps(struct ceph_mds_session *session,
 	u64 size, max_size;
 	u64 tid;
 	void *snaptrace;
+	int open_target_sessions = 0;
 
 	dout("handle_caps from mds%d\n", mds);
 
@@ -2740,7 +2748,7 @@ void ceph_handle_caps(struct ceph_mds_session *session,
 		goto done;
 
 	case CEPH_CAP_OP_EXPORT:
-		handle_cap_export(inode, h, session);
+		handle_cap_export(inode, h, session, &open_target_sessions);
 		goto done;
 
 	case CEPH_CAP_OP_IMPORT:
@@ -2787,6 +2795,8 @@ done:
 done_unlocked:
 	if (inode)
 		iput(inode);
+	if (open_target_sessions)
+		ceph_mdsc_open_export_target_sessions(mdsc, session);
 	return;
 
 bad:
