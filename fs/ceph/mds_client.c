@@ -1102,7 +1102,7 @@ static int trim_caps(struct ceph_mds_client *mdsc,
 
 static int __need_alloc_caps_reserve(struct ceph_mds_client *mdsc)
 {
-	int need = mdsc->caps_total_count +
+	int need = (mdsc->caps_use_count + mdsc->caps_reserve_count) * 2 +
 		   mdsc->max_sessions * CEPH_CAPS_PER_RELEASE;
 	return (mdsc->caps_num_releases < need);
 }
