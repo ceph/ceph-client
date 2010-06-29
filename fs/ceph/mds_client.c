@@ -1205,6 +1205,10 @@ static int check_cap_flush(struct ceph_mds_client *mdsc, u64 want_flush_seq)
 
 			spin_lock(&inode->i_lock);
 			if (ci->i_cap_flush_seq <= want_flush_seq) {
+				printk(KERN_ERR "check_cap_flush still flushing %p "
+				     "seq %lld <= %lld to mds%d\n", inode,
+				     ci->i_cap_flush_seq, want_flush_seq,
+				     session->s_mds);
 				dout("check_cap_flush still flushing %p "
 				     "seq %lld <= %lld to mds%d\n", inode,
 				     ci->i_cap_flush_seq, want_flush_seq,
@@ -1212,6 +1216,9 @@ static int check_cap_flush(struct ceph_mds_client *mdsc, u64 want_flush_seq)
 				ret = 0;
 			}
 			spin_unlock(&inode->i_lock);
+		} else {
+			dout("check_cap_flush mds=%d, not flushing\n", mds);
+			printk(KERN_ERR "check_cap_flush mds=%d, nothing to flush\n", mds);
 		}
 		mutex_unlock(&session->s_mutex);
 		ceph_put_mds_session(session);

@@ -1381,11 +1381,15 @@ static int __mark_caps_flushing(struct inode *inode,
 	if (list_empty(&ci->i_flushing_item)) {
 		list_add_tail(&ci->i_flushing_item, &session->s_cap_flushing);
 		mdsc->num_cap_flushing++;
+		printk(KERN_ERR " inode %p now flushing seq %lld\n", inode,
+		     ci->i_cap_flush_seq);
 		dout(" inode %p now flushing seq %lld\n", inode,
 		     ci->i_cap_flush_seq);
 	} else {
 		list_move_tail(&ci->i_flushing_item, &session->s_cap_flushing);
 		dout(" inode %p now flushing (more) seq %lld\n", inode,
+		     ci->i_cap_flush_seq);
+		printk(KERN_ERR " inode %p now flushing (more) seq %lld\n", inode,
 		     ci->i_cap_flush_seq);
 	}
 	spin_unlock(&mdsc->cap_dirty_lock);
@@ -1542,6 +1546,8 @@ retry_locked:
 		cap = rb_entry(p, struct ceph_cap, ci_node);
 		num++;
 
+		dout("ceph_check_caps() ci=%p inode=%p cap=%p\n", ci, inode, cap);
+
 		/* avoid looping forever */
 		if (mds >= cap->mds ||
 		    ((flags & CHECK_CAPS_AUTHONLY) && cap != ci->i_auth_cap))
@@ -1585,16 +1591,20 @@ retry_locked:
 		}
 
 		/* want more caps from mds? */
-		if (want & ~(cap->mds_wanted | cap->issued))
+		if (want & ~(cap->mds_wanted | cap->issued)) {
+			dout("want=%x mds_wanted=%x cap->issued=%x\n", want, cap->mds_wanted, cap->issued);
 			goto ack;
+		}
 
 		/* things we might delay */
 		if ((cap->issued & ~retain) == 0 &&
 		    cap->mds_wanted == want)
 			continue;     /* nope, all good */
 
-		if (is_delayed)
+		if (is_delayed) {
+			dout("is_delayed\n");
 			goto ack;
+		}
 
 		/* delay? */
 		if ((ci->i_ceph_flags & CEPH_I_NODELAY) == 0 &&
@@ -2490,7 +2500,8 @@ static void handle_cap_flush_ack(struct inode *inode, u64 flush_tid,
 					 i_flushing_item)->vfs_inode);
 		mdsc->num_cap_flushing--;
 		wake_up(&mdsc->cap_flushing_wq);
-		dout(" inode %p now !flushing\n", inode);
+		dout(" inode %p now !flushing num_cap_flushing=%d\n", inode, mdsc->num_cap_flushing);
+		printk(KERN_ERR " inode %p now !flushing num_cap_flushing=%d seq=%lld\n", inode, mdsc->num_cap_flushing, ci->i_cap_flush_seq);
 
 		if (ci->i_dirty_caps == 0) {
 			dout(" inode %p now clean\n", inode);
@@ -2609,6 +2620,8 @@ static void handle_cap_export(struct inode *inode, struct ceph_mds_caps *ex,
 
 	dout("handle_cap_export inode %p ci %p mds%d mseq %d\n",
 	     inode, ci, mds, mseq);
+	printk(KERN_ERR "handle_cap_export inode %p ino %llx ci %p mds%d mseq %d seq %lld\n",
+	     inode, (u64)inode->i_ino, ci, mds, mseq, ci->i_cap_flush_seq);
 
 	spin_lock(&inode->i_lock);
 
@@ -2637,11 +2650,31 @@ static void handle_cap_export(struct inode *inode, struct ceph_mds_caps *ex,
 			 */
 			*open_target_sessions = 1;
 		}
+#if 0
 		__ceph_remove_cap(cap);
+		if (!list_empty(&ci->i_flushing_item)) {
+			list_del_init(&ci->i_flushing_item);
+		}
+#endif
+		if (list_empty(&ci->i_flushing_item)) {
+			__ceph_remove_cap(cap);
+		}
 	}
 	/* else, we already released it */
 
 	spin_unlock(&inode->i_lock);
+}
+
+static struct ceph_mds_session *get_session(struct ceph_mds_session *s)
+{
+	if (atomic_inc_not_zero(&s->s_ref)) {
+		dout("mdsc get_session %p %d -> %d\n", s,
+		     atomic_read(&s->s_ref)-1, atomic_read(&s->s_ref));
+		return s;
+	} else {
+		dout("mdsc get_session %p 0 -- FAIL", s);
+		return NULL;
+	}
 }
 
 /*
@@ -2663,16 +2696,21 @@ static void handle_cap_import(struct ceph_mds_client *mdsc,
 	unsigned mseq = le32_to_cpu(im->migrate_seq);
 	u64 realmino = le64_to_cpu(im->realm);
 	u64 cap_id = le64_to_cpu(im->cap_id);
+	struct ceph_cap *cap;
+	struct ceph_mds_session *cap_session = NULL;
+	int reflush = 0;
 
-	if (ci->i_cap_exporting_mds >= 0 &&
-	    ceph_seq_cmp(ci->i_cap_exporting_mseq, mseq) < 0) {
-		dout("handle_cap_import inode %p ci %p mds%d mseq %d"
-		     " - cleared exporting from mds%d\n",
-		     inode, ci, mds, mseq,
-		     ci->i_cap_exporting_mds);
-		ci->i_cap_exporting_issued = 0;
-		ci->i_cap_exporting_mseq = 0;
-		ci->i_cap_exporting_mds = -1;
+	if (ci->i_cap_exporting_mds >= 0) {
+		if (ceph_seq_cmp(ci->i_cap_exporting_mseq, mseq) < 0) {
+			dout("handle_cap_import inode %p ci %p mds%d mseq %d"
+			     " - cleared exporting from mds%d\n",
+			     inode, ci, mds, mseq,
+			     ci->i_cap_exporting_mds);
+			ci->i_cap_exporting_issued = 0;
+			ci->i_cap_exporting_mseq = 0;
+			ci->i_cap_exporting_mds = -1;
+			reflush = 1;
+		}
 	} else {
 		dout("handle_cap_import inode %p ci %p mds%d mseq %d\n",
 		     inode, ci, mds, mseq);
@@ -2682,11 +2720,92 @@ static void handle_cap_import(struct ceph_mds_client *mdsc,
 	ceph_update_snap_trace(mdsc, snaptrace, snaptrace+snaptrace_len,
 			       false);
 	downgrade_write(&mdsc->snap_rwsem);
+
+	spin_lock(&inode->i_lock);
+	cap = ci->i_auth_cap;
+	if (cap)
+		cap_session = get_session(cap->session);
+	spin_unlock(&inode->i_lock);
+
 	ceph_add_cap(inode, session, cap_id, -1,
 		     issued, wanted, seq, mseq, realmino, CEPH_CAP_FLAG_AUTH,
 		     NULL /* no caps context */);
-	try_flush_caps(inode, session, NULL);
+
+	dout("handle_cap_import session=%p cap_session=%p cap=%p\n", session, cap_session, cap);
+	printk(KERN_ERR "handle_cap_import ino=%llx session=%p cap_session=%p cap=%p seq=%lld\n", (u64)inode->i_ino, session, cap_session, cap, ci->i_cap_flush_seq);
+
+	if (ci->i_auth_cap)
+		dout("ci->i_auth_cap=%p\n", ci->i_auth_cap);
+
+	spin_lock(&inode->i_lock);
+retry:
+	if (cap_session && ci->i_flushing_caps) {
+
+		/* have we raced with another import? */
+		if (list_empty(&ci->i_flushing_item)) {
+			list_add_tail(&ci->i_flushing_item,
+				      &session->s_cap_flushing);
+			goto retry;
+		}
+
+		if (session != cap_session) {
+			int removed_item = 0;
+
+			dout("flushing cap session has changed.. will try to "
+			     "transfer item to new session\n");
+			spin_unlock(&inode->i_lock);
+
+			mutex_unlock(&session->s_mutex);
+			mutex_lock(&cap_session->s_mutex);
+
+			spin_lock(&inode->i_lock);
+			if (!list_empty(&ci->i_flushing_item)) {
+				list_del_init(&ci->i_flushing_item);
+				removed_item = 1;
+			}
+			if (cap) {
+				__ceph_remove_cap(cap);
+				cap = NULL;
+			}
+			spin_unlock(&inode->i_lock);
+
+			mutex_unlock(&cap_session->s_mutex);
+			mutex_lock(&session->s_mutex);
+
+			spin_lock(&inode->i_lock);
+
+			if (!removed_item)
+				goto retry;
+
+			/* we could have raced.. making sure that the
+			   we're still not on any flushing item list */
+			if (!list_empty(&ci->i_flushing_item))
+				goto retry;
+
+			dout("requeued item, will __send_cap now\n");
+			list_add_tail(&ci->i_flushing_item,
+				      &session->s_cap_flushing);
+
+			cap = ci->i_auth_cap;
+			/* note that __send_cap unlocks i_lock */
+			if (cap)
+				__send_cap(mdsc, cap,
+					   CEPH_CAP_OP_FLUSH,
+					   __ceph_caps_used(ci),
+					   __ceph_caps_wanted(ci),
+					   cap->issued | cap->implemented,
+					   ci->i_flushing_caps, NULL);
+			goto done;
+		}
+	}
+	spin_unlock(&inode->i_lock);
+done:
 	up_read(&mdsc->snap_rwsem);
+
+	if (cap_session)
+		ceph_put_mds_session(cap_session);
+
+	mutex_unlock(&session->s_mutex);
 }
 
 /*
@@ -2770,7 +2889,7 @@ void ceph_handle_caps(struct ceph_mds_session *session,
 		handle_cap_import(mdsc, inode, h, session,
 				  snaptrace, le32_to_cpu(h->snap_trace_len));
 		ceph_check_caps(ceph_inode(inode), CHECK_CAPS_NODELAY,
-				session);
+				NULL);
 		goto done_unlocked;
 	}
 
