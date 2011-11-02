@@ -314,6 +314,13 @@ static void init_once(void *foo)
  */
 void __iget(struct inode *inode)
 {
+	if (inode->i_sb &&
+	    inode->i_sb->s_type && 
+	    inode->i_sb->s_type->name &&
+	    inode->i_sb->s_type->name[0] == 'c')
+		printk("iget %p %d -> %d\n", inode,
+		       atomic_read(&inode->i_count), 
+		       atomic_read(&inode->i_count)+1);
 	atomic_inc(&inode->i_count);
 }
 
@@ -322,6 +329,13 @@ void __iget(struct inode *inode)
  */
 void ihold(struct inode *inode)
 {
+	if (inode->i_sb &&
+	    inode->i_sb->s_type && 
+	    inode->i_sb->s_type->name &&
+	    inode->i_sb->s_type->name[0] == 'c')
+		printk("ihold %p %d -> %d\n", inode,
+		       atomic_read(&inode->i_count), 
+		       atomic_read(&inode->i_count)+1);
 	WARN_ON(atomic_inc_return(&inode->i_count) < 2);
 }
 EXPORT_SYMBOL(ihold);
@@ -1358,6 +1372,13 @@ void iput(struct inode *inode)
 	if (inode) {
 		BUG_ON(inode->i_state & I_CLEAR);
 
+		if (inode->i_sb &&
+		    inode->i_sb->s_type && 
+		    inode->i_sb->s_type->name &&
+		    inode->i_sb->s_type->name[0] == 'c')
+			printk("iput %p %d -> %d\n", inode,
+			       atomic_read(&inode->i_count), 
+			       atomic_read(&inode->i_count)-1);
 		if (atomic_dec_and_lock(&inode->i_count, &inode->i_lock))
 			iput_final(inode);
 	}
