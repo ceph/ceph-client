@@ -933,59 +933,87 @@ bad:
 
 
 /*
- * calculate file layout from given offset, length.
- * fill in correct oid, logical length, and object extent
- * offset, length.
+ * calculate file layout from given offset, length.  fill in correct
+ * object number, logical length, and object extent offset and length.
  *
- * for now, we write only a single su, until we can
- * pass a stride back to the caller.
+ * for now, we write only a single stripe_unit, until we can pass a
+ * stride back to the caller.
  */
 void ceph_calc_file_object_mapping(struct ceph_file_layout *layout,
-				   u64 off, u64 *plen,
-				   u64 *ono,
-				   u64 *oxoff, u64 *oxlen)
+				   u64 off,
+				   u64 *plen,
+				   u64 *object_num,
+				   u64 *object_ext_off,
+				   u64 *object_ext_len)
 {
-	u32 osize = (u32) ceph_file_layout_object_size(layout);
-	u32 su = (u32) ceph_file_layout_stripe_unit(layout);
-	u32 sc = (u32) ceph_file_layout_stripe_count(layout);
-	u32 bl, stripeno, stripepos, objsetno;
-	u32 su_per_object;
-	u64 t, su_offset;
+	u64 object_size = (u64) ceph_file_layout_object_size(layout);
+	u64 stripe_unit = (u64) ceph_file_layout_stripe_unit(layout);
+	u64 stripe_count = (u64) ceph_file_layout_stripe_count(layout);
+	u64 stripe_unit_per_object;
+	u64 stripe_unit_num;
+	u64 stripe_unit_offset;
+	u64 stripe_num;
+	u64 stripe_pos;			/* Which object within an object set */
+	u64 obj_set_num;
+	u64 obj_stripe_unit_num;	/* Which stripe_unit within object */
 
-	dout("mapping %llu~%llu  osize %u fl_su %u\n", off, *plen,
-	     osize, su);
-	su_per_object = osize / su;
-	dout("osize %u / su %u = su_per_object %u\n", osize, su,
-	     su_per_object);
+	BUG_ON((stripe_unit & ~PAGE_MASK) != 0);
 
-	BUG_ON((su & ~PAGE_MASK) != 0);
-	/* bl = *off / su; */
-	t = off;
-	do_div(t, su);
-	bl = t;
-	dout("off %llu / su %u = bl %u\n", off, su, bl);
+	dout("mapping %llu~%llu  object_size %llu fl_stripe_unit %llu\n",
+		off, *plen, object_size, stripe_unit);
 
-	stripeno = bl / sc;
-	stripepos = bl % sc;
-	objsetno = stripeno / su_per_object;
+	/* stripe_unit_per_object = object_size / stripe_unit; */
+	stripe_unit_per_object = object_size;
+	do_div(stripe_unit_per_object, stripe_unit);
+	dout("object_size %llu / stripe_unit %llu "
+			"= stripe_unit_per_object %llu\n",
+		object_size, stripe_unit, stripe_unit_per_object);
 
-	*ono = objsetno * sc + stripepos;
-	dout("objset %u * sc %u = ono %u\n", objsetno, sc, (unsigned)*ono);
+	/*
+	 * stripe_unit_num = off / stripe_unit;
+	 * stripe_unit_offset = off % stripe_unit;
+	 */
+	stripe_unit_num = off;
+	stripe_unit_offset = do_div(stripe_unit_num, stripe_unit);
+	dout("off %llu / stripe_unit %llu = "
+			"stripe_unit_num %llu rem stripe_unit_offset = %llu\n",
+		off, stripe_unit, stripe_unit_num, stripe_unit_offset);
 
-	/* *oxoff = *off % layout->fl_stripe_unit;  # offset in su */
-	t = off;
-	su_offset = do_div(t, su);
-	*oxoff = su_offset + (stripeno % su_per_object) * su;
+	/*
+	 * stripe_num = stripe_unit_num / stripe_count;
+	 * stripe_pos = stripe_unit_num % stripe_count;
+	 */
+	stripe_num = stripe_unit_num;
+	stripe_pos = do_div(stripe_num, stripe_count);
+	dout("stripe_unit_num %llu / stripe_count %llu = "
+			"stripe_num %llu rem stripe_pos %llu\n",
+		stripe_unit_num, stripe_count, stripe_num, stripe_pos);
+
+	/*
+	 * obj_set_num = stripe_num / stripe_unit_per_object;
+	 * obj_stripe_unit_num = stripe_num % stripe_unit_per_object;
+	 */
+	obj_set_num = stripe_num;
+	obj_stripe_unit_num = do_div(obj_set_num, stripe_unit_per_object);
+
+	*object_num = obj_set_num * stripe_count + stripe_pos;
+	dout("obj_set_num %llu * stripe_count %llu = object_num %llu\n",
+		obj_set_num, stripe_count, *object_num);
+	*object_ext_off = stripe_unit * obj_stripe_unit_num
+				+ stripe_unit_offset;
+	dout("obj_stripe_unit_num %llu * stripe_unit %llu = "
+			"object_ext_off %llu\n",
+		obj_stripe_unit_num, stripe_unit, *object_ext_off);
 
 	/*
 	 * Calculate the length of the extent being written to the selected
 	 * object. This is the minimum of the full length requested (plen) or
 	 * the remainder of the current stripe being written to.
 	 */
-	*oxlen = min_t(u64, *plen, su - su_offset);
-	*plen = *oxlen;
+	*object_ext_len = min_t(u64, *plen, stripe_unit - stripe_unit_offset);
+	*plen = *object_ext_len;
 
-	dout(" obj extent %llu~%llu\n", *oxoff, *oxlen);
+	dout(" obj extent %llu~%llu\n", *object_ext_off, *object_ext_len);
 }
 EXPORT_SYMBOL(ceph_calc_file_object_mapping);
 
