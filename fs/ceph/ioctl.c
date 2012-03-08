@@ -22,10 +22,10 @@ static long ceph_ioctl_get_layout(struct file *file, void __user *arg)
 
 	err = ceph_do_getattr(file->f_dentry->d_inode, CEPH_STAT_CAP_LAYOUT);
 	if (!err) {
-		l.stripe_unit = (__u64) ceph_file_layout_stripe_unit(&ci->i_layout);
-		l.stripe_count = (__u64) ceph_file_layout_stripe_count(&ci->i_layout);
-		l.object_size = (__u64) ceph_file_layout_object_size(&ci->i_layout);
-		l.data_pool = (__u64) ceph_file_layout_pg_pool(&ci->i_layout);
+		l.stripe_unit = ceph_file_layout_stripe_unit(&ci->i_layout);
+		l.stripe_count = ceph_file_layout_stripe_count(&ci->i_layout);
+		l.object_size = ceph_file_layout_object_size(&ci->i_layout);
+		l.data_pool = ceph_file_layout_pg_pool(&ci->i_layout);
 		l.preferred_osd =
 			(__s64) ceph_file_layout_pg_preferred(&ci->i_layout);
 		if (copy_to_user(arg, &l, sizeof(l)))
@@ -52,12 +52,12 @@ static long ceph_ioctl_set_layout(struct file *file, void __user *arg)
 	/* validate changed params against current layout */
 	err = ceph_do_getattr(file->f_dentry->d_inode, CEPH_STAT_CAP_LAYOUT);
 	if (!err) {
-		nl.stripe_unit = (__u64) ceph_file_layout_stripe_unit(&ci->i_layout);
-		nl.stripe_count = (__u64) ceph_file_layout_stripe_count(&ci->i_layout);
-		nl.object_size = (__u64) ceph_file_layout_object_size(&ci->i_layout);
-		nl.data_pool = (__u64) ceph_file_layout_pg_pool(&ci->i_layout);
+		nl.stripe_unit = ceph_file_layout_stripe_unit(&ci->i_layout);
+		nl.stripe_count = ceph_file_layout_stripe_count(&ci->i_layout);
+		nl.object_size = ceph_file_layout_object_size(&ci->i_layout);
+		nl.data_pool = ceph_file_layout_pg_pool(&ci->i_layout);
 		nl.preferred_osd =
-				(__s64) ceph_file_layout_pg_preferred(&ci->i_layout);
+			(__s64) ceph_file_layout_pg_preferred(&ci->i_layout);
 	} else
 		return err;
 
@@ -203,8 +203,8 @@ static long ceph_ioctl_get_dataloc(struct file *file, void __user *arg)
 	ceph_calc_file_object_mapping(&ci->i_layout, dl.file_offset, &len,
 				      &dl.object_no, &dl.object_offset, &olen);
 	dl.file_offset -= dl.object_offset;
-	dl.object_size = (__u64) ceph_file_layout_object_size(&ci->i_layout);
-	dl.block_size = (__u64) ceph_file_layout_stripe_unit(&ci->i_layout);
+	dl.object_size = ceph_file_layout_object_size(&ci->i_layout);
+	dl.block_size = ceph_file_layout_stripe_unit(&ci->i_layout);
 
 	/* block_offset = object_offset % block_size */
 	tmp = dl.object_offset;

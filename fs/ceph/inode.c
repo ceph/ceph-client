@@ -567,6 +567,7 @@ static int fill_inode(struct inode *inode,
 	struct ceph_buffer *xattr_blob = NULL;
 	int err = 0;
 	int queue_trunc = 0;
+	__u64 stripe_unit;
 
 	dout("fill_inode %p ino %llx.%llx v %llu had %llu\n",
 	     inode, ceph_vinop(inode), le64_to_cpu(info->version),
@@ -642,7 +643,9 @@ static int fill_inode(struct inode *inode,
 	}
 
 	ci->i_layout = info->layout;
-	inode->i_blkbits = fls(ceph_file_layout_stripe_unit(&info->layout)) - 1;
+	stripe_unit = ceph_file_layout_stripe_unit(&info->layout);
+	BUG_ON(stripe_unit > (__u64) INT_MAX);
+	inode->i_blkbits = fls((int) stripe_unit) - 1;
 
 	/* xattrs */
 	/* note that if i_xattrs.len <= 4, i_xattrs.data will still be NULL. */

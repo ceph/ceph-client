@@ -9,9 +9,9 @@
  */
 int ceph_file_layout_is_valid(const struct ceph_file_layout *layout)
 {
-	__u32 su = (__u32) ceph_file_layout_stripe_unit(layout);
-	__u32 sc = (__u32) ceph_file_layout_stripe_count(layout);
-	__u32 os = (__u32) ceph_file_layout_object_size(layout);
+	__u64 su = ceph_file_layout_stripe_unit(layout);
+	__u64 sc = ceph_file_layout_stripe_count(layout);
+	__u64 os = ceph_file_layout_object_size(layout);
 
 	/* stripe unit, object size must be non-zero, 64k increment */
 	if (!su || (su & (CEPH_MIN_STRIPE_UNIT-1)))
