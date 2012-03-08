@@ -74,31 +74,33 @@ struct ceph_file_layout {
  */
 
 #define CEPH_MIN_STRIPE_UNIT 65536
-#define ceph_file_layout_su(l) ((__s32)le32_to_cpu((l).fl_stripe_unit))
+#define ceph_file_layout_stripe_unit(l) \
+		((__s32) le32_to_cpu((l)->fl_stripe_unit))
 #define ceph_file_layout_stripe_count(l) \
-	((__s32)le32_to_cpu((l).fl_stripe_count))
-#define ceph_file_layout_object_size(l) ((__s32)le32_to_cpu((l).fl_object_size))
-#define ceph_file_layout_cas_hash(l) ((__s32)le32_to_cpu((l).fl_cas_hash))
-#define ceph_file_layout_object_su(l) \
-	((__s32)le32_to_cpu((l).fl_object_stripe_unit))
+		((__s32) le32_to_cpu((l)->fl_stripe_count))
+#define ceph_file_layout_object_size(l) \
+		((__s32) le32_to_cpu((l)->fl_object_size))
+#define ceph_file_layout_cas_hash(l) \
+		((__s32) le32_to_cpu((l)->fl_cas_hash))
+#define ceph_file_layout_object_stripe_unit(l) \
+		((__s32) le32_to_cpu((l)->fl_object_stripe_unit))
 #define ceph_file_layout_pg_preferred(l) \
-	((__s32)le32_to_cpu((l).fl_pg_preferred))
+		((__s32) le32_to_cpu((l)->fl_pg_preferred))
 #define ceph_file_layout_pg_pool(l) \
-	((__s32)le32_to_cpu((l).fl_pg_pool))
+		((__s32) le32_to_cpu((l)->fl_pg_pool))
 
 static inline unsigned ceph_file_layout_stripe_width(struct ceph_file_layout *l)
 {
-	return le32_to_cpu(l->fl_stripe_unit) *
-		le32_to_cpu(l->fl_stripe_count);
+	return (unsigned) (ceph_file_layout_stripe_unit(l) *
+				ceph_file_layout_stripe_count(l));
 }
 
 /* "period" == bytes before i start on a new set of objects */
 static inline unsigned ceph_file_layout_period(struct ceph_file_layout *l)
 {
-	return le32_to_cpu(l->fl_object_size) *
-		le32_to_cpu(l->fl_stripe_count);
+	return (unsigned) (ceph_file_layout_object_size(l) *
+				ceph_file_layout_stripe_count(l));
 }
-
 
 int ceph_file_layout_is_valid(const struct ceph_file_layout *layout);
 
