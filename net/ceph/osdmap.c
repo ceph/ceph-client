@@ -945,9 +945,9 @@ void ceph_calc_file_object_mapping(struct ceph_file_layout *layout,
 				   u64 *ono,
 				   u64 *oxoff, u64 *oxlen)
 {
-	u32 osize = le32_to_cpu(layout->fl_object_size);
-	u32 su = le32_to_cpu(layout->fl_stripe_unit);
-	u32 sc = le32_to_cpu(layout->fl_stripe_count);
+	u32 osize = (u32) ceph_file_layout_object_size(layout);
+	u32 su = (u32) ceph_file_layout_stripe_unit(layout);
+	u32 sc = (u32) ceph_file_layout_stripe_count(layout);
 	u32 bl, stripeno, stripepos, objsetno;
 	u32 su_per_object;
 	u64 t, su_offset;
@@ -999,9 +999,8 @@ int ceph_calc_object_layout(struct ceph_object_layout *ol,
 			    struct ceph_osdmap *osdmap)
 {
 	unsigned num, num_mask;
-	struct ceph_pg pgid;
-	s32 preferred = (s32)le32_to_cpu(fl->fl_pg_preferred);
-	int poolid = le32_to_cpu(fl->fl_pg_pool);
+	s32 preferred = (s32) ceph_file_layout_pg_preferred(fl);
+	int poolid = (int) ceph_file_layout_pg_pool(fl);
 	struct ceph_pg_pool_info *pool;
 	unsigned ps;
 
@@ -1011,26 +1010,28 @@ int ceph_calc_object_layout(struct ceph_object_layout *ol,
 	if (!pool)
 		return -EIO;
 	ps = ceph_str_hash(pool->v.object_hash, oid, strlen(oid));
-	if (preferred >= 0) {
+
+	if (preferred == CEPH_FILE_LAYOUT_PG_PREFERRED_NONE) {
+		num = le32_to_cpu(pool->v.pg_num);
+		num_mask = pool->pg_num_mask;
+	} else {
 		ps += preferred;
 		num = le32_to_cpu(pool->v.lpg_num);
 		num_mask = pool->lpg_num_mask;
-	} else {
-		num = le32_to_cpu(pool->v.pg_num);
-		num_mask = pool->pg_num_mask;
 	}
 
-	pgid.ps = cpu_to_le16(ps);
-	pgid.preferred = cpu_to_le16(preferred);
-	pgid.pool = fl->fl_pg_pool;
-	if (preferred >= 0)
+	/* ceph_object_layout is not in CPU byte order... */
+	ol->ol_pgid.ps = cpu_to_le16(ps);
+	ol->ol_pgid.preferred = cpu_to_le16(preferred);
+	/* ...so don't byte-swap the file layout fields */
+	ol->ol_pgid.pool = fl->fl_pg_pool;
+	ol->ol_stripe_unit = fl->fl_object_stripe_unit;
+
+	if (preferred == CEPH_FILE_LAYOUT_PG_PREFERRED_NONE)
+		dout("calc_object_layout '%s' pgid %d.%x\n", oid, poolid, ps);
+	else
 		dout("calc_object_layout '%s' pgid %d.%xp%d\n", oid, poolid, ps,
 		     (int)preferred);
-	else
-		dout("calc_object_layout '%s' pgid %d.%x\n", oid, poolid, ps);
-
-	ol->ol_pgid = pgid;
-	ol->ol_stripe_unit = fl->fl_object_stripe_unit;
 	return 0;
 }
 EXPORT_SYMBOL(ceph_calc_object_layout);

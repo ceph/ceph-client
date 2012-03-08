@@ -73,7 +73,8 @@ struct ceph_file_layout {
  * file layout helpers
  */
 
-#define CEPH_MIN_STRIPE_UNIT 65536
+#define CEPH_MIN_STRIPE_UNIT			65536
+#define CEPH_FILE_LAYOUT_PG_PREFERRED_NONE	((__s32) -1)
 #define ceph_file_layout_stripe_unit(l) \
 		((__s32) le32_to_cpu((l)->fl_stripe_unit))
 #define ceph_file_layout_stripe_count(l) \

@@ -642,7 +642,7 @@ static int fill_inode(struct inode *inode,
 	}
 
 	ci->i_layout = info->layout;
-	inode->i_blkbits = fls(le32_to_cpu(info->layout.fl_stripe_unit)) - 1;
+	inode->i_blkbits = fls(ceph_file_layout_stripe_unit(&info->layout)) - 1;
 
 	/* xattrs */
 	/* note that if i_xattrs.len <= 4, i_xattrs.data will still be NULL. */
