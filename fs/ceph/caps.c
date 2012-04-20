@@ -613,8 +613,9 @@ retry:
 		ci->i_auth_cap = NULL;
 
 	dout("add_cap inode %p (%llx.%llx) cap %p %s now %s seq %d mds%d\n",
-	     inode, ceph_vinop(inode), cap, ceph_cap_string(issued),
-	     ceph_cap_string(issued|cap->issued), seq, mds);
+	     inode, ceph_ino(inode), ceph_snap(inode), cap,
+	     ceph_cap_string(issued), ceph_cap_string(issued|cap->issued),
+	     seq, mds);
 	cap->cap_id = cap_id;
 	cap->issued = issued;
 	cap->implemented |= issued;

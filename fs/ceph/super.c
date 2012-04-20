@@ -896,7 +896,9 @@ static struct dentry *ceph_mount(struct file_system_type *fs_type,
 	if (IS_ERR(res))
 		goto out_splat;
 	dout("root %p inode %p ino %llx.%llx\n", res,
-	     res->d_inode, ceph_vinop(res->d_inode));
+	     res->d_inode, ceph_ino(res->d_inode),
+	     ceph_snap(res->d_inode));
+
 	return res;
 
 out_splat:

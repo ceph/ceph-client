@@ -136,7 +136,7 @@ int ceph_open(struct inode *inode, struct file *file)
 		flags = O_DIRECTORY;  /* mds likes to know */
 
 	dout("open inode %p ino %llx.%llx file %p flags %d (%d)\n", inode,
-	     ceph_vinop(inode), file, flags, file->f_flags);
+	     ceph_ino(inode), ceph_snap(inode), file, flags, file->f_flags);
 	fmode = ceph_flags_to_mode(flags);
 	wanted = ceph_caps_for_mode(fmode);
 
@@ -200,7 +200,8 @@ int ceph_open(struct inode *inode, struct file *file)
 	if (!err)
 		err = ceph_init_file(inode, file, req->r_fmode);
 	ceph_mdsc_put_request(req);
-	dout("open result=%d on %llx.%llx\n", err, ceph_vinop(inode));
+	dout("open result=%d on %llx.%llx\n", err,
+		ceph_ino(inode), ceph_snap(inode));
 out:
 	return err;
 }
@@ -637,7 +638,8 @@ static ssize_t ceph_aio_read(struct kiocb *iocb, const struct iovec *iov,
 	int checkeof = 0, read = 0;
 
 	dout("aio_read %p %llx.%llx %llu~%u trying to get caps on %p\n",
-	     inode, ceph_vinop(inode), pos, (unsigned)len, inode);
+	     inode, ceph_ino(inode), ceph_snap(inode), pos,
+	     (unsigned) len, inode);
 again:
 	__ceph_do_pending_vmtruncate(inode);
 	if (fi->fmode & CEPH_FILE_MODE_LAZY)
@@ -648,8 +650,8 @@ again:
 	if (ret < 0)
 		goto out;
 	dout("aio_read %p %llx.%llx %llu~%u got cap refs on %s\n",
-	     inode, ceph_vinop(inode), pos, (unsigned)len,
-	     ceph_cap_string(got));
+	     inode, ceph_ino(inode), ceph_snap(inode), pos,
+	     (unsigned)len, ceph_cap_string(got));
 
 	if ((got & (CEPH_CAP_FILE_CACHE|CEPH_CAP_FILE_LAZYIO)) == 0 ||
 	    (iocb->ki_filp->f_flags & O_DIRECT) ||
@@ -662,7 +664,8 @@ again:
 
 out:
 	dout("aio_read %p %llx.%llx dropping cap refs on %s = %d\n",
-	     inode, ceph_vinop(inode), ceph_cap_string(got), (int)ret);
+	     inode, ceph_ino(inode), ceph_snap(inode),
+	     ceph_cap_string(got), (int) ret);
 	ceph_put_cap_refs(ci, got);
 
 	if (checkeof && ret >= 0) {
@@ -715,8 +718,8 @@ retry_snap:
 		return -ENOSPC;
 	__ceph_do_pending_vmtruncate(inode);
 	dout("aio_write %p %llx.%llx %llu~%u getting caps. i_size %llu\n",
-	     inode, ceph_vinop(inode), pos, (unsigned)iov->iov_len,
-	     inode->i_size);
+	     inode, ceph_ino(inode), ceph_snap(inode), pos,
+	     (unsigned) iov->iov_len, inode->i_size);
 	if (fi->fmode & CEPH_FILE_MODE_LAZY)
 		want = CEPH_CAP_FILE_BUFFER | CEPH_CAP_FILE_LAZYIO;
 	else
@@ -726,8 +729,8 @@ retry_snap:
 		goto out_put;
 
 	dout("aio_write %p %llx.%llx %llu~%u  got cap refs on %s\n",
-	     inode, ceph_vinop(inode), pos, (unsigned)iov->iov_len,
-	     ceph_cap_string(got));
+	     inode, ceph_ino(inode), ceph_snap(inode), pos,
+	     (unsigned) iov->iov_len, ceph_cap_string(got));
 
 	if ((got & (CEPH_CAP_FILE_BUFFER|CEPH_CAP_FILE_LAZYIO)) == 0 ||
 	    (iocb->ki_filp->f_flags & O_DIRECT) ||
@@ -772,14 +775,15 @@ retry_snap:
 
 out_put:
 	dout("aio_write %p %llx.%llx %llu~%u  dropping cap refs on %s\n",
-	     inode, ceph_vinop(inode), pos, (unsigned)iov->iov_len,
-	     ceph_cap_string(got));
+	     inode, ceph_ino(inode), ceph_snap(inode), pos,
+	     (unsigned) iov->iov_len, ceph_cap_string(got));
 	ceph_put_cap_refs(ci, got);
 
 out:
 	if (ret == -EOLDSNAPC) {
 		dout("aio_write %p %llx.%llx %llu~%u got EOLDSNAPC, retrying\n",
-		     inode, ceph_vinop(inode), pos, (unsigned)iov->iov_len);
+		     inode, ceph_ino(inode), ceph_snap(inode),
+		     pos, (unsigned) iov->iov_len);
 		goto retry_snap;
 	}
 

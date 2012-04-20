@@ -322,7 +322,8 @@ more:
 		frag = ceph_choose_frag(ceph_inode(inode), frag, NULL, NULL);
 
 		dout("readdir fetching %llx.%llx frag %x offset '%s'\n",
-		     ceph_vinop(inode), frag, fi->last_name);
+		     ceph_ino(inode), ceph_snap(inode), frag,
+		     fi->last_name);
 		req = ceph_mdsc_create_request(mdsc, op, USE_AUTH_MDS);
 		if (IS_ERR(req))
 			return PTR_ERR(req);

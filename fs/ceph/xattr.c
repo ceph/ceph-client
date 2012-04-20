@@ -272,7 +272,8 @@ static int __set_xattr(struct ceph_inode_info *ci,
 	}
 
 	dout("__set_xattr_val added %llx.%llx xattr %p %s=%.*s\n",
-	     ceph_vinop(&ci->vfs_inode), xattr, name, val_len, val);
+	     ceph_ino(&ci->vfs_inode), ceph_snap(&ci->vfs_inode),
+	     xattr, name, val_len, val);
 
 	return 0;
 }

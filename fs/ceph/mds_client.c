@@ -714,7 +714,7 @@ static int __choose_mds(struct ceph_mds_client *mdsc,
 				mds = frag.dist[r];
 				dout("choose_mds %p %llx.%llx "
 				     "frag %u mds%d (%d/%d)\n",
-				     inode, ceph_vinop(inode),
+				     inode, ceph_ino(inode), ceph_snap(inode),
 				     frag.frag, mds,
 				     (int)r, frag.ndist);
 				if (ceph_mdsmap_get_state(mdsc->mdsmap, mds) >=
@@ -731,7 +731,8 @@ static int __choose_mds(struct ceph_mds_client *mdsc,
 				mds = frag.mds;
 				dout("choose_mds %p %llx.%llx "
 				     "frag %u mds%d (auth)\n",
-				     inode, ceph_vinop(inode), frag.frag, mds);
+				     inode, ceph_ino(inode), ceph_snap(inode),
+				     frag.frag, mds);
 				if (ceph_mdsmap_get_state(mdsc->mdsmap, mds) >=
 				    CEPH_MDS_STATE_ACTIVE)
 					return mds;
@@ -751,7 +752,7 @@ static int __choose_mds(struct ceph_mds_client *mdsc,
 	}
 	mds = cap->session->s_mds;
 	dout("choose_mds %p %llx.%llx mds%d (%scap %p)\n",
-	     inode, ceph_vinop(inode), mds,
+	     inode, ceph_ino(inode), ceph_snap(inode), mds,
 	     cap == ci->i_auth_cap ? "auth " : "", cap);
 	spin_unlock(&ci->i_ceph_lock);
 	return mds;
@@ -2408,8 +2409,8 @@ static int encode_caps_cb(struct inode *inode, struct ceph_cap *cap,
 	ci = cap->ci;
 
 	dout(" adding %p ino %llx.%llx cap %p %lld %s\n",
-	     inode, ceph_vinop(inode), cap, cap->cap_id,
-	     ceph_cap_string(cap->issued));
+	     inode, ceph_ino(inode), ceph_snap(inode),
+	     cap, cap->cap_id, ceph_cap_string(cap->issued));
 	err = ceph_pagelist_encode_64(pagelist, ceph_ino(inode));
 	if (err)
 		return err;
