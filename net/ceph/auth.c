@@ -114,7 +114,7 @@ int ceph_auth_build_hello(struct ceph_auth_client *ac, void *buf, size_t len)
 	lenp = p;
 	p += sizeof(u32);
 
-	ceph_encode_need(&p, end, 1 + sizeof(u32), bad);
+	ceph_encode_need(&p, end, sizeof (u8) + sizeof (u32), bad);
 	ceph_encode_8(&p, 1);
 	num = ARRAY_SIZE(supported_protocols);
 	ceph_encode_32(&p, num);

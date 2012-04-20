@@ -87,7 +87,7 @@ struct ceph_mdsmap *ceph_mdsmap_decode(void **p, void *end)
 		void *pexport_targets = NULL;
 		struct ceph_timespec laggy_since;
 
-		ceph_decode_need(p, end, 2 * sizeof (u64) + 1, bad);
+		ceph_decode_need(p, end, 2 * sizeof (u64) + sizeof (u8), bad);
 		global_id = ceph_decode_64(p);
 		infoversion = ceph_decode_8(p);
 		*p += sizeof(u64);
@@ -97,8 +97,8 @@ struct ceph_mdsmap *ceph_mdsmap_decode(void **p, void *end)
 		*p += namelen;
 
 		ceph_decode_need(p, end,
-				 4*sizeof(u32) + sizeof(u64) +
-				 sizeof(addr) + sizeof(struct ceph_timespec),
+				 4 * sizeof (u32) + sizeof (u64) +
+				 sizeof (addr) + sizeof (laggy_since),
 				 bad);
 		mds = ceph_decode_32(p);
 		inc = ceph_decode_32(p);

@@ -462,10 +462,10 @@ static int __decode_pool(void **p, void *end, struct ceph_pg_pool_info *pi)
 	/* num_snaps * snap_info_t */
 	n = le32_to_cpu(pi->v.num_snaps);
 	while (n--) {
-		ceph_decode_need(p, end, sizeof(u64) + 1 + sizeof(u64) +
-				 sizeof(struct ceph_timespec), bad);
-		*p += sizeof(u64) +       /* key */
-			1 + sizeof(u64) + /* u8, snapid */
+		ceph_decode_need(p, end, 2 * sizeof (u64) + sizeof (u8) +
+				 sizeof (struct ceph_timespec), bad);
+		*p += sizeof (u64) +			/* key */
+			sizeof (u8) + sizeof (u64) +	/* u8, snapid */
 			sizeof(struct ceph_timespec);
 		ceph_decode_32_safe(p, end, m, bad);	/* snap name */
 		*p += m;
@@ -607,7 +607,7 @@ struct ceph_osdmap *osdmap_decode(void **p, void *end)
 
 	ceph_decode_32_safe(p, end, max, bad);
 	while (max--) {
-		ceph_decode_need(p, end, 4 + 1, bad);
+		ceph_decode_need(p, end, sizeof (u32) + sizeof (u8), bad);
 		pi = kzalloc(sizeof(*pi), GFP_NOFS);
 		if (!pi)
 			goto bad;
@@ -643,17 +643,18 @@ struct ceph_osdmap *osdmap_decode(void **p, void *end)
 
 	/* osds */
 	err = -EINVAL;
-	ceph_decode_need(p, end, 3*sizeof(u32) +
-			 map->max_osd*(1 + sizeof(*map->osd_weight) +
-				       sizeof(*map->osd_addr)), bad);
-	*p += 4; /* skip length field (should match max) */
+	ceph_decode_need(p, end, 3 * sizeof (u32) +
+			 map->max_osd * (sizeof (*map->osd_state) +
+					sizeof (*map->osd_weight) +
+					sizeof (*map->osd_addr)), bad);
+	*p += sizeof (u32);	/* skip length field (should match max) */
 	ceph_decode_copy(p, map->osd_state, map->max_osd);
 
-	*p += 4; /* skip length field (should match max) */
+	*p += sizeof (u32);	/* skip length field (should match max) */
 	for (i = 0; i < map->max_osd; i++)
 		map->osd_weight[i] = ceph_decode_32(p);
 
-	*p += 4; /* skip length field (should match max) */
+	*p += sizeof (u32);	/* skip length field (should match max) */
 	ceph_decode_copy(p, map->osd_addr, map->max_osd*sizeof(*map->osd_addr));
 	for (i = 0; i < map->max_osd; i++)
 		ceph_decode_addr(&map->osd_addr[i]);

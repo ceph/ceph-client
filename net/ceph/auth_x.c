@@ -150,7 +150,7 @@ static int ceph_x_proc_ticket_reply(struct ceph_auth_client *ac,
 	if (!ticket_buf)
 		goto out_dbuf;
 
-	ceph_decode_need(&p, end, 1 + sizeof(u32), bad);
+	ceph_decode_need(&p, end, sizeof (u8) + sizeof (u32), bad);
 	reply_struct_v = ceph_decode_8(&p);
 	if (reply_struct_v != 1)
 		goto bad;
@@ -172,7 +172,7 @@ static int ceph_x_proc_ticket_reply(struct ceph_auth_client *ac,
 		unsigned long new_expires, new_renew_after;
 		u64 new_secret_id;
 
-		ceph_decode_need(&p, end, sizeof(u32) + 1, bad);
+		ceph_decode_need(&p, end, sizeof (u32) + sizeof (u8), bad);
 
 		type = ceph_decode_32(&p);
 		dout(" ticket type %d %s\n", type, ceph_entity_type_name(type));
@@ -236,7 +236,7 @@ static int ceph_x_proc_ticket_reply(struct ceph_auth_client *ac,
 		}
 		tpend = tp + dlen;
 		dout(" ticket blob is %d bytes\n", dlen);
-		ceph_decode_need(&tp, tpend, 1 + sizeof(u64), bad);
+		ceph_decode_need(&tp, tpend, sizeof (u8) + sizeof (u64), bad);
 		blob_struct_v = ceph_decode_8(&tp);
 		new_secret_id = ceph_decode_64(&tp);
 		ret = ceph_decode_buffer(&new_ticket_blob, &tp, tpend);
@@ -341,7 +341,7 @@ out_buf:
 static int ceph_x_encode_ticket(struct ceph_x_ticket_handler *th,
 				void **p, void *end)
 {
-	ceph_encode_need(p, end, 1 + sizeof(u64), bad);
+	ceph_encode_need(p, end, sizeof (u8) + sizeof (u64), bad);
 	ceph_encode_8(p, 1);
 	ceph_encode_64(p, th->secret_id);
 	if (th->ticket_blob) {
