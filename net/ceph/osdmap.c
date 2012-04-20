@@ -204,7 +204,8 @@ static struct crush_map *crush_decode(void *pbyval, void *end)
 		if (b == NULL)
 			goto badmem;
 
-		ceph_decode_need(p, end, 4*sizeof(u32), bad);
+		ceph_decode_need(p, end,
+			3 * sizeof (u32) + sizeof (u16) + 2 * sizeof (u8), bad);
 		b->id = ceph_decode_32(p);
 		b->type = ceph_decode_16(p);
 		b->alg = ceph_decode_8(p);
@@ -455,6 +456,7 @@ static int __decode_pool(void **p, void *end, struct ceph_pg_pool_info *pi)
 {
 	unsigned n, m;
 
+	ceph_decode_need(p, end, sizeof (pi->v), bad);
 	ceph_decode_copy(p, &pi->v, sizeof(pi->v));
 	calc_pg_masks(pi);
 
@@ -596,7 +598,9 @@ struct ceph_osdmap *osdmap_decode(void **p, void *end)
 		goto bad;
 	}
 
-	ceph_decode_need(p, end, 2*sizeof(u64)+6*sizeof(u32), bad);
+	ceph_decode_need(p, end, sizeof (map->fsid) + sizeof (u32) +
+				sizeof (map->created) + sizeof (map->modified),
+				bad);
 	ceph_decode_copy(p, &map->fsid, sizeof(map->fsid));
 	map->epoch = ceph_decode_32(p);
 	ceph_decode_copy(p, &map->created, sizeof(map->created));
@@ -604,7 +608,7 @@ struct ceph_osdmap *osdmap_decode(void **p, void *end)
 
 	ceph_decode_32_safe(p, end, max, bad);
 	while (max--) {
-		ceph_decode_need(p, end, 4 + 1 + sizeof(pi->v), bad);
+		ceph_decode_need(p, end, 4 + 1, bad);
 		pi = kzalloc(sizeof(*pi), GFP_NOFS);
 		if (!pi)
 			goto bad;
@@ -627,10 +631,9 @@ struct ceph_osdmap *osdmap_decode(void **p, void *end)
 	if (version >= 5 && __decode_pool_names(p, end, map) < 0)
 		goto bad;
 
-	ceph_decode_32_safe(p, end, map->pool_max, bad);
-
-	ceph_decode_32_safe(p, end, map->flags, bad);
-
+	ceph_decode_need(p, end, 3 * sizeof (u32), bad);
+	map->pool_max = ceph_decode_32(p);
+	map->flags = ceph_decode_32(p);
 	max = ceph_decode_32(p);
 
 	/* (re)alloc osd arrays */
@@ -663,7 +666,7 @@ struct ceph_osdmap *osdmap_decode(void **p, void *end)
 		struct ceph_pg pgid;
 		struct ceph_pg_mapping *pg;
 
-		ceph_decode_need(p, end, sizeof(u32) + sizeof(u64), bad);
+		ceph_decode_need(p, end, sizeof (pgid) + sizeof (u32), bad);
 		ceph_decode_copy(p, &pgid, sizeof(pgid));
 		n = ceph_decode_32(p);
 		ceph_decode_need(p, end, n * sizeof(u32), bad);
@@ -731,8 +734,8 @@ struct ceph_osdmap *osdmap_apply_incremental(void **p, void *end,
 		goto bad;
 	}
 
-	ceph_decode_need(p, end, sizeof(fsid)+sizeof(modified)+2*sizeof(u32),
-			 bad);
+	ceph_decode_need(p, end,
+		sizeof (fsid) + 3 * sizeof (u32) + sizeof (modified), bad);
 	ceph_decode_copy(p, &fsid, sizeof(fsid));
 	epoch = ceph_decode_32(p);
 	BUG_ON(epoch != map->epoch+1);
@@ -765,10 +768,8 @@ struct ceph_osdmap *osdmap_apply_incremental(void **p, void *end,
 	if (new_pool_max >= 0)
 		map->pool_max = new_pool_max;
 
-	ceph_decode_need(p, end, 5*sizeof(u32), bad);
-
 	/* new max? */
-	max = ceph_decode_32(p);
+	ceph_decode_32_safe(p, end, max, bad);
 	if (max >= 0) {
 		err = osdmap_set_max_osd(map, max);
 		if (err < 0)
@@ -791,7 +792,7 @@ struct ceph_osdmap *osdmap_apply_incremental(void **p, void *end,
 		struct ceph_pg_pool_info *pi;
 
 		ceph_decode_32_safe(p, end, pool, bad);
-		ceph_decode_need(p, end, 1 + sizeof(pi->v), bad);
+		ceph_decode_need(p, end, 1, bad);
 		ev = ceph_decode_8(p);  /* encoding version */
 		if (ev > CEPH_PG_POOL_VERSION) {
 			pr_warning("got unknown v %d > %d of ceph_pg_pool\n",
@@ -878,7 +879,7 @@ struct ceph_osdmap *osdmap_apply_incremental(void **p, void *end,
 		int j;
 		struct ceph_pg pgid;
 		u32 pglen;
-		ceph_decode_need(p, end, sizeof(u64) + sizeof(u32), bad);
+		ceph_decode_need(p, end, sizeof (pgid) + sizeof (u32), bad);
 		ceph_decode_copy(p, &pgid, sizeof(pgid));
 		pglen = ceph_decode_32(p);
 

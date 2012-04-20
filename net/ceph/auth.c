@@ -107,7 +107,7 @@ int ceph_auth_build_hello(struct ceph_auth_client *ac, void *buf, size_t len)
 	monhdr->session_mon = cpu_to_le16(-1);
 	monhdr->session_mon_tid = 0;
 
-	ceph_encode_32(&p, 0);  /* no protocol, yet */
+	ceph_encode_32_safe(&p, end, 0, bad);  /* no protocol, yet */
 
 	lenp = p;
 	p += sizeof(u32);
@@ -126,7 +126,8 @@ int ceph_auth_build_hello(struct ceph_auth_client *ac, void *buf, size_t len)
 	ceph_decode_need(&p, end, sizeof(u64), bad);
 	ceph_encode_64(&p, ac->global_id);
 
-	ceph_encode_32(&lenp, p - lenp - sizeof(u32));
+	ceph_encode_32_safe(&lenp, end, p - lenp - sizeof (u32), bad);
+
 	return p - buf;
 
 bad:

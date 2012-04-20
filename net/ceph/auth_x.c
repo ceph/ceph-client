@@ -70,9 +70,7 @@ static int ceph_x_decrypt(struct ceph_crypto_key *secret,
 	size_t head_len = sizeof(head);
 	int len, ret;
 
-	len = ceph_decode_32(p);
-	if (*p + len > end)
-		return -EINVAL;
+	ceph_decode_32_safe(p, end, len, bad);
 
 	dout("ceph_x_decrypt len %d\n", len);
 	ret = ceph_decrypt2(secret, &head, &head_len, obuf, &olen,
@@ -83,6 +81,8 @@ static int ceph_x_decrypt(struct ceph_crypto_key *secret,
 		return -EPERM;
 	*p += len;
 	return olen;
+bad:
+	return -EINVAL;
 }
 
 /*
@@ -198,7 +198,7 @@ static int ceph_x_proc_ticket_reply(struct ceph_auth_client *ac,
 		dend = dbuf + dlen;
 		dp = dbuf;
 
-		tkt_struct_v = ceph_decode_8(&dp);
+		ceph_decode_8_safe(&dp, end, tkt_struct_v, bad);
 		if (tkt_struct_v != 1)
 			goto bad;
 
@@ -207,7 +207,8 @@ static int ceph_x_proc_ticket_reply(struct ceph_auth_client *ac,
 		if (ret)
 			goto out;
 
-		ceph_decode_copy(&dp, &new_validity, sizeof(new_validity));
+		ceph_decode_copy_safe(&dp, end, &new_validity,
+			sizeof (new_validity), bad);
 		ceph_decode_timespec(&validity, &new_validity);
 		new_expires = get_seconds() + validity.tv_sec;
 		new_renew_after = new_expires - (validity.tv_sec / 4);
@@ -226,7 +227,7 @@ static int ceph_x_proc_ticket_reply(struct ceph_auth_client *ac,
 				ret = dlen;
 				goto out;
 			}
-			dlen = ceph_decode_32(&tp);
+			ceph_decode_32_safe(&tp, end, dlen, bad);
 		} else {
 			/* unencrypted */
 			ceph_decode_32_safe(&p, end, dlen, bad);

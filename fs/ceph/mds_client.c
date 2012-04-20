@@ -180,13 +180,16 @@ static int parse_reply_info_dir(void **p, void *end,
 
 	while (num) {
 		/* dentry */
-		ceph_decode_need(p, end, sizeof(u32)*2, bad);
+		ceph_decode_need(p, end, sizeof (u32), bad);
 		info->dir_dname_len[i] = ceph_decode_32(p);
 		ceph_decode_need(p, end, info->dir_dname_len[i], bad);
 		info->dir_dname[i] = *p;
 		*p += info->dir_dname_len[i];
 		dout("parsed dir dname '%.*s'\n", info->dir_dname_len[i],
 		     info->dir_dname[i]);
+
+		ceph_decode_need(p, end,
+			sizeof (struct ceph_mds_reply_lease), bad);
 		info->dir_dlease[i] = *p;
 		*p += sizeof(struct ceph_mds_reply_lease);
 

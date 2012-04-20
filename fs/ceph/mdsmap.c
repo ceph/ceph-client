@@ -87,11 +87,13 @@ struct ceph_mdsmap *ceph_mdsmap_decode(void **p, void *end)
 		void *pexport_targets = NULL;
 		struct ceph_timespec laggy_since;
 
-		ceph_decode_need(p, end, sizeof(u64)*2 + 1 + sizeof(u32), bad);
+		ceph_decode_need(p, end, 2 * sizeof (u64) + 1, bad);
 		global_id = ceph_decode_64(p);
 		infoversion = ceph_decode_8(p);
 		*p += sizeof(u64);
-		namelen = ceph_decode_32(p);  /* skip mds name */
+
+		ceph_decode_32_safe(p, end, namelen, bad);
+		ceph_decode_need(p, end, namelen, bad);  /* skip mds name */
 		*p += namelen;
 
 		ceph_decode_need(p, end,
@@ -132,6 +134,7 @@ struct ceph_mdsmap *ceph_mdsmap_decode(void **p, void *end)
 				m->m_info[mds].export_targets =
 					kcalloc(num_export_targets, sizeof(u32),
 						GFP_NOFS);
+				/* XXX ceph_decode_need(); */
 				for (j = 0; j < num_export_targets; j++)
 					m->m_info[mds].export_targets[j] =
 					       ceph_decode_32(&pexport_targets);

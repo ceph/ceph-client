@@ -190,6 +190,11 @@ static inline void ceph_encode_string(void **p, void *end,
 		ceph_encode_need(p, end, sizeof(u16), bad);	\
 		ceph_encode_16(p, v);			\
 	} while (0)
+#define ceph_encode_8_safe(p, end, v, bad)			\
+	do {							\
+		ceph_encode_need(p, end, sizeof(u8), bad);	\
+		ceph_encode_8(p, v);				\
+	} while (0)
 
 #define ceph_encode_copy_safe(p, end, pv, n, bad)		\
 	do {							\
