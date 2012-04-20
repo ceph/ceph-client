@@ -839,7 +839,7 @@ void ceph_handle_snap(struct ceph_mds_client *mdsc,
 		dout("splitting snap_realm %llx %p\n", realm->ino, realm);
 		for (i = 0; i < num_split_inos; i++) {
 			struct ceph_vino vino = {
-				.ino = le64_to_cpu(split_inos[i]),
+				.ino = le64_to_ino(split_inos[i]),
 				.snap = CEPH_NOSNAP,
 			};
 			struct inode *inode = ceph_find_inode(sb, vino);

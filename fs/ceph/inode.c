@@ -1038,8 +1038,7 @@ int ceph_fill_trace(struct super_block *sb, struct ceph_mds_request *req,
 		BUG_ON(!dn);
 		BUG_ON(!dir);
 		BUG_ON(dn->d_parent->d_inode != dir);
-		BUG_ON(ceph_ino(dir) !=
-		       le64_to_cpu(rinfo->diri.in->ino));
+		BUG_ON(ceph_ino(dir) != le64_to_ino(rinfo->diri.in->ino));
 		BUG_ON(ceph_snap(dir) !=
 		       le64_to_cpu(rinfo->diri.in->snapid));
 
@@ -1109,7 +1108,7 @@ int ceph_fill_trace(struct super_block *sb, struct ceph_mds_request *req,
 
 		/* attach proper inode */
 		ininfo = rinfo->targeti.in;
-		vino.ino = le64_to_cpu(ininfo->ino);
+		vino.ino = le64_to_ino(ininfo->ino);
 		vino.snap = le64_to_cpu(ininfo->snapid);
 		in = dn->d_inode;
 		if (!in) {
@@ -1156,7 +1155,7 @@ int ceph_fill_trace(struct super_block *sb, struct ceph_mds_request *req,
 		BUG_ON(!req->r_locked_dir);
 		BUG_ON(ceph_snap(req->r_locked_dir) != CEPH_SNAPDIR);
 		ininfo = rinfo->targeti.in;
-		vino.ino = le64_to_cpu(ininfo->ino);
+		vino.ino = le64_to_ino(ininfo->ino);
 		vino.snap = le64_to_cpu(ininfo->snapid);
 		in = ceph_get_inode(sb, vino);
 		if (IS_ERR(in)) {
@@ -1179,7 +1178,7 @@ int ceph_fill_trace(struct super_block *sb, struct ceph_mds_request *req,
 	}
 
 	if (rinfo->head->is_target) {
-		vino.ino = le64_to_cpu(rinfo->targeti.in->ino);
+		vino.ino = le64_to_ino(rinfo->targeti.in->ino);
 		vino.snap = le64_to_cpu(rinfo->targeti.in->snapid);
 
 		if (in == NULL || ceph_ino(in) != vino.ino ||
@@ -1247,7 +1246,7 @@ int ceph_readdir_prepopulate(struct ceph_mds_request *req,
 		dname.len = rinfo->dir_dname_len[i];
 		dname.hash = full_name_hash(dname.name, dname.len);
 
-		vino.ino = le64_to_cpu(rinfo->dir_in[i].in->ino);
+		vino.ino = le64_to_ino(rinfo->dir_in[i].in->ino);
 		vino.snap = le64_to_cpu(rinfo->dir_in[i].in->snapid);
 
 retry_lookup:
@@ -1815,7 +1814,7 @@ int ceph_getattr(struct vfsmount *mnt, struct dentry *dentry,
 
 	err = ceph_do_getattr(inode, CEPH_STAT_CAP_INODE_ALL);
 	if (!err) {
-		u64 snapid;
+		ceph_snapid_t snapid;
 
 		generic_fillattr(inode, stat);
 		stat->ino = ceph_translate_ino(inode->i_sb, inode->i_ino);

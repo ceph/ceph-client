@@ -42,6 +42,11 @@ static inline void ceph_decode_copy(void **p, void *pv, size_t n)
 	*p += n;
 }
 
+static inline ceph_ino_t ceph_decode_ino(void **p)
+{
+	return (ceph_ino_t) ceph_decode_64(p);
+}
+
 /*
  * bounds check input.
  */
@@ -81,6 +86,12 @@ static inline int ceph_has_room(void **p, void *end, size_t n)
 	do {							\
 		ceph_decode_need(p, end, n, bad);		\
 		ceph_decode_copy(p, pv, n);			\
+	} while (0)
+
+#define ceph_decode_ino_safe(p, end, v, bad)			\
+	do {							\
+		ceph_decode_need(p, end, sizeof(u64), bad);	\
+		v = (ceph_ino_t) ceph_decode_64(p);		\
 	} while (0)
 
 /*
@@ -142,17 +153,22 @@ static inline void ceph_encode_copy(void **p, const void *s, int len)
 	memcpy(*p, s, len);
 	*p += len;
 }
+static inline void ceph_encode_ino(void **p, ceph_ino_t v)
+{
+	ceph_encode_64(p, (u64) v);
+}
 
 /*
  * filepath, string encoders
  */
 static inline void ceph_encode_filepath(void **p, void *end,
-					u64 ino, const char *path)
+					ceph_ino_t ino, const char *path)
 {
 	u32 len = path ? strlen(path) : 0;
+
 	BUG_ON(*p + sizeof(ino) + sizeof(len) + len > end);
 	ceph_encode_8(p, 1);
-	ceph_encode_64(p, ino);
+	ceph_encode_ino(p, ino);
 	ceph_encode_32(p, len);
 	if (len)
 		memcpy(*p, path, len);
@@ -207,5 +223,7 @@ static inline void ceph_encode_string(void **p, void *end,
 		ceph_encode_string(p, end, s, n);		\
 	} while (0)
 
+#define ceph_encode_ino_safe(p, end, v, bad)			\
+		ceph_encode_64_safe(p, end, (u64) v, bad)
 
 #endif

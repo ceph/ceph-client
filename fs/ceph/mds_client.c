@@ -1453,7 +1453,9 @@ static u64 __get_oldest_tid(struct ceph_mds_client *mdsc)
  * Encode hidden .snap dirs as a double /, i.e.
  *   foo/.snap/bar -> foo//bar
  */
-char *ceph_mdsc_build_path(struct dentry *dentry, int *plen, u64 *base,
+char *ceph_mdsc_build_path(struct dentry *dentry,
+			   int *plen,
+			   ceph_ino_t *base,
 			   int stop_on_nosnap)
 {
 	struct dentry *temp;
@@ -1546,7 +1548,9 @@ retry:
 }
 
 static int build_dentry_path(struct dentry *dentry,
-			     const char **ppath, int *ppathlen, u64 *pino,
+			     const char **ppath,
+			     int *ppathlen,
+			     ceph_ino_t *pino,
 			     int *pfreepath)
 {
 	char *path;
@@ -1566,7 +1570,9 @@ static int build_dentry_path(struct dentry *dentry,
 }
 
 static int build_inode_path(struct inode *inode,
-			    const char **ppath, int *ppathlen, u64 *pino,
+			    const char **ppath,
+			    int *ppathlen,
+			    ceph_ino_t *pino,
 			    int *pfreepath)
 {
 	struct dentry *dentry;
@@ -1592,9 +1598,9 @@ static int build_inode_path(struct inode *inode,
  * an explicit ino+path.
  */
 static int set_request_path_attr(struct inode *rinode, struct dentry *rdentry,
-				  const char *rpath, u64 rino,
+				  const char *rpath, ceph_ino_t rino,
 				  const char **ppath, int *pathlen,
-				  u64 *ino, int *freepath)
+				  ceph_ino_t *ino, int *freepath)
 {
 	int r = 0;
 
@@ -1628,7 +1634,8 @@ static struct ceph_msg *create_request_message(struct ceph_mds_client *mdsc,
 	struct ceph_mds_request_head *head;
 	const char *path1 = NULL;
 	const char *path2 = NULL;
-	u64 ino1 = 0, ino2 = 0;
+	ceph_ino_t ino1 = 0;
+	ceph_ino_t ino2 = 0;
 	int pathlen1 = 0, pathlen2 = 0;
 	int freepath1 = 0, freepath2 = 0;
 	int len;
@@ -2406,7 +2413,7 @@ static int encode_caps_cb(struct inode *inode, struct ceph_cap *cap,
 	struct ceph_pagelist *pagelist = recon_state->pagelist;
 	char *path;
 	int pathlen, err;
-	u64 pathbase;
+	ceph_ino_t pathbase;
 	struct dentry *dentry;
 	__le64 ino_le;
 	__le32 pathlen_le;
@@ -2755,7 +2762,7 @@ static void handle_lease(struct ceph_mds_client *mdsc,
 	/* decode */
 	if (msg->front.iov_len < sizeof(*h) + sizeof(u32))
 		goto bad;
-	vino.ino = le64_to_cpu(h->ino);
+	vino.ino = le64_to_ino(h->ino);
 	vino.snap = CEPH_NOSNAP;
 	seq = le32_to_cpu(h->seq);
 	dname.name = (void *)h + sizeof(*h) + sizeof(u32);

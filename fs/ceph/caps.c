@@ -924,7 +924,7 @@ void __ceph_remove_cap(struct ceph_cap *cap)
  * Caller should be holding s_mutex.
  */
 static int send_cap_msg(struct ceph_mds_session *session,
-			u64 ino, u64 cid, int op,
+			ceph_ino_t ino, u64 cid, int op,
 			int caps, int wanted, int dirty,
 			u32 seq, u64 flush_tid, u32 issue_seq, u32 mseq,
 			u64 size, u64 max_size,
@@ -990,7 +990,7 @@ static int send_cap_msg(struct ceph_mds_session *session,
 }
 
 static void __queue_cap_release(struct ceph_mds_session *session,
-				u64 ino, u64 cap_id, u32 migrate_seq,
+				ceph_ino_t ino, u64 cap_id, u32 migrate_seq,
 				u32 issue_seq)
 {
 	struct ceph_msg *msg;
@@ -2790,7 +2790,7 @@ void ceph_handle_caps(struct ceph_mds_session *session,
 		goto bad;
 	h = msg->front.iov_base;
 	op = le32_to_cpu(h->op);
-	vino.ino = le64_to_cpu(h->ino);
+	vino.ino = le64_to_ino(h->ino);
 	vino.snap = CEPH_NOSNAP;
 	cap_id = le64_to_cpu(h->cap_id);
 	seq = le32_to_cpu(h->seq);

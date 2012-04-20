@@ -28,7 +28,7 @@
  * Basic fh
  */
 struct ceph_nfs_fh {
-	u64 ino;
+	ceph_ino_t	ino;
 } __attribute__ ((packed));
 
 /*
@@ -36,8 +36,9 @@ struct ceph_nfs_fh {
  * Use this whenever possible, as it works more reliably.
  */
 struct ceph_nfs_confh {
-	u64 ino, parent_ino;
-	u32 parent_name_hash;
+	ceph_ino_t	ino;
+	ceph_ino_t	parent_ino;
+	u32		parent_name_hash;
 } __attribute__ ((packed));
 
 static int ceph_encode_fh(struct dentry *dentry, u32 *rawfh, int *max_len,

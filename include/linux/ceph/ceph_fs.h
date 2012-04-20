@@ -29,8 +29,8 @@
 #define CEPH_MONC_PROTOCOL   15 /* server/client */
 
 
-#define CEPH_INO_ROOT  1
-#define CEPH_INO_CEPH  2        /* hidden .ceph dir */
+#define CEPH_INO_ROOT  ((ceph_ino_t) 1)
+#define CEPH_INO_CEPH  ((ceph_ino_t) 2)		/* hidden .ceph dir */
 
 /* arbitrary limit on max # of monitors (cluster of 3 is typical) */
 #define CEPH_MAX_MON   31

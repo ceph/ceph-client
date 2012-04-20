@@ -53,7 +53,7 @@ static int mdsc_show(struct seq_file *s, void *p)
 	struct ceph_mds_request *req;
 	struct rb_node *rp;
 	int pathlen;
-	u64 pathbase;
+	ceph_ino_t pathbase;
 	char *path;
 
 	mutex_lock(&mdsc->mutex);

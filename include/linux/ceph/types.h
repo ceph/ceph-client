@@ -15,7 +15,7 @@
  * Identify inodes by both their ino AND snapshot id (a u64).
  */
 struct ceph_vino {
-	u64 ino;
+	ceph_ino_t ino;
 	u64 snap;
 };
 

@@ -400,7 +400,7 @@ static inline ino_t ceph_translate_ino(struct super_block *sb, ino_t ino)
 }
 #endif
 
-static inline u64 ceph_ino(struct inode *inode)
+static inline ceph_ino_t ceph_ino(struct inode *inode)
 {
 	return ceph_inode(inode)->i_vino.ino;
 }

@@ -394,7 +394,7 @@ more:
 		     rinfo->dir_dname[off - fi->offset], in);
 		BUG_ON(!in);
 		ftype = le32_to_cpu(in->mode) >> 12;
-		vino.ino = le64_to_cpu(in->ino);
+		vino.ino = le64_to_ino(in->ino);
 		vino.snap = le64_to_cpu(in->snapid);
 		ino = ceph_vino_to_ino(vino);
 		if (filldir(dirent,
