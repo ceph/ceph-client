@@ -1791,11 +1791,19 @@ int ceph_getattr(struct vfsmount *mnt, struct dentry *dentry,
 
 	err = ceph_do_getattr(inode, CEPH_STAT_CAP_INODE_ALL);
 	if (!err) {
+		u64 snapid;
+
 		generic_fillattr(inode, stat);
 		stat->ino = ceph_translate_ino(inode->i_sb, inode->i_ino);
-		if (ceph_snap(inode) != CEPH_NOSNAP)
-			stat->dev = ceph_snap(inode);
-		else
+		snapid = ceph_snap(inode);
+		if (snapid != CEPH_NOSNAP) {
+			u64 dev_snapid = (u64) snapid;
+
+			/* stat->dev is only 32 bits, snapid is 64 */
+			if (WARN_ON(dev_snapid > (u64) ((dev_t) -1)))
+				dev_snapid &= (u64) ((dev_t) -1);
+			stat->dev = (dev_t) dev_snapid;
+		} else
 			stat->dev = 0;
 		if (S_ISDIR(inode->i_mode)) {
 			if (ceph_test_mount_opt(ceph_sb_to_client(inode->i_sb),
