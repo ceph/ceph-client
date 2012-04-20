@@ -2408,6 +2408,8 @@ static int encode_caps_cb(struct inode *inode, struct ceph_cap *cap,
 	int pathlen, err;
 	u64 pathbase;
 	struct dentry *dentry;
+	__le64 ino_le;
+	__le32 pathlen_le;
 
 	ci = cap->ci;
 
@@ -2415,7 +2417,9 @@ static int encode_caps_cb(struct inode *inode, struct ceph_cap *cap,
 	     (unsigned long long) ceph_ino(inode),
 	     (unsigned long long) ceph_snap(inode),
 	     cap, cap->cap_id, ceph_cap_string(cap->issued));
-	err = ceph_pagelist_encode_64(pagelist, ceph_ino(inode));
+
+	ino_le = cpu_to_le64(ceph_ino(inode));
+	err = ceph_pagelist_append(pagelist, &ino_le, sizeof (ino_le));
 	if (err)
 		return err;
 
@@ -2430,7 +2434,10 @@ static int encode_caps_cb(struct inode *inode, struct ceph_cap *cap,
 		path = NULL;
 		pathlen = 0;
 	}
-	err = ceph_pagelist_encode_string(pagelist, path, pathlen);
+	pathlen_le = cpu_to_le32(pathlen);
+	err = ceph_pagelist_append(pagelist, &pathlen_le, sizeof (pathlen_le));
+	if (pathlen && !err)
+		err = ceph_pagelist_append(pagelist, path, pathlen);
 	if (err)
 		goto out_free;
 
@@ -2523,6 +2530,7 @@ static void send_mds_reconnect(struct ceph_mds_client *mdsc,
 	int err = -ENOMEM;
 	struct ceph_pagelist *pagelist;
 	struct ceph_reconnect_state recon_state;
+	__le32 nr_caps_le;
 
 	pr_info("mds%d reconnect start\n", mds);
 
@@ -2554,7 +2562,8 @@ static void send_mds_reconnect(struct ceph_mds_client *mdsc,
 	discard_cap_releases(mdsc, session);
 
 	/* traverse this session's caps */
-	err = ceph_pagelist_encode_32(pagelist, session->s_nr_caps);
+	nr_caps_le = cpu_to_le32(session->s_nr_caps);
+	err = ceph_pagelist_append(pagelist, &nr_caps_le, sizeof (nr_caps_le));
 	if (err)
 		goto fail;
 
