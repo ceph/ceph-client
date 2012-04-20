@@ -185,7 +185,7 @@ struct ceph_osd_req_op {
 			u64 cookie, count;
 		} pgls;
 	        struct {
-		        u64 snapid;
+		        ceph_snapid_t snapid;
 	        } snap;
 		struct {
 			u64 cookie;
@@ -209,7 +209,7 @@ extern void ceph_osdc_handle_map(struct ceph_osd_client *osdc,
 
 extern void ceph_calc_raw_layout(struct ceph_osd_client *osdc,
 			struct ceph_file_layout *layout,
-			u64 snapid,
+			ceph_snapid_t snapid,
 			u64 off, u64 *plen, u64 *bno,
 			struct ceph_osd_request *req,
 			struct ceph_osd_req_op *op);

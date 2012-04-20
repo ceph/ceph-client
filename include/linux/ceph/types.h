@@ -15,14 +15,14 @@
  * Identify inodes by both their ino AND snapshot id (a u64).
  */
 struct ceph_vino {
-	ceph_ino_t ino;
-	u64 snap;
+	ceph_ino_t	ino;
+	ceph_snapid_t	snap;
 };
 
 
 /* context for the caps reservation mechanism */
 struct ceph_cap_reservation {
-	int count;
+	int		count;
 };
 
 

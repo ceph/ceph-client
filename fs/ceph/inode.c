@@ -1040,7 +1040,7 @@ int ceph_fill_trace(struct super_block *sb, struct ceph_mds_request *req,
 		BUG_ON(dn->d_parent->d_inode != dir);
 		BUG_ON(ceph_ino(dir) != le64_to_ino(rinfo->diri.in->ino));
 		BUG_ON(ceph_snap(dir) !=
-		       le64_to_cpu(rinfo->diri.in->snapid));
+		       le64_to_snapid(rinfo->diri.in->snapid));
 
 		/* do we have a lease on the whole dir? */
 		have_dir_cap =
@@ -1109,7 +1109,7 @@ int ceph_fill_trace(struct super_block *sb, struct ceph_mds_request *req,
 		/* attach proper inode */
 		ininfo = rinfo->targeti.in;
 		vino.ino = le64_to_ino(ininfo->ino);
-		vino.snap = le64_to_cpu(ininfo->snapid);
+		vino.snap = le64_to_snapid(ininfo->snapid);
 		in = dn->d_inode;
 		if (!in) {
 			in = ceph_get_inode(sb, vino);
@@ -1156,7 +1156,7 @@ int ceph_fill_trace(struct super_block *sb, struct ceph_mds_request *req,
 		BUG_ON(ceph_snap(req->r_locked_dir) != CEPH_SNAPDIR);
 		ininfo = rinfo->targeti.in;
 		vino.ino = le64_to_ino(ininfo->ino);
-		vino.snap = le64_to_cpu(ininfo->snapid);
+		vino.snap = le64_to_snapid(ininfo->snapid);
 		in = ceph_get_inode(sb, vino);
 		if (IS_ERR(in)) {
 			pr_err("fill_inode get_inode badness %llx.%llx\n",
@@ -1179,7 +1179,7 @@ int ceph_fill_trace(struct super_block *sb, struct ceph_mds_request *req,
 
 	if (rinfo->head->is_target) {
 		vino.ino = le64_to_ino(rinfo->targeti.in->ino);
-		vino.snap = le64_to_cpu(rinfo->targeti.in->snapid);
+		vino.snap = le64_to_snapid(rinfo->targeti.in->snapid);
 
 		if (in == NULL || ceph_ino(in) != vino.ino ||
 		    ceph_snap(in) != vino.snap) {
@@ -1247,7 +1247,7 @@ int ceph_readdir_prepopulate(struct ceph_mds_request *req,
 		dname.hash = full_name_hash(dname.name, dname.len);
 
 		vino.ino = le64_to_ino(rinfo->dir_in[i].in->ino);
-		vino.snap = le64_to_cpu(rinfo->dir_in[i].in->snapid);
+		vino.snap = le64_to_snapid(rinfo->dir_in[i].in->snapid);
 
 retry_lookup:
 		dn = d_lookup(parent, &dname);

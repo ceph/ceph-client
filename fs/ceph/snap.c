@@ -657,14 +657,14 @@ more:
 		goto fail;
 	invalidate += err;
 
-	if (le64_to_cpu(ri->seq) > realm->seq) {
+	if (le64_to_snapid(ri->seq) > realm->seq) {
 		dout("update_snap_trace updating %llx %p %llu -> %llu\n",
 		     realm->ino, realm, (unsigned long long) realm->seq,
 		     (unsigned long long) le64_to_cpu(ri->seq));
 		/* update realm parameters, snap lists */
-		realm->seq = le64_to_cpu(ri->seq);
+		realm->seq = le64_to_snapid(ri->seq);
 		realm->created = le64_to_cpu(ri->created);
-		realm->parent_since = le64_to_cpu(ri->parent_since);
+		realm->parent_since = le64_to_snapid(ri->parent_since);
 
 		realm->num_snaps = le32_to_cpu(ri->num_snaps);
 		err = dup_array(&realm->snaps, snaps, realm->num_snaps);

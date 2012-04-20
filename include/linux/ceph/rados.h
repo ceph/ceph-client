@@ -37,10 +37,13 @@ typedef __u64	ceph_ino_t;	/* A ceph inode number */
 #define le64_to_ino(l64)	((ceph_ino_t) le64_to_cpu(l64))
 #define ino_to_le64(ino)	cpu_to_le64((__u64) ino)
 
-typedef __le64 ceph_snapid_t;
-#define CEPH_SNAPDIR ((__u64)(-1))  /* reserved for hidden .snap dir */
-#define CEPH_NOSNAP  ((__u64)(-2))  /* "head", "live" revision */
-#define CEPH_MAXSNAP ((__u64)(-3))  /* largest valid snapid */
+typedef __u64	ceph_snapid_t;
+#define le64_to_snapid(l64)	((ceph_snapid_t) le64_to_cpu(l64))
+#define snapid_to_le64(snapid)	cpu_to_le64((__u64) snapid)
+
+#define CEPH_SNAPDIR ((ceph_snapid_t) (-1))  /* reserved for hidden .snap dir */
+#define CEPH_NOSNAP  ((ceph_snapid_t) (-2))  /* "head", "live" revision */
+#define CEPH_MAXSNAP ((ceph_snapid_t) (-3))  /* largest valid snapid */
 
 struct ceph_timespec {
 	__le32 tv_sec;

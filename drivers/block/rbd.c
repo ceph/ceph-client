@@ -84,7 +84,7 @@ struct rbd_image_header {
 	__u8 comp_type;
 	struct ceph_snap_context *snapc;
 	size_t snap_names_len;
-	u64 snap_seq;
+	ceph_snapid_t snap_seq;
 	u32 total_snaps;
 
 	char *snap_names;
@@ -143,7 +143,7 @@ struct rbd_snap {
 	const char		*name;
 	u64			size;
 	struct list_head	node;
-	u64			id;
+	ceph_snapid_t		id;
 };
 
 /*
@@ -175,7 +175,7 @@ struct rbd_device {
 	/* protects updating the header */
 	struct rw_semaphore     header_rwsem;
 	char                    snap_name[RBD_MAX_SNAP_NAME_LEN];
-	u64                     snap_id;	/* current snapshot id */
+	ceph_snapid_t		snap_id;	/* current snapshot id */
 	int read_only;
 
 	struct list_head	node;
@@ -527,14 +527,14 @@ static int rbd_header_from_disk(struct rbd_image_header *header,
 	header->comp_type = ondisk->options.comp_type;
 
 	atomic_set(&header->snapc->nref, 1);
-	header->snap_seq = le64_to_cpu(ondisk->snap_seq);
+	header->snap_seq = le64_to_snapid(ondisk->snap_seq);
 	header->snapc->num_snaps = snap_count;
 	header->total_snaps = snap_count;
 
 	if (snap_count && allocated_snaps == snap_count) {
 		for (i = 0; i < snap_count; i++) {
 			header->snapc->snaps[i] =
-				le64_to_cpu(ondisk->snaps[i].id);
+				le64_to_snapid(ondisk->snaps[i].id);
 			header->snap_sizes[i] =
 				le64_to_cpu(ondisk->snaps[i].image_size);
 		}
@@ -554,7 +554,7 @@ err_snapc:
 }
 
 static int snap_by_name(struct rbd_image_header *header, const char *snap_name,
-			u64 *seq, u64 *size)
+			ceph_snapid_t *seq, u64 *size)
 {
 	int i;
 	char *p = header->snap_names;
@@ -850,7 +850,7 @@ static void rbd_coll_end_req(struct rbd_request *req,
 static int rbd_do_request(struct request *rq,
 			  struct rbd_device *dev,
 			  struct ceph_snap_context *snapc,
-			  u64 snapid,
+			  ceph_snapid_t snapid,
 			  const char *obj, u64 ofs, u64 len,
 			  struct bio *bio,
 			  struct page **pages,
@@ -1008,7 +1008,7 @@ static void rbd_simple_req_cb(struct ceph_osd_request *req, struct ceph_msg *msg
  */
 static int rbd_req_sync_op(struct rbd_device *dev,
 			   struct ceph_snap_context *snapc,
-			   u64 snapid,
+			   ceph_snapid_t snapid,
 			   int opcode,
 			   int flags,
 			   struct ceph_osd_req_op *orig_ops,
@@ -1072,7 +1072,7 @@ done:
 static int rbd_do_op(struct request *rq,
 		     struct rbd_device *rbd_dev ,
 		     struct ceph_snap_context *snapc,
-		     u64 snapid,
+		     ceph_snapid_t snapid,
 		     int opcode, int flags, int num_reply,
 		     u64 ofs, u64 len,
 		     struct bio *bio,
@@ -1145,7 +1145,7 @@ static int rbd_req_write(struct request *rq,
  */
 static int rbd_req_read(struct request *rq,
 			 struct rbd_device *rbd_dev,
-			 u64 snapid,
+			 ceph_snapid_t snapid,
 			 u64 ofs, u64 len,
 			 struct bio *bio,
 			 struct rbd_req_coll *coll,
@@ -1164,7 +1164,7 @@ static int rbd_req_read(struct request *rq,
  */
 static int rbd_req_sync_read(struct rbd_device *dev,
 			  struct ceph_snap_context *snapc,
-			  u64 snapid,
+			  ceph_snapid_t snapid,
 			  const char *obj,
 			  u64 ofs, u64 len,
 			  char *buf,
@@ -1633,7 +1633,7 @@ static int rbd_header_add_snap(struct rbd_device *dev,
 			       gfp_t gfp_flags)
 {
 	int name_len = strlen(snap_name);
-	u64 new_snapid;
+	ceph_snapid_t new_snapid;
 	int ret;
 	void *data, *p, *e;
 	u64 ver;
@@ -1657,7 +1657,7 @@ static int rbd_header_add_snap(struct rbd_device *dev,
 	e = data + name_len + 16;
 
 	ceph_encode_string_safe(&p, e, snap_name, name_len, bad);
-	ceph_encode_64_safe(&p, e, new_snapid, bad);
+	ceph_encode_snapid_safe(&p, e, new_snapid, bad);
 
 	ret = rbd_req_sync_exec(dev, dev->obj_md_name, "rbd", "snap_add",
 				data, p - data, &ver);
@@ -1693,7 +1693,7 @@ static int __rbd_refresh_header(struct rbd_device *rbd_dev)
 {
 	int ret;
 	struct rbd_image_header h;
-	u64 snap_seq;
+	ceph_snapid_t snap_seq;
 	int follow_seq = 0;
 
 	ret = rbd_read_header(rbd_dev, &h);
@@ -2062,7 +2062,7 @@ static int __rbd_init_snaps_header(struct rbd_device *rbd_dev)
 	name = first_name + rbd_dev->header.snap_names_len;
 
 	list_for_each_prev_safe(p, n, &rbd_dev->snaps) {
-		u64 cur_id;
+		ceph_snapid_t cur_id;
 
 		old_snap = list_entry(p, struct rbd_snap, node);
 

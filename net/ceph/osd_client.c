@@ -54,7 +54,7 @@ static int op_has_extent(int op)
 
 void ceph_calc_raw_layout(struct ceph_osd_client *osdc,
 			struct ceph_file_layout *layout,
-			u64 snapid,
+			ceph_snapid_t snapid,
 			u64 off, u64 *plen, u64 *bno,
 			struct ceph_osd_request *req,
 			struct ceph_osd_req_op *op)
@@ -405,10 +405,8 @@ void ceph_osdc_build_request(struct ceph_osd_request *req,
 	if (snapc) {
 		head->snap_seq = cpu_to_le64(snapc->seq);
 		head->num_snaps = cpu_to_le32(snapc->num_snaps);
-		for (i = 0; i < snapc->num_snaps; i++) {
-			put_unaligned_le64(snapc->snaps[i], p);
-			p += sizeof(u64);
-		}
+		for (i = 0; i < snapc->num_snaps; i++)
+			ceph_encode_snapid(&p, snapc->snaps[i]);
 	}
 
 	if (flags & CEPH_OSD_FLAG_WRITE) {

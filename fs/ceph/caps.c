@@ -933,18 +933,18 @@ static int send_cap_msg(struct ceph_mds_session *session,
 			uid_t uid, gid_t gid, umode_t mode,
 			u64 xattr_version,
 			struct ceph_buffer *xattrs_buf,
-			u64 follows)
+			ceph_snapid_t follows)
 {
 	struct ceph_mds_caps *fc;
 	struct ceph_msg *msg;
 
 	dout("send_cap_msg %s %llx %llx caps %s wanted %s dirty %s"
-	     " seq %u/%u mseq %u follows %lld size %llu/%llu"
+	     " seq %u/%u mseq %u follows %llu size %llu/%llu"
 	     " xattr_ver %llu xattr_len %d\n", ceph_cap_op_name(op),
 	     cid, (unsigned long long) ino, ceph_cap_string(caps),
-	     ceph_cap_string(wanted), ceph_cap_string(dirty),
-	     seq, issue_seq, mseq, follows, size, max_size,
-	     xattr_version, xattrs_buf ? (int)xattrs_buf->vec.iov_len : 0);
+	     ceph_cap_string(wanted), ceph_cap_string(dirty), seq,
+	     issue_seq, mseq, (unsigned long long) follows, size, max_size,
+	     xattr_version, xattrs_buf ? (int) xattrs_buf->vec.iov_len : 0);
 
 	msg = ceph_msg_new(CEPH_MSG_CLIENT_CAPS, sizeof(*fc), GFP_NOFS, false);
 	if (!msg)
@@ -964,7 +964,7 @@ static int send_cap_msg(struct ceph_mds_session *session,
 	fc->wanted = cpu_to_le32(wanted);
 	fc->dirty = cpu_to_le32(dirty);
 	fc->ino = cpu_to_le64(ino);
-	fc->snap_follows = cpu_to_le64(follows);
+	fc->snap_follows = snapid_to_le64(follows);
 
 	fc->size = cpu_to_le64(size);
 	fc->max_size = cpu_to_le64(max_size);
@@ -1077,7 +1077,8 @@ static int __send_cap(struct ceph_mds_client *mdsc, struct ceph_cap *cap,
 	struct inode *inode = &ci->vfs_inode;
 	u64 cap_id = cap->cap_id;
 	int held, revoking, dropping, keep;
-	u64 seq, issue_seq, mseq, time_warp_seq, follows;
+	u64 seq, issue_seq, mseq, time_warp_seq;
+	ceph_snapid_t follows;
 	u64 size, max_size;
 	struct timespec mtime, atime;
 	int wake = 0;
@@ -1217,7 +1218,7 @@ void __ceph_flush_snaps(struct ceph_inode_info *ci,
 	struct ceph_mds_client *mdsc = ceph_inode_to_client(inode)->mdsc;
 	struct ceph_mds_session *session = NULL; /* if session != NULL, we hold
 						    session->s_mutex */
-	u64 next_follows = 0;  /* keep track of how far we've gotten through the
+	ceph_snapid_t next_follows = 0;  /* keep track of how far we've gotten through the
 			     i_cap_snaps list, and skip these entries next time
 			     around to avoid an infinite loop */
 
@@ -2558,7 +2559,7 @@ static void handle_cap_flushsnap_ack(struct inode *inode, u64 flush_tid,
 				     struct ceph_mds_session *session)
 {
 	struct ceph_inode_info *ci = ceph_inode(inode);
-	u64 follows = le64_to_cpu(m->snap_follows);
+	ceph_snapid_t follows = le64_to_snapid(m->snap_follows);
 	struct ceph_cap_snap *capsnap;
 	int drop = 0;
 

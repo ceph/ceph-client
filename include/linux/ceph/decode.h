@@ -46,6 +46,10 @@ static inline ceph_ino_t ceph_decode_ino(void **p)
 {
 	return (ceph_ino_t) ceph_decode_64(p);
 }
+static inline ceph_snapid_t ceph_decode_snapid(void **p)
+{
+	return (ceph_snapid_t) ceph_decode_64(p);
+}
 
 /*
  * bounds check input.
@@ -92,6 +96,11 @@ static inline int ceph_has_room(void **p, void *end, size_t n)
 	do {							\
 		ceph_decode_need(p, end, sizeof(u64), bad);	\
 		v = (ceph_ino_t) ceph_decode_64(p);		\
+	} while (0)
+#define ceph_decode_snapid_safe(p, end, v, bad)			\
+	do {							\
+		ceph_decode_need(p, end, sizeof(u64), bad);	\
+		v = (ceph_snapid_t) ceph_decode_64(p);		\
 	} while (0)
 
 /*
@@ -153,7 +162,12 @@ static inline void ceph_encode_copy(void **p, const void *s, int len)
 	memcpy(*p, s, len);
 	*p += len;
 }
+
 static inline void ceph_encode_ino(void **p, ceph_ino_t v)
+{
+	ceph_encode_64(p, (u64) v);
+}
+static inline void ceph_encode_snapid(void **p, ceph_snapid_t v)
 {
 	ceph_encode_64(p, (u64) v);
 }
@@ -224,6 +238,9 @@ static inline void ceph_encode_string(void **p, void *end,
 	} while (0)
 
 #define ceph_encode_ino_safe(p, end, v, bad)			\
+		ceph_encode_64_safe(p, end, (u64) v, bad)
+
+#define ceph_encode_snapid_safe(p, end, v, bad)			\
 		ceph_encode_64_safe(p, end, (u64) v, bad)
 
 #endif

@@ -133,7 +133,8 @@ struct ceph_cap_snap {
 	struct ceph_inode_info *ci;
 	struct list_head ci_item, flushing_item;
 
-	u64 follows, flush_tid;
+	ceph_snapid_t follows;
+	u64 flush_tid;
 	int issued, dirty;
 	struct ceph_snap_context *context;
 
@@ -404,7 +405,7 @@ static inline ceph_ino_t ceph_ino(struct inode *inode)
 {
 	return ceph_inode(inode)->i_vino.ino;
 }
-static inline u64 ceph_snap(struct inode *inode)
+static inline ceph_snapid_t ceph_snap(struct inode *inode)
 {
 	return ceph_inode(inode)->i_vino.snap;
 }
@@ -603,9 +604,10 @@ struct ceph_snap_realm {
 	atomic_t nref;
 	struct rb_node node;
 
-	u64 created, seq;
+	u64 created;
+	ceph_snapid_t seq;
 	u64 parent_ino;
-	u64 parent_since;   /* snapid when our current parent became so */
+	ceph_snapid_t parent_since;   /* snapid when our current parent became so */
 
 	u64 *prior_parent_snaps;      /* snaps inherited from any parents we */
 	int num_prior_parent_snaps;   /*  had prior to parent_since */

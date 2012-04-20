@@ -157,10 +157,10 @@ struct ceph_client {
  * dirtied.
  */
 struct ceph_snap_context {
-	atomic_t nref;
-	u64 seq;
-	int num_snaps;
-	u64 snaps[];
+	atomic_t	nref;
+	ceph_snapid_t	seq;
+	int		num_snaps;
+	ceph_snapid_t	snaps[];
 };
 
 static inline struct ceph_snap_context *

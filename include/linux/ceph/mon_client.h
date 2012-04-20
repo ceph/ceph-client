@@ -114,7 +114,7 @@ extern int ceph_monc_open_session(struct ceph_mon_client *monc);
 extern int ceph_monc_validate_auth(struct ceph_mon_client *monc);
 
 extern int ceph_monc_create_snapid(struct ceph_mon_client *monc,
-				   u32 pool, u64 *snapid);
+				   u32 pool, ceph_snapid_t *snapid);
 
 extern int ceph_monc_delete_snapid(struct ceph_mon_client *monc,
 				   u32 pool, u64 snapid);

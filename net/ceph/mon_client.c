@@ -656,7 +656,7 @@ out:
 }
 
 int ceph_monc_create_snapid(struct ceph_mon_client *monc,
-			    u32 pool, u64 *snapid)
+			    u32 pool, ceph_snapid_t *snapid)
 {
 	return ceph_monc_do_poolop(monc,  POOL_OP_CREATE_UNMANAGED_SNAP,
 				   pool, 0, (char *)snapid, sizeof(*snapid));
