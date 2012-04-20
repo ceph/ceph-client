@@ -83,12 +83,14 @@ int ceph_entity_name_encode(const char *name, void **p, void *end)
 {
 	int len = strlen(name);
 
-	if (*p + 2*sizeof(u32) + len > end)
-		return -ERANGE;
+	ceph_encode_need(*p, end, 2 * sizeof (u32) + len, bad);
 	ceph_encode_32(p, CEPH_ENTITY_TYPE_CLIENT);
 	ceph_encode_32(p, len);
 	ceph_encode_copy(p, name, len);
+
 	return 0;
+bad:
+	return -ERANGE;
 }
 
 /*
@@ -112,18 +114,18 @@ int ceph_auth_build_hello(struct ceph_auth_client *ac, void *buf, size_t len)
 	lenp = p;
 	p += sizeof(u32);
 
-	ceph_decode_need(&p, end, 1 + sizeof(u32), bad);
+	ceph_encode_need(&p, end, 1 + sizeof(u32), bad);
 	ceph_encode_8(&p, 1);
 	num = ARRAY_SIZE(supported_protocols);
 	ceph_encode_32(&p, num);
-	ceph_decode_need(&p, end, num * sizeof(u32), bad);
+	ceph_encode_need(&p, end, num * sizeof(u32), bad);
 	for (i = 0; i < num; i++)
 		ceph_encode_32(&p, supported_protocols[i]);
 
 	ret = ceph_entity_name_encode(ac->name, &p, end);
 	if (ret < 0)
 		return ret;
-	ceph_decode_need(&p, end, sizeof(u64), bad);
+	ceph_encode_need(&p, end, sizeof(u64), bad);
 	ceph_encode_64(&p, ac->global_id);
 
 	ceph_encode_32_safe(&lenp, end, p - lenp - sizeof (u32), bad);
@@ -146,16 +148,17 @@ static int ceph_build_auth_request(struct ceph_auth_client *ac,
 	monhdr->session_mon = cpu_to_le16(-1);
 	monhdr->session_mon_tid = 0;
 
-	ceph_encode_32(&p, ac->protocol);
-
-	ret = ac->ops->build_request(ac, p + sizeof(u32), end);
+	/* Protocol and length fields at front are filled in below. */
+	ret = ac->ops->build_request(ac, p + 2 * sizeof (u32), end);
 	if (ret < 0) {
 		pr_err("error %d building auth method %s request\n", ret,
 		       ac->ops->name);
 		return ret;
 	}
-	dout(" built request %d bytes\n", ret);
+	ceph_encode_32(&p, ac->protocol);
 	ceph_encode_32(&p, ret);
+	dout(" built request %d bytes\n", ret);
+
 	return p + ret - msg_buf;
 }
 

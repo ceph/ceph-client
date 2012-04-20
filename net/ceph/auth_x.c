@@ -341,7 +341,7 @@ out_buf:
 static int ceph_x_encode_ticket(struct ceph_x_ticket_handler *th,
 				void **p, void *end)
 {
-	ceph_decode_need(p, end, 1 + sizeof(u64), bad);
+	ceph_encode_need(p, end, 1 + sizeof(u64), bad);
 	ceph_encode_8(p, 1);
 	ceph_encode_64(p, th->secret_id);
 	if (th->ticket_blob) {
