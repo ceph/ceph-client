@@ -76,23 +76,27 @@ static int mdsc_show(struct seq_file *s, void *p)
 			seq_printf(s, "\t");
 
 		if (req->r_inode) {
-			seq_printf(s, " #%llx", ceph_ino(req->r_inode));
+			seq_printf(s, " #%llx",
+				(unsigned long long) ceph_ino(req->r_inode));
 		} else if (req->r_dentry) {
-			path = ceph_mdsc_build_path(req->r_dentry, &pathlen,
+			struct dentry *dentry = req->r_dentry;
+
+			path = ceph_mdsc_build_path(dentry, &pathlen,
 						    &pathbase, 0);
 			if (IS_ERR(path))
 				path = NULL;
-			spin_lock(&req->r_dentry->d_lock);
+			spin_lock(&dentry->d_lock);
 			seq_printf(s, " #%llx/%.*s (%s)",
-				   ceph_ino(req->r_dentry->d_parent->d_inode),
-				   req->r_dentry->d_name.len,
-				   req->r_dentry->d_name.name,
-				   path ? path : "");
-			spin_unlock(&req->r_dentry->d_lock);
+				(unsigned long long)
+					ceph_ino(dentry->d_parent->d_inode),
+				dentry->d_name.len, dentry->d_name.name,
+				path ? path : "");
+			spin_unlock(&dentry->d_lock);
 			kfree(path);
 		} else if (req->r_path1) {
-			seq_printf(s, " #%llx/%s", req->r_ino1.ino,
-				   req->r_path1);
+			seq_printf(s, " #%llx/%s",
+				(unsigned long long) req->r_ino1.ino,
+				req->r_path1);
 		}
 
 		if (req->r_old_dentry) {
@@ -102,15 +106,17 @@ static int mdsc_show(struct seq_file *s, void *p)
 				path = NULL;
 			spin_lock(&req->r_old_dentry->d_lock);
 			seq_printf(s, " #%llx/%.*s (%s)",
-			   ceph_ino(req->r_old_dentry_dir),
-				   req->r_old_dentry->d_name.len,
-				   req->r_old_dentry->d_name.name,
-				   path ? path : "");
+				(unsigned long long)
+					ceph_ino(req->r_old_dentry_dir),
+				req->r_old_dentry->d_name.len,
+				req->r_old_dentry->d_name.name,
+				path ? path : "");
 			spin_unlock(&req->r_old_dentry->d_lock);
 			kfree(path);
 		} else if (req->r_path2) {
 			if (req->r_ino2.ino)
-				seq_printf(s, " #%llx/%s", req->r_ino2.ino,
+				seq_printf(s, " #%llx/%s",
+					(unsigned long long) req->r_ino2.ino,
 					   req->r_path2);
 			else
 				seq_printf(s, " %s", req->r_path2);

@@ -613,8 +613,9 @@ retry:
 		ci->i_auth_cap = NULL;
 
 	dout("add_cap inode %p (%llx.%llx) cap %p %s now %s seq %d mds%d\n",
-	     inode, ceph_ino(inode), ceph_snap(inode), cap,
-	     ceph_cap_string(issued), ceph_cap_string(issued|cap->issued),
+		inode, (unsigned long long) ceph_ino(inode),
+		ceph_snap(inode), cap, ceph_cap_string(issued),
+		ceph_cap_string(issued|cap->issued),
 	     seq, mds);
 	cap->cap_id = cap_id;
 	cap->issued = issued;
@@ -940,8 +941,8 @@ static int send_cap_msg(struct ceph_mds_session *session,
 	dout("send_cap_msg %s %llx %llx caps %s wanted %s dirty %s"
 	     " seq %u/%u mseq %u follows %lld size %llu/%llu"
 	     " xattr_ver %llu xattr_len %d\n", ceph_cap_op_name(op),
-	     cid, ino, ceph_cap_string(caps), ceph_cap_string(wanted),
-	     ceph_cap_string(dirty),
+	     cid, (unsigned long long) ino, ceph_cap_string(caps),
+	     ceph_cap_string(wanted), ceph_cap_string(dirty),
 	     seq, issue_seq, mseq, follows, size, max_size,
 	     xattr_version, xattrs_buf ? (int)xattrs_buf->vec.iov_len : 0);
 
@@ -1002,7 +1003,8 @@ static void __queue_cap_release(struct ceph_mds_session *session,
 			       struct ceph_msg, list_head);
 
 	dout(" adding %llx release to mds%d msg %p (%d left)\n",
-	     ino, session->s_mds, msg, session->s_num_cap_releases);
+		(unsigned long long) ino, session->s_mds, msg,
+		session->s_num_cap_releases);
 
 	BUG_ON(msg->front.iov_len + sizeof(*item) > PAGE_CACHE_SIZE);
 	head = msg->front.iov_base;
@@ -2817,10 +2819,11 @@ void ceph_handle_caps(struct ceph_mds_session *session,
 	/* lookup ino */
 	inode = ceph_find_inode(sb, vino);
 	ci = ceph_inode(inode);
-	dout(" op %s ino %llx.%llx inode %p\n", ceph_cap_op_name(op), vino.ino,
-	     vino.snap, inode);
+	dout(" op %s ino %llx.%llx inode %p\n", ceph_cap_op_name(op),
+		(unsigned long long) vino.ino,
+		vino.snap, inode);
 	if (!inode) {
-		dout(" i don't have ino %llx\n", vino.ino);
+		dout(" i don't have ino %llx\n", (unsigned long long) vino.ino);
 
 		if (op == CEPH_CAP_OP_IMPORT)
 			__queue_cap_release(session, vino.ino, cap_id,
@@ -2850,7 +2853,8 @@ void ceph_handle_caps(struct ceph_mds_session *session,
 	cap = __get_cap_for_mds(ceph_inode(inode), mds);
 	if (!cap) {
 		dout(" no cap on %p ino %llx.%llx from mds%d\n",
-		     inode, ceph_ino(inode), ceph_snap(inode), mds);
+			inode, (unsigned long long) ceph_ino(inode),
+			ceph_snap(inode), mds);
 		spin_unlock(&ci->i_ceph_lock);
 		goto flush_cap_releases;
 	}

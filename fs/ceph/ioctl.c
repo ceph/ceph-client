@@ -203,7 +203,7 @@ static long ceph_ioctl_get_dataloc(struct file *file, void __user *arg)
 	dl.block_offset = do_div(tmp, dl.block_size);
 
 	snprintf(dl.object_name, sizeof(dl.object_name), "%llx.%08llx",
-		 ceph_ino(inode), dl.object_no);
+		 (unsigned long long) ceph_ino(inode), dl.object_no);
 	ceph_calc_object_layout(&ol, dl.object_name, &ci->i_layout,
 				osdc->osdmap);
 

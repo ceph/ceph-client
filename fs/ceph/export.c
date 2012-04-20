@@ -97,7 +97,7 @@ static struct dentry *__fh_to_dentry(struct super_block *sb,
 	struct ceph_vino vino;
 	int err;
 
-	dout("__fh_to_dentry %llx\n", fh->ino);
+	dout("__fh_to_dentry %llx\n", (unsigned long long) fh->ino);
 	vino.ino = fh->ino;
 	vino.snap = CEPH_NOSNAP;
 	inode = ceph_find_inode(sb, vino);
@@ -123,7 +123,7 @@ static struct dentry *__fh_to_dentry(struct super_block *sb,
 	dentry = d_obtain_alias(inode);
 	if (IS_ERR(dentry)) {
 		pr_err("fh_to_dentry %llx -- inode %p but ENOMEM\n",
-		       fh->ino, inode);
+		       (unsigned long long) fh->ino, inode);
 		iput(inode);
 		return dentry;
 	}
@@ -132,7 +132,8 @@ static struct dentry *__fh_to_dentry(struct super_block *sb,
 		iput(inode);
 		return ERR_PTR(err);
 	}
-	dout("__fh_to_dentry %llx %p dentry %p\n", fh->ino, inode, dentry);
+	dout("__fh_to_dentry %llx %p dentry %p\n",
+		(unsigned long long) fh->ino, inode, dentry);
 	return dentry;
 }
 
@@ -148,8 +149,8 @@ static struct dentry *__cfh_to_dentry(struct super_block *sb,
 	struct ceph_vino vino;
 	int err;
 
-	dout("__cfh_to_dentry %llx (%llx/%x)\n",
-	     cfh->ino, cfh->parent_ino, cfh->parent_name_hash);
+	dout("__cfh_to_dentry %llx (%llx/%x)\n", (unsigned long long) cfh->ino,
+		(unsigned long long) cfh->parent_ino, cfh->parent_name_hash);
 
 	vino.ino = cfh->ino;
 	vino.snap = CEPH_NOSNAP;
@@ -180,7 +181,7 @@ static struct dentry *__cfh_to_dentry(struct super_block *sb,
 	dentry = d_obtain_alias(inode);
 	if (IS_ERR(dentry)) {
 		pr_err("cfh_to_dentry %llx -- inode %p but ENOMEM\n",
-		       cfh->ino, inode);
+		       (unsigned long long) cfh->ino, inode);
 		iput(inode);
 		return dentry;
 	}
@@ -189,7 +190,8 @@ static struct dentry *__cfh_to_dentry(struct super_block *sb,
 		iput(inode);
 		return ERR_PTR(err);
 	}
-	dout("__cfh_to_dentry %llx %p dentry %p\n", cfh->ino, inode, dentry);
+	dout("__cfh_to_dentry %llx %p dentry %p\n",
+		(unsigned long long) cfh->ino, inode, dentry);
 	return dentry;
 }
 
@@ -221,8 +223,8 @@ static struct dentry *ceph_fh_to_parent(struct super_block *sb,
 	if (fh_type == 1)
 		return ERR_PTR(-ESTALE);
 
-	pr_debug("fh_to_parent %llx/%d\n", cfh->parent_ino,
-		 cfh->parent_name_hash);
+	pr_debug("fh_to_parent %llx/%d\n",
+		(unsigned long long) cfh->parent_ino, cfh->parent_name_hash);
 
 	vino.ino = cfh->ino;
 	vino.snap = CEPH_NOSNAP;
@@ -233,7 +235,7 @@ static struct dentry *ceph_fh_to_parent(struct super_block *sb,
 	dentry = d_obtain_alias(inode);
 	if (IS_ERR(dentry)) {
 		pr_err("fh_to_parent %llx -- inode %p but ENOMEM\n",
-		       cfh->ino, inode);
+		       (unsigned long long) cfh->ino, inode);
 		iput(inode);
 		return dentry;
 	}
@@ -242,7 +244,9 @@ static struct dentry *ceph_fh_to_parent(struct super_block *sb,
 		iput(inode);
 		return ERR_PTR(err);
 	}
-	dout("fh_to_parent %llx %p dentry %p\n", cfh->ino, inode, dentry);
+	dout("fh_to_parent %llx %p dentry %p\n",
+		(unsigned long long) cfh->ino, inode, dentry);
+
 	return dentry;
 }
 

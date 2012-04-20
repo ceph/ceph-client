@@ -124,7 +124,8 @@ static void calc_layout(struct ceph_osd_client *osdc,
 	ceph_calc_raw_layout(osdc, layout, vino.snap, off,
 			     plen, &bno, req, op);
 
-	snprintf(req->r_oid, sizeof(req->r_oid), "%llx.%08llx", vino.ino, bno);
+	snprintf(req->r_oid, sizeof(req->r_oid), "%llx.%08llx",
+		(unsigned long long) vino.ino, bno);
 	req->r_oid_len = strlen(req->r_oid);
 }
 
@@ -1896,8 +1897,8 @@ int ceph_osdc_readpages(struct ceph_osd_client *osdc,
 	struct ceph_osd_request *req;
 	int rc = 0;
 
-	dout("readpages on ino %llx.%llx on %llu~%llu\n", vino.ino,
-	     vino.snap, off, *plen);
+	dout("readpages on ino %llx.%llx on %llu~%llu\n",
+		(unsigned long long) vino.ino, vino.snap, off, *plen);
 	req = ceph_osdc_new_request(osdc, layout, vino, off, plen,
 				    CEPH_OSD_OP_READ, CEPH_OSD_FLAG_READ,
 				    NULL, 0, truncate_seq, truncate_size, NULL,

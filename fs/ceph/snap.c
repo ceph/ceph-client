@@ -321,9 +321,9 @@ static int build_snap_context(struct ceph_snap_realm *realm)
 	    realm->cached_context->seq == realm->seq &&
 	    (!parent ||
 	     realm->cached_context->seq >= parent->cached_context->seq)) {
-		dout("build_snap_context %llx %p: %p seq %lld (%d snaps)"
-		     " (unchanged)\n",
-		     realm->ino, realm, realm->cached_context,
+		dout("build_snap_context %llu %p: %p seq %lld (%d snaps)"
+		     " (unchanged)\n", (unsigned long long) realm->ino,
+		     realm, realm->cached_context,
 		     realm->cached_context->seq,
 		     realm->cached_context->num_snaps);
 		return 0;

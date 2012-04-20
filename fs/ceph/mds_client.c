@@ -713,8 +713,9 @@ static int __choose_mds(struct ceph_mds_client *mdsc,
 				r %= frag.ndist;
 				mds = frag.dist[r];
 				dout("choose_mds %p %llx.%llx "
-				     "frag %u mds%d (%d/%d)\n",
-				     inode, ceph_ino(inode), ceph_snap(inode),
+				     "frag %u mds%d (%d/%d)\n", inode,
+				     (unsigned long long) ceph_ino(inode),
+				     ceph_snap(inode),
 				     frag.frag, mds,
 				     (int)r, frag.ndist);
 				if (ceph_mdsmap_get_state(mdsc->mdsmap, mds) >=
@@ -730,8 +731,9 @@ static int __choose_mds(struct ceph_mds_client *mdsc,
 				/* choose auth mds */
 				mds = frag.mds;
 				dout("choose_mds %p %llx.%llx "
-				     "frag %u mds%d (auth)\n",
-				     inode, ceph_ino(inode), ceph_snap(inode),
+				     "frag %u mds%d (auth)\n", inode,
+				     (unsigned long long) ceph_ino(inode),
+				     ceph_snap(inode),
 				     frag.frag, mds);
 				if (ceph_mdsmap_get_state(mdsc->mdsmap, mds) >=
 				    CEPH_MDS_STATE_ACTIVE)
@@ -751,9 +753,10 @@ static int __choose_mds(struct ceph_mds_client *mdsc,
 		goto random;
 	}
 	mds = cap->session->s_mds;
-	dout("choose_mds %p %llx.%llx mds%d (%scap %p)\n",
-	     inode, ceph_ino(inode), ceph_snap(inode), mds,
-	     cap == ci->i_auth_cap ? "auth " : "", cap);
+	dout("choose_mds %p %llx.%llx mds%d (%scap %p)\n", inode,
+		(unsigned long long) ceph_ino(inode),
+		ceph_snap(inode), mds,
+		cap == ci->i_auth_cap ? "auth " : "", cap);
 	spin_unlock(&ci->i_ceph_lock);
 	return mds;
 
@@ -969,7 +972,7 @@ static int remove_session_caps_cb(struct inode *inode, struct ceph_cap *cap,
 		if (!list_empty(&ci->i_dirty_item)) {
 			pr_info(" dropping dirty %s state for %p %lld\n",
 				ceph_cap_string(ci->i_dirty_caps),
-				inode, ceph_ino(inode));
+				inode, (unsigned long long) ceph_ino(inode));
 			ci->i_dirty_caps = 0;
 			list_del_init(&ci->i_dirty_item);
 			drop = 1;
@@ -977,7 +980,7 @@ static int remove_session_caps_cb(struct inode *inode, struct ceph_cap *cap,
 		if (!list_empty(&ci->i_flushing_item)) {
 			pr_info(" dropping dirty+flushing %s state for %p %lld\n",
 				ceph_cap_string(ci->i_flushing_caps),
-				inode, ceph_ino(inode));
+				inode, (unsigned long long) ceph_ino(inode));
 			ci->i_flushing_caps = 0;
 			list_del_init(&ci->i_flushing_item);
 			mdsc->num_cap_flushing--;
@@ -985,7 +988,7 @@ static int remove_session_caps_cb(struct inode *inode, struct ceph_cap *cap,
 		}
 		if (drop && ci->i_wrbuffer_ref) {
 			pr_info(" dropping dirty data for %p %lld\n",
-				inode, ceph_ino(inode));
+				inode, (unsigned long long) ceph_ino(inode));
 			ci->i_wrbuffer_ref = 0;
 			ci->i_wrbuffer_ref_head = 0;
 			drop++;
@@ -1539,7 +1542,7 @@ retry:
 	*base = ceph_ino(temp->d_inode);
 	*plen = len;
 	dout("build_path on %p %d built %llx '%.*s'\n",
-	     dentry, dentry->d_count, *base, len, path);
+	     dentry, dentry->d_count, (unsigned long long) *base, len, path);
 	return path;
 }
 
@@ -1598,12 +1601,13 @@ static int set_request_path_attr(struct inode *rinode, struct dentry *rdentry,
 
 	if (rinode) {
 		r = build_inode_path(rinode, ppath, pathlen, ino, freepath);
-		dout(" inode %p %llx.%llx\n", rinode, ceph_ino(rinode),
-		     ceph_snap(rinode));
+		dout(" inode %p %llx.%llx\n", rinode,
+			(unsigned long long) ceph_ino(rinode),
+			ceph_snap(rinode));
 	} else if (rdentry) {
 		r = build_dentry_path(rdentry, ppath, pathlen, ino, freepath);
-		dout(" dentry %p %llx/%.*s\n", rdentry, *ino, *pathlen,
-		     *ppath);
+		dout(" dentry %p %llx/%.*s\n", rdentry,
+			(unsigned long long) *ino, *pathlen, *ppath);
 	} else if (rpath || rino) {
 		*ino = rino;
 		*ppath = rpath;
@@ -2408,8 +2412,9 @@ static int encode_caps_cb(struct inode *inode, struct ceph_cap *cap,
 
 	ci = cap->ci;
 
-	dout(" adding %p ino %llx.%llx cap %p %lld %s\n",
-	     inode, ceph_ino(inode), ceph_snap(inode),
+	dout(" adding %p ino %llx.%llx cap %p %lld %s\n", inode,
+	     (unsigned long long) ceph_ino(inode),
+	     ceph_snap(inode),
 	     cap, cap->cap_id, ceph_cap_string(cap->issued));
 	err = ceph_pagelist_encode_64(pagelist, ceph_ino(inode));
 	if (err)
@@ -2755,10 +2760,12 @@ static void handle_lease(struct ceph_mds_client *mdsc,
 	/* lookup inode */
 	inode = ceph_find_inode(sb, vino);
 	dout("handle_lease %s, ino %llx %p %.*s\n",
-	     ceph_lease_op_name(h->action), vino.ino, inode,
+	     ceph_lease_op_name(h->action),
+	     (unsigned long long) vino.ino, inode,
 	     dname.len, dname.name);
 	if (inode == NULL) {
-		dout("handle_lease no inode %llx\n", vino.ino);
+		dout("handle_lease no inode %llx\n",
+			(unsigned long long) vino.ino);
 		goto release;
 	}
 
