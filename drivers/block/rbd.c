@@ -1219,8 +1219,8 @@ static void rbd_watch_cb(u64 ver, u64 notify_id, u8 opcode, void *data)
 	if (!dev)
 		return;
 
-	dout("rbd_watch_cb %s notify_id=%lld opcode=%d\n", dev->obj_md_name,
-		notify_id, (int)opcode);
+	dout("rbd_watch_cb %s notify_id=%llu opcode=%d\n", dev->obj_md_name,
+		(unsigned long long) notify_id, (int) opcode);
 	mutex_lock_nested(&ctl_mutex, SINGLE_DEPTH_NESTING);
 	rc = __rbd_refresh_header(dev);
 	mutex_unlock(&ctl_mutex);
@@ -1315,8 +1315,8 @@ static void rbd_notify_cb(u64 ver, u64 notify_id, u8 opcode, void *data)
 	if (!dev)
 		return;
 
-	dout("rbd_notify_cb %s notify_id=%lld opcode=%d\n", dev->obj_md_name,
-		notify_id, (int)opcode);
+	dout("rbd_notify_cb %s notify_id=%llu opcode=%d\n", dev->obj_md_name,
+		(unsigned long long) notify_id, (int) opcode);
 }
 
 /*
@@ -1645,7 +1645,7 @@ static int rbd_header_add_snap(struct rbd_device *dev,
 
 	monc = &dev->rbd_client->client->monc;
 	ret = ceph_monc_create_snapid(monc, dev->poolid, &new_snapid);
-	dout("created snapid=%lld\n", new_snapid);
+	dout("created snapid=%llu\n", (unsigned long long) new_snapid);
 	if (ret < 0)
 		return ret;
 

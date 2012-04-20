@@ -715,7 +715,7 @@ static int __choose_mds(struct ceph_mds_client *mdsc,
 				dout("choose_mds %p %llx.%llx "
 				     "frag %u mds%d (%d/%d)\n", inode,
 				     (unsigned long long) ceph_ino(inode),
-				     ceph_snap(inode),
+				     (unsigned long long) ceph_snap(inode),
 				     frag.frag, mds,
 				     (int)r, frag.ndist);
 				if (ceph_mdsmap_get_state(mdsc->mdsmap, mds) >=
@@ -733,7 +733,7 @@ static int __choose_mds(struct ceph_mds_client *mdsc,
 				dout("choose_mds %p %llx.%llx "
 				     "frag %u mds%d (auth)\n", inode,
 				     (unsigned long long) ceph_ino(inode),
-				     ceph_snap(inode),
+				     (unsigned long long) ceph_snap(inode),
 				     frag.frag, mds);
 				if (ceph_mdsmap_get_state(mdsc->mdsmap, mds) >=
 				    CEPH_MDS_STATE_ACTIVE)
@@ -755,7 +755,7 @@ static int __choose_mds(struct ceph_mds_client *mdsc,
 	mds = cap->session->s_mds;
 	dout("choose_mds %p %llx.%llx mds%d (%scap %p)\n", inode,
 		(unsigned long long) ceph_ino(inode),
-		ceph_snap(inode), mds,
+		(unsigned long long) ceph_snap(inode), mds,
 		cap == ci->i_auth_cap ? "auth " : "", cap);
 	spin_unlock(&ci->i_ceph_lock);
 	return mds;
@@ -1603,7 +1603,7 @@ static int set_request_path_attr(struct inode *rinode, struct dentry *rdentry,
 		r = build_inode_path(rinode, ppath, pathlen, ino, freepath);
 		dout(" inode %p %llx.%llx\n", rinode,
 			(unsigned long long) ceph_ino(rinode),
-			ceph_snap(rinode));
+			(unsigned long long) ceph_snap(rinode));
 	} else if (rdentry) {
 		r = build_dentry_path(rdentry, ppath, pathlen, ino, freepath);
 		dout(" dentry %p %llx/%.*s\n", rdentry,
@@ -2414,7 +2414,7 @@ static int encode_caps_cb(struct inode *inode, struct ceph_cap *cap,
 
 	dout(" adding %p ino %llx.%llx cap %p %lld %s\n", inode,
 	     (unsigned long long) ceph_ino(inode),
-	     ceph_snap(inode),
+	     (unsigned long long) ceph_snap(inode),
 	     cap, cap->cap_id, ceph_cap_string(cap->issued));
 	err = ceph_pagelist_encode_64(pagelist, ceph_ino(inode));
 	if (err)
@@ -2575,8 +2575,9 @@ static void send_mds_reconnect(struct ceph_mds_client *mdsc,
 			rb_entry(p, struct ceph_snap_realm, node);
 		struct ceph_mds_snaprealm_reconnect sr_rec;
 
-		dout(" adding snap realm %llx seq %lld parent %llx\n",
-		     realm->ino, realm->seq, realm->parent_ino);
+		dout(" adding snap realm %llx seq %llu parent %llx\n",
+		     realm->ino, (unsigned long long) realm->seq,
+		     realm->parent_ino);
 		sr_rec.ino = cpu_to_le64(realm->ino);
 		sr_rec.seq = cpu_to_le64(realm->seq);
 		sr_rec.parent = cpu_to_le64(realm->parent_ino);

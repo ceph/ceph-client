@@ -95,11 +95,11 @@ static int ceph_set_page_dirty(struct page *page)
 		ihold(inode);
 	++ci->i_wrbuffer_ref;
 	dout("%p set_page_dirty %p idx %lu head %d/%d -> %d/%d "
-	     "snapc %p seq %lld (%d snaps)\n",
+	     "snapc %p seq %llu (%d snaps)\n",
 	     mapping->host, page, page->index,
 	     ci->i_wrbuffer_ref-1, ci->i_wrbuffer_ref_head-1,
 	     ci->i_wrbuffer_ref, ci->i_wrbuffer_ref_head,
-	     snapc, snapc->seq, snapc->num_snaps);
+	     snapc, (unsigned long long) snapc->seq, snapc->num_snaps);
 	spin_unlock(&ci->i_ceph_lock);
 
 	/* now adjust page */
@@ -710,8 +710,8 @@ retry:
 		dout(" no snap context with dirty data?\n");
 		goto out;
 	}
-	dout(" oldest snapc is %p seq %lld (%d snaps)\n",
-	     snapc, snapc->seq, snapc->num_snaps);
+	dout(" oldest snapc is %p seq %llu (%d snaps)\n",
+	     snapc, (unsigned long long) snapc->seq, snapc->num_snaps);
 	if (last_snapc && snapc != last_snapc) {
 		/* if we switched to a newer snapc, restart our scan at the
 		 * start of the original file range. */
@@ -797,8 +797,9 @@ get_more_pages:
 			/* only if matching snap context */
 			pgsnapc = (void *)page->private;
 			if (pgsnapc->seq > snapc->seq) {
-				dout("page snapc %p %lld > oldest %p %lld\n",
-				     pgsnapc, pgsnapc->seq, snapc, snapc->seq);
+				dout("page snapc %p %llu > oldest %p %llu\n",
+				     pgsnapc, (unsigned long long) pgsnapc->seq,
+				     snapc, (unsigned long long) snapc->seq);
 				unlock_page(page);
 				if (!locked_pages)
 					continue; /* keep looking for snap */

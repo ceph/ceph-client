@@ -321,10 +321,10 @@ static int build_snap_context(struct ceph_snap_realm *realm)
 	    realm->cached_context->seq == realm->seq &&
 	    (!parent ||
 	     realm->cached_context->seq >= parent->cached_context->seq)) {
-		dout("build_snap_context %llu %p: %p seq %lld (%d snaps)"
+		dout("build_snap_context %llu %p: %p seq %llu (%d snaps)"
 		     " (unchanged)\n", (unsigned long long) realm->ino,
 		     realm, realm->cached_context,
-		     realm->cached_context->seq,
+		     (unsigned long long) realm->cached_context->seq,
 		     realm->cached_context->num_snaps);
 		return 0;
 	}
@@ -361,8 +361,9 @@ static int build_snap_context(struct ceph_snap_realm *realm)
 
 	sort(snapc->snaps, num, sizeof(u64), cmpu64_rev, NULL);
 	snapc->num_snaps = num;
-	dout("build_snap_context %llx %p: %p seq %lld (%d snaps)\n",
-	     realm->ino, realm, snapc, snapc->seq, snapc->num_snaps);
+	dout("build_snap_context %llx %p: %p seq %llu (%d snaps)\n",
+	     realm->ino, realm, snapc, (unsigned long long) snapc->seq,
+	     snapc->num_snaps);
 
 	if (realm->cached_context)
 		ceph_put_snap_context(realm->cached_context);
@@ -517,7 +518,7 @@ void ceph_queue_cap_snap(struct ceph_inode_info *ci)
 		if (used & CEPH_CAP_FILE_WR) {
 			dout("queue_cap_snap %p cap_snap %p snapc %p"
 			     " seq %llu used WR, now pending\n", inode,
-			     capsnap, snapc, snapc->seq);
+			     capsnap, snapc, (unsigned long long) snapc->seq);
 			capsnap->writing = 1;
 		} else {
 			/* note mtime, size NOW. */
@@ -553,16 +554,17 @@ int __ceph_finish_cap_snap(struct ceph_inode_info *ci,
 	capsnap->time_warp_seq = ci->i_time_warp_seq;
 	if (capsnap->dirty_pages) {
 		dout("finish_cap_snap %p cap_snap %p snapc %p %llu %s s=%llu "
-		     "still has %d dirty pages\n", inode, capsnap,
-		     capsnap->context, capsnap->context->seq,
+		     "still has %d dirty pages\n",
+		     inode, capsnap, capsnap->context,
+		     (unsigned long long) capsnap->context->seq,
 		     ceph_cap_string(capsnap->dirty), capsnap->size,
 		     capsnap->dirty_pages);
 		return 0;
 	}
 	dout("finish_cap_snap %p cap_snap %p snapc %p %llu %s s=%llu\n",
 	     inode, capsnap, capsnap->context,
-	     capsnap->context->seq, ceph_cap_string(capsnap->dirty),
-	     capsnap->size);
+	     (unsigned long long) capsnap->context->seq,
+	     ceph_cap_string(capsnap->dirty), capsnap->size);
 
 	spin_lock(&mdsc->snap_flush_lock);
 	list_add_tail(&ci->i_snap_flush_item, &mdsc->snap_flush_list);
@@ -656,8 +658,9 @@ more:
 	invalidate += err;
 
 	if (le64_to_cpu(ri->seq) > realm->seq) {
-		dout("update_snap_trace updating %llx %p %lld -> %lld\n",
-		     realm->ino, realm, realm->seq, le64_to_cpu(ri->seq));
+		dout("update_snap_trace updating %llx %p %llu -> %llu\n",
+		     realm->ino, realm, (unsigned long long) realm->seq,
+		     (unsigned long long) le64_to_cpu(ri->seq));
 		/* update realm parameters, snap lists */
 		realm->seq = le64_to_cpu(ri->seq);
 		realm->created = le64_to_cpu(ri->created);
@@ -680,12 +683,12 @@ more:
 
 		invalidate = 1;
 	} else if (!realm->cached_context) {
-		dout("update_snap_trace %llx %p seq %lld new\n",
-		     realm->ino, realm, realm->seq);
+		dout("update_snap_trace %llx %p seq %llu new\n",
+		     realm->ino, realm, (unsigned long long) realm->seq);
 		invalidate = 1;
 	} else {
-		dout("update_snap_trace %llx %p seq %lld unchanged\n",
-		     realm->ino, realm, realm->seq);
+		dout("update_snap_trace %llx %p seq %llu unchanged\n",
+		     realm->ino, realm, (unsigned long long) realm->seq);
 	}
 
 	dout("done with %llx %p, invalidated=%d, %p %p\n", realm->ino,

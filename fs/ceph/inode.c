@@ -53,13 +53,13 @@ struct inode *ceph_get_inode(struct super_block *sb, struct ceph_vino vino)
 	if (inode->i_state & I_NEW) {
 		dout("get_inode created new inode %p %llx.%llx ino %llx\n",
 		     inode, (unsigned long long) ceph_ino(inode),
-		     ceph_snap(inode), (u64) inode->i_ino);
+		     (unsigned long long) ceph_snap(inode), (u64) inode->i_ino);
 		unlock_new_inode(inode);
 	}
 
 	dout("get_inode on %lu=%llx.%llx got %p\n", inode->i_ino,
 		(unsigned long long) vino.ino,
-		vino.snap, inode);
+		(unsigned long long) vino.snap, inode);
 	return inode;
 }
 
@@ -136,7 +136,7 @@ static struct ceph_inode_frag *__get_or_create_frag(struct ceph_inode_info *ci,
 		pr_err("__get_or_create_frag ENOMEM on %p %llx.%llx "
 		       "frag %x\n", &ci->vfs_inode,
 		       (unsigned long long) ceph_ino(&ci->vfs_inode),
-		       ceph_snap(&ci->vfs_inode), f);
+		       (unsigned long long) ceph_snap(&ci->vfs_inode), f);
 		return ERR_PTR(-ENOMEM);
 	}
 	frag->frag = f;
@@ -149,7 +149,7 @@ static struct ceph_inode_frag *__get_or_create_frag(struct ceph_inode_info *ci,
 
 	dout("get_or_create_frag added %llx.%llx frag %x\n",
 		(unsigned long long) ceph_ino(&ci->vfs_inode),
-		ceph_snap(&ci->vfs_inode), f);
+		(unsigned long long) ceph_snap(&ci->vfs_inode), f);
 
 	return frag;
 }
@@ -252,7 +252,7 @@ static int ceph_fill_dirfrag(struct inode *inode,
 			dout("fill_dirfrag removed %llx.%llx frag %x"
 			     " (no ref)\n",
 			     (unsigned long long) ceph_ino(inode),
-			     ceph_snap(inode), id);
+			     (unsigned long long) ceph_snap(inode), id);
 			rb_erase(&frag->node, &ci->i_fragtree);
 			kfree(frag);
 		} else {
@@ -260,7 +260,7 @@ static int ceph_fill_dirfrag(struct inode *inode,
 			dout("fill_dirfrag cleared %llx.%llx frag %x"
 			     " referral\n",
 			     (unsigned long long) ceph_ino(inode),
-			     ceph_snap(inode), id);
+			     (unsigned long long) ceph_snap(inode), id);
 			frag->mds = -1;
 			frag->ndist = 0;
 		}
@@ -275,7 +275,7 @@ static int ceph_fill_dirfrag(struct inode *inode,
 		   with bad/inaccurate delegation info */
 		pr_err("fill_dirfrag ENOMEM on mds ref %llx.%llx fg %x\n",
 			(unsigned long long) ceph_ino(inode),
-			ceph_snap(inode), le32_to_cpu(dirinfo->frag));
+			(unsigned long long) ceph_snap(inode), le32_to_cpu(dirinfo->frag));
 		err = -ENOMEM;
 		goto out;
 	}
@@ -286,7 +286,7 @@ static int ceph_fill_dirfrag(struct inode *inode,
 		frag->dist[i] = le32_to_cpu(dirinfo->dist[i]);
 	dout("fill_dirfrag %llx.%llx frag %x ndist=%d\n",
 		(unsigned long long) ceph_ino(inode),
-		ceph_snap(inode), frag->frag, frag->ndist);
+		(unsigned long long) ceph_snap(inode), frag->frag, frag->ndist);
 
 out:
 	mutex_unlock(&ci->i_fragtree_mutex);
@@ -406,7 +406,7 @@ void ceph_destroy_inode(struct inode *inode)
 
 	dout("destroy_inode %p ino %llx.%llx\n", inode,
 		(unsigned long long) ceph_ino(inode),
-		ceph_snap(inode));
+		(unsigned long long) ceph_snap(inode));
 
 	ceph_queue_caps_release(inode);
 
@@ -583,7 +583,8 @@ static int fill_inode(struct inode *inode,
 
 	dout("fill_inode %p ino %llx.%llx v %llu had %llu\n", inode,
 		(unsigned long long) ceph_ino(inode),
-		ceph_snap(inode), le64_to_cpu(info->version), ci->i_version);
+		(unsigned long long) ceph_snap(inode),
+		le64_to_cpu(info->version), ci->i_version);
 
 	/*
 	 * prealloc xattr data, if it looks like we'll need it.  only
@@ -727,7 +728,7 @@ static int fill_inode(struct inode *inode,
 	default:
 		pr_err("fill_inode %llx.%llx BAD mode 0%o\n",
 			(unsigned long long) ceph_ino(inode),
-			ceph_snap(inode), inode->i_mode);
+			(unsigned long long) ceph_snap(inode), inode->i_mode);
 	}
 
 no_change:
@@ -777,7 +778,7 @@ no_change:
 	} else if (cap_fmode >= 0) {
 		pr_warning("mds issued no caps on %llx.%llx\n",
 			(unsigned long long) ceph_ino(inode),
-			ceph_snap(inode));
+			(unsigned long long) ceph_snap(inode));
 		__ceph_get_fmode(ci, cap_fmode);
 	}
 
@@ -914,7 +915,7 @@ static struct dentry *splice_dentry(struct dentry *dn, struct inode *in,
 		pr_err("splice_dentry error %ld %p inode %p ino %llx.%llx\n",
 		       PTR_ERR(realdn), dn, in,
 		       (unsigned long long) ceph_ino(in),
-		       ceph_snap(in));
+		       (unsigned long long) ceph_snap(in));
 		if (prehash)
 			*prehash = false; /* don't rehash on error */
 		dn = realdn; /* note realdn contains the error */
@@ -924,14 +925,14 @@ static struct dentry *splice_dentry(struct dentry *dn, struct inode *in,
 			"inode %p ino %llx.%llx\n", dn, dn->d_count,
 			realdn, realdn->d_count, realdn->d_inode,
 			(unsigned long long) ceph_ino(realdn->d_inode),
-			ceph_snap(realdn->d_inode));
+			(unsigned long long) ceph_snap(realdn->d_inode));
 		dput(dn);
 		dn = realdn;
 	} else {
 		BUG_ON(!ceph_dentry(dn));
 		dout("dn %p attached to %p ino %llx.%llx\n", dn, dn->d_inode,
 			(unsigned long long) ceph_ino(realdn->d_inode),
-			ceph_snap(realdn->d_inode));
+			(unsigned long long) ceph_snap(realdn->d_inode));
 	}
 	if ((!prehash || *prehash) && d_unhashed(dn))
 		d_rehash(dn);
@@ -1116,7 +1117,7 @@ int ceph_fill_trace(struct super_block *sb, struct ceph_mds_request *req,
 			if (IS_ERR(in)) {
 				pr_err("fill_trace bad get_inode %llx.%llx\n",
 				       (unsigned long long) vino.ino,
-				       vino.snap);
+				       (unsigned long long) vino.snap);
 				err = PTR_ERR(in);
 				d_delete(dn);
 				goto done;
@@ -1134,9 +1135,9 @@ int ceph_fill_trace(struct super_block *sb, struct ceph_mds_request *req,
 		} else {
 			dout(" %p links to %p %llx.%llx, not %llx.%llx\n",
 			     dn, in, (unsigned long long) ceph_ino(in),
-			     ceph_snap(in),
+			     (unsigned long long) ceph_snap(in),
 			     (unsigned long long) vino.ino,
-			     vino.snap);
+			     (unsigned long long) vino.snap);
 			have_lease = false;
 			in = NULL;
 		}
@@ -1161,7 +1162,7 @@ int ceph_fill_trace(struct super_block *sb, struct ceph_mds_request *req,
 		if (IS_ERR(in)) {
 			pr_err("fill_inode get_inode badness %llx.%llx\n",
 				(unsigned long long) vino.ino,
-				vino.snap);
+				(unsigned long long) vino.snap);
 			err = PTR_ERR(in);
 			d_delete(dn);
 			goto done;
@@ -1200,7 +1201,7 @@ int ceph_fill_trace(struct super_block *sb, struct ceph_mds_request *req,
 		if (err < 0) {
 			pr_err("fill_inode badness %p %llx.%llx\n", in,
 				(unsigned long long) ceph_ino(in),
-				ceph_snap(in));
+				(unsigned long long) ceph_snap(in));
 			goto done;
 		}
 	}

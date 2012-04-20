@@ -614,8 +614,8 @@ retry:
 
 	dout("add_cap inode %p (%llx.%llx) cap %p %s now %s seq %d mds%d\n",
 		inode, (unsigned long long) ceph_ino(inode),
-		ceph_snap(inode), cap, ceph_cap_string(issued),
-		ceph_cap_string(issued|cap->issued),
+		(unsigned long long) ceph_snap(inode), cap,
+		ceph_cap_string(issued), ceph_cap_string(issued|cap->issued),
 	     seq, mds);
 	cap->cap_id = cap_id;
 	cap->issued = issued;
@@ -1292,7 +1292,8 @@ retry:
 		spin_unlock(&ci->i_ceph_lock);
 
 		dout("flush_snaps %p cap_snap %p follows %lld tid %llu\n",
-		     inode, capsnap, capsnap->follows, capsnap->flush_tid);
+			inode, capsnap, (unsigned long long) capsnap->follows,
+			capsnap->flush_tid);
 		send_cap_msg(session, ceph_vino(inode).ino, 0,
 			     CEPH_CAP_OP_FLUSHSNAP, capsnap->issued, 0,
 			     capsnap->dirty, 0, capsnap->flush_tid, 0, mseq,
@@ -2261,8 +2262,8 @@ void ceph_put_wrbuffer_cap_refs(struct ceph_inode_info *ci, int nr,
 				drop_capsnap = 1;
 		}
 		dout("put_wrbuffer_cap_refs on %p cap_snap %p "
-		     " snap %lld %d/%d -> %d/%d %s%s%s\n",
-		     inode, capsnap, capsnap->context->seq,
+		     " snap %llu %d/%d -> %d/%d %s%s%s\n", inode, capsnap,
+		     (unsigned long long) capsnap->context->seq,
 		     ci->i_wrbuffer_ref+nr, capsnap->dirty_pages + nr,
 		     ci->i_wrbuffer_ref, capsnap->dirty_pages,
 		     last ? " (wrbuffer last)" : "",
@@ -2561,21 +2562,22 @@ static void handle_cap_flushsnap_ack(struct inode *inode, u64 flush_tid,
 	struct ceph_cap_snap *capsnap;
 	int drop = 0;
 
-	dout("handle_cap_flushsnap_ack inode %p ci %p mds%d follows %lld\n",
-	     inode, ci, session->s_mds, follows);
+	dout("handle_cap_flushsnap_ack inode %p ci %p mds%d follows %llu\n",
+	     inode, ci, session->s_mds, (unsigned long long) follows);
 
 	spin_lock(&ci->i_ceph_lock);
 	list_for_each_entry(capsnap, &ci->i_cap_snaps, ci_item) {
 		if (capsnap->follows == follows) {
 			if (capsnap->flush_tid != flush_tid) {
-				dout(" cap_snap %p follows %lld tid %lld !="
-				     " %lld\n", capsnap, follows,
+				dout(" cap_snap %p follows %llu tid %lld !="
+				     " %lld\n", capsnap,
+				     (unsigned long long) follows,
 				     flush_tid, capsnap->flush_tid);
 				break;
 			}
 			WARN_ON(capsnap->dirty_pages || capsnap->writing);
-			dout(" removing %p cap_snap %p follows %lld\n",
-			     inode, capsnap, follows);
+			dout(" removing %p cap_snap %p follows %llu\n",
+			     inode, capsnap, (unsigned long long) follows);
 			ceph_put_snap_context(capsnap->context);
 			list_del(&capsnap->ci_item);
 			list_del(&capsnap->flushing_item);
@@ -2583,8 +2585,8 @@ static void handle_cap_flushsnap_ack(struct inode *inode, u64 flush_tid,
 			drop = 1;
 			break;
 		} else {
-			dout(" skipping cap_snap %p follows %lld\n",
-			     capsnap, capsnap->follows);
+			dout(" skipping cap_snap %p follows %llu\n",
+			     capsnap, (unsigned long long) capsnap->follows);
 		}
 	}
 	spin_unlock(&ci->i_ceph_lock);
@@ -2821,7 +2823,7 @@ void ceph_handle_caps(struct ceph_mds_session *session,
 	ci = ceph_inode(inode);
 	dout(" op %s ino %llx.%llx inode %p\n", ceph_cap_op_name(op),
 		(unsigned long long) vino.ino,
-		vino.snap, inode);
+		(unsigned long long) vino.snap, inode);
 	if (!inode) {
 		dout(" i don't have ino %llx\n", (unsigned long long) vino.ino);
 
@@ -2854,7 +2856,7 @@ void ceph_handle_caps(struct ceph_mds_session *session,
 	if (!cap) {
 		dout(" no cap on %p ino %llx.%llx from mds%d\n",
 			inode, (unsigned long long) ceph_ino(inode),
-			ceph_snap(inode), mds);
+			(unsigned long long) ceph_snap(inode), mds);
 		spin_unlock(&ci->i_ceph_lock);
 		goto flush_cap_releases;
 	}
