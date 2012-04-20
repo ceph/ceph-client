@@ -54,8 +54,7 @@ int ceph_decode_buffer(struct ceph_buffer **b, void **p, void *end)
 {
 	size_t len;
 
-	ceph_decode_need(p, end, sizeof(u32), bad);
-	len = ceph_decode_32(p);
+	ceph_decode_32_safe(p, end, len, bad);
 	dout("decode_buffer len %d\n", (int)len);
 	ceph_decode_need(p, end, len, bad);
 	*b = ceph_buffer_new(len, GFP_NOFS);

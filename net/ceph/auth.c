@@ -125,8 +125,7 @@ int ceph_auth_build_hello(struct ceph_auth_client *ac, void *buf, size_t len)
 	ret = ceph_entity_name_encode(ac->name, &p, end);
 	if (ret < 0)
 		return ret;
-	ceph_encode_need(&p, end, sizeof(u64), bad);
-	ceph_encode_64(&p, ac->global_id);
+	ceph_encode_64_safe(&p, end, ac->global_id, bad);
 
 	ceph_encode_32_safe(&lenp, end, p - lenp - sizeof (u32), bad);
 
@@ -188,8 +187,7 @@ int ceph_handle_auth_reply(struct ceph_auth_client *ac,
 	payload_len = ceph_decode_32(&p);
 	payload = p;
 	p += payload_len;
-	ceph_decode_need(&p, end, sizeof(u32), bad);
-	result_msg_len = ceph_decode_32(&p);
+	ceph_decode_32_safe(&p, end, result_msg_len, bad);
 	result_msg = p;
 	p += result_msg_len;
 	if (p != end)

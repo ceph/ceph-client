@@ -73,8 +73,7 @@ static int ceph_auth_none_create_authorizer(
 		ret = ceph_entity_name_encode(ac->name, &p, end - 8);
 		if (ret < 0)
 			goto bad;
-		ceph_encode_need(&p, end, sizeof(u64), bad2);
-		ceph_encode_64(&p, ac->global_id);
+		ceph_encode_64_safe(&p, end, ac->global_id, bad2);
 		au->buf_len = p - (void *)au->buf;
 		ai->built_authorizer = true;
 		dout("built authorizer len %d\n", au->buf_len);

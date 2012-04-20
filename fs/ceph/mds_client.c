@@ -180,8 +180,7 @@ static int parse_reply_info_dir(void **p, void *end,
 
 	while (num) {
 		/* dentry */
-		ceph_decode_need(p, end, sizeof (u32), bad);
-		info->dir_dname_len[i] = ceph_decode_32(p);
+		ceph_decode_32_safe(p, end, info->dir_dname_len[i], bad);
 		ceph_decode_need(p, end, info->dir_dname_len[i], bad);
 		info->dir_dname[i] = *p;
 		*p += info->dir_dname_len[i];

@@ -456,8 +456,7 @@ static int __decode_pool(void **p, void *end, struct ceph_pg_pool_info *pi)
 {
 	unsigned n, m;
 
-	ceph_decode_need(p, end, sizeof (pi->v), bad);
-	ceph_decode_copy(p, &pi->v, sizeof(pi->v));
+	ceph_decode_copy_safe(p, end, &pi->v, sizeof(pi->v), bad);
 	calc_pg_masks(pi);
 
 	/* num_snaps * snap_info_t */
@@ -468,7 +467,7 @@ static int __decode_pool(void **p, void *end, struct ceph_pg_pool_info *pi)
 		*p += sizeof(u64) +       /* key */
 			1 + sizeof(u64) + /* u8, snapid */
 			sizeof(struct ceph_timespec);
-		m = ceph_decode_32(p);    /* snap name */
+		ceph_decode_32_safe(p, end, m, bad);	/* snap name */
 		*p += m;
 	}
 
@@ -792,8 +791,7 @@ struct ceph_osdmap *osdmap_apply_incremental(void **p, void *end,
 		struct ceph_pg_pool_info *pi;
 
 		ceph_decode_32_safe(p, end, pool, bad);
-		ceph_decode_need(p, end, 1, bad);
-		ev = ceph_decode_8(p);  /* encoding version */
+		ceph_decode_8_safe(p, end, ev, bad);  /* encoding version */
 		if (ev > CEPH_PG_POOL_VERSION) {
 			pr_warning("got unknown v %d > %d of ceph_pg_pool\n",
 				   ev, CEPH_PG_POOL_VERSION);
