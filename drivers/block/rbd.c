@@ -3643,10 +3643,9 @@ static ssize_t rbd_add(struct bus_type *bus,
 
 	/* pick the pool */
 	osdc = &rbdc->client->osdc;
-	rc = ceph_pg_poolid_by_name(osdc->osdmap, spec->pool_name);
-	if (rc < 0)
+	spec->pool_id = ceph_pg_pool_id_by_name(osdc->osdmap, spec->pool_name);
+	if (spec->pool_id == CEPH_NOPOOL)
 		goto err_out_client;
-	spec->pool_id = (u64) rc;
 
 	rbd_dev = rbd_dev_create(rbdc, spec);
 	if (!rbd_dev)

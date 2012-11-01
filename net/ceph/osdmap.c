@@ -485,19 +485,21 @@ const char *ceph_pg_pool_name_by_id(struct ceph_osdmap *map, u64 id)
 }
 EXPORT_SYMBOL(ceph_pg_pool_name_by_id);
 
-int ceph_pg_poolid_by_name(struct ceph_osdmap *map, const char *name)
+__u64 ceph_pg_pool_id_by_name(struct ceph_osdmap *map, const char *name)
 {
 	struct rb_node *rbp;
 
 	for (rbp = rb_first(&map->pg_pools); rbp; rbp = rb_next(rbp)) {
-		struct ceph_pg_pool_info *pi =
-			rb_entry(rbp, struct ceph_pg_pool_info, node);
+		struct ceph_pg_pool_info *pi;
+
+		pi = rb_entry(rbp, struct ceph_pg_pool_info, node);
 		if (pi->name && strcmp(pi->name, name) == 0)
-			return pi->id;
+			return (__u64) pi->id;
 	}
-	return -ENOENT;
+
+	return CEPH_NOPOOL;
 }
-EXPORT_SYMBOL(ceph_pg_poolid_by_name);
+EXPORT_SYMBOL(ceph_pg_pool_id_by_name);
 
 static void __remove_pg_pool(struct rb_root *root, struct ceph_pg_pool_info *pi)
 {

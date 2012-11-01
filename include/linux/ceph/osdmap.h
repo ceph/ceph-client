@@ -124,6 +124,6 @@ extern int ceph_calc_pg_primary(struct ceph_osdmap *osdmap,
 				struct ceph_pg pgid);
 
 extern const char *ceph_pg_pool_name_by_id(struct ceph_osdmap *map, u64 id);
-extern int ceph_pg_poolid_by_name(struct ceph_osdmap *map, const char *name);
+extern __u64 ceph_pg_pool_id_by_name(struct ceph_osdmap *map, const char *name);
 
 #endif
