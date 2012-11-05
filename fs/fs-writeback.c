@@ -455,7 +455,7 @@ __writeback_single_inode(struct inode *inode, struct bdi_writeback *wb,
 	 * This is important for filesystems that modify metadata on data
 	 * I/O completion.
 	 */
-	if (wbc->sync_mode == WB_SYNC_ALL) {
+	if (wbc->sync_mode == WB_SYNC_ALL && nr_to_write > 0) {
 		int err = filemap_fdatawait(mapping);
 		if (ret == 0)
 			ret = err;
