@@ -1526,7 +1526,6 @@ static int rbd_req_sync_exec(struct rbd_device *rbd_dev,
 			     size_t outbound_size,
 			     char *inbound,
 			     size_t inbound_size,
-			     int flags,
 			     u64 *ver)
 {
 	struct ceph_osd_req_op *ops;
@@ -1557,8 +1556,7 @@ static int rbd_req_sync_exec(struct rbd_device *rbd_dev,
 	ops[0].cls.indata_len = outbound_size;
 
 	ret = rbd_req_sync_op(rbd_dev, NULL,
-			       CEPH_NOSNAP,
-			       flags, ops,
+			       CEPH_NOSNAP, CEPH_OSD_FLAG_READ, ops,
 			       object_name, 0, inbound_size, inbound,
 			       NULL, ver);
 
@@ -2413,8 +2411,7 @@ static int _rbd_dev_v2_snap_size(struct rbd_device *rbd_dev, u64 snap_id,
 	ret = rbd_req_sync_exec(rbd_dev, rbd_dev->header_name,
 				"rbd", "get_size",
 				(char *) &snapid, sizeof (snapid),
-				(char *) &size_buf, sizeof (size_buf),
-				CEPH_OSD_FLAG_READ, NULL);
+				(char *) &size_buf, sizeof (size_buf), NULL);
 	dout("%s: rbd_req_sync_exec returned %d\n", __func__, ret);
 	if (ret < 0)
 		return ret;
@@ -2449,8 +2446,7 @@ static int rbd_dev_v2_object_prefix(struct rbd_device *rbd_dev)
 	ret = rbd_req_sync_exec(rbd_dev, rbd_dev->header_name,
 				"rbd", "get_object_prefix",
 				NULL, 0,
-				reply_buf, RBD_OBJ_PREFIX_LEN_MAX,
-				CEPH_OSD_FLAG_READ, NULL);
+				reply_buf, RBD_OBJ_PREFIX_LEN_MAX, NULL);
 	dout("%s: rbd_req_sync_exec returned %d\n", __func__, ret);
 	if (ret < 0)
 		goto out;
@@ -2489,7 +2485,7 @@ static int _rbd_dev_v2_snap_features(struct rbd_device *rbd_dev, u64 snap_id,
 				"rbd", "get_features",
 				(char *) &snapid, sizeof (snapid),
 				(char *) &features_buf, sizeof (features_buf),
-				CEPH_OSD_FLAG_READ, NULL);
+				NULL);
 	dout("%s: rbd_req_sync_exec returned %d\n", __func__, ret);
 	if (ret < 0)
 		return ret;
@@ -2544,8 +2540,7 @@ static int rbd_dev_v2_parent_info(struct rbd_device *rbd_dev)
 	ret = rbd_req_sync_exec(rbd_dev, rbd_dev->header_name,
 				"rbd", "get_parent",
 				(char *) &snapid, sizeof (snapid),
-				(char *) reply_buf, size,
-				CEPH_OSD_FLAG_READ, NULL);
+				(char *) reply_buf, size, NULL);
 	dout("%s: rbd_req_sync_exec returned %d\n", __func__, ret);
 	if (ret < 0)
 		goto out_err;
@@ -2610,8 +2605,7 @@ static char *rbd_dev_image_name(struct rbd_device *rbd_dev)
 	ret = rbd_req_sync_exec(rbd_dev, RBD_DIRECTORY,
 				"rbd", "dir_get_name",
 				image_id, image_id_size,
-				(char *) reply_buf, size,
-				CEPH_OSD_FLAG_READ, NULL);
+				(char *) reply_buf, size, NULL);
 	if (ret < 0)
 		goto out;
 	p = reply_buf;
@@ -2717,8 +2711,7 @@ static int rbd_dev_v2_snap_context(struct rbd_device *rbd_dev, u64 *ver)
 	ret = rbd_req_sync_exec(rbd_dev, rbd_dev->header_name,
 				"rbd", "get_snapcontext",
 				NULL, 0,
-				reply_buf, size,
-				CEPH_OSD_FLAG_READ, ver);
+				reply_buf, size, ver);
 	dout("%s: rbd_req_sync_exec returned %d\n", __func__, ret);
 	if (ret < 0)
 		goto out;
@@ -2787,8 +2780,7 @@ static char *rbd_dev_v2_snap_name(struct rbd_device *rbd_dev, u32 which)
 	ret = rbd_req_sync_exec(rbd_dev, rbd_dev->header_name,
 				"rbd", "get_snapshot_name",
 				(char *) &snap_id, sizeof (snap_id),
-				reply_buf, size,
-				CEPH_OSD_FLAG_READ, NULL);
+				reply_buf, size, NULL);
 	dout("%s: rbd_req_sync_exec returned %d\n", __func__, ret);
 	if (ret < 0)
 		goto out;
@@ -3396,8 +3388,7 @@ static int rbd_dev_image_id(struct rbd_device *rbd_dev)
 	ret = rbd_req_sync_exec(rbd_dev, object_name,
 				"rbd", "get_id",
 				NULL, 0,
-				response, RBD_IMAGE_ID_LEN_MAX,
-				CEPH_OSD_FLAG_READ, NULL);
+				response, RBD_IMAGE_ID_LEN_MAX, NULL);
 	dout("%s: rbd_req_sync_exec returned %d\n", __func__, ret);
 	if (ret < 0)
 		goto out;
