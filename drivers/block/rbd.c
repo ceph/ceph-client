@@ -1333,6 +1333,7 @@ static int rbd_do_op(struct request *rq,
 	} else {
 		opcode = CEPH_OSD_OP_READ;
 		flags = CEPH_OSD_FLAG_READ;
+		ceph_put_snap_context(snapc);
 		snapc = NULL;
 		snapid = rbd_dev->spec->snap_id;
 		payload_len = 0;
