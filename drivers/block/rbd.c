@@ -229,7 +229,7 @@ struct rbd_device {
 	spinlock_t		lock;		/* queue lock */
 
 	struct rbd_image_header	header;
-	bool                    exists;
+	atomic_t		exists;
 	struct rbd_spec		*spec;
 
 	char			*header_name;
@@ -753,7 +753,7 @@ static int rbd_dev_set_mapping(struct rbd_device *rbd_dev)
 			goto done;
 		rbd_dev->mapping.read_only = true;
 	}
-	rbd_dev->exists = true;
+	atomic_set(&rbd_dev->exists, 1);
 done:
 	return ret;
 }
@@ -1333,8 +1333,7 @@ static int rbd_do_op(struct request *rq,
 	} else {
 		opcode = CEPH_OSD_OP_READ;
 		flags = CEPH_OSD_FLAG_READ;
-		ceph_put_snap_context(snapc);
-		snapc = NULL;
+		rbd_assert(!snapc);
 		snapid = rbd_dev->spec->snap_id;
 		payload_len = 0;
 	}
@@ -1652,6 +1651,7 @@ static void rbd_rq_fn(struct request_queue *q)
 
 	while ((rq = blk_fetch_request(q))) {
 		struct ceph_snap_context *snapc = NULL;
+		bool write_request = rq_data_dir(rq) == WRITE;
 		int result;
 
 		dout("fetched request\n");
@@ -1667,19 +1667,17 @@ static void rbd_rq_fn(struct request_queue *q)
 		/* Stop writes to a read-only device */
 
 		result = -EROFS;
-		if (read_only && rq_data_dir(rq) == WRITE)
+		if (read_only && write_request)
 			goto out_end_request;
 
-		/* Grab a reference to the snapshot context */
+		/* Grab a reference to the snapshot context if needed */
 
-		down_read(&rbd_dev->header_rwsem);
-		if (rbd_dev->exists) {
+		if (write_request) {
+			down_read(&rbd_dev->header_rwsem);
 			snapc = ceph_get_snap_context(rbd_dev->header.snapc);
 			rbd_assert(snapc != NULL);
-		}
-		up_read(&rbd_dev->header_rwsem);
-
-		if (!snapc) {
+			up_read(&rbd_dev->header_rwsem);
+		} else if (!atomic_read(&rbd_dev->exists)) {
 			rbd_assert(rbd_dev->spec->snap_id != CEPH_NOSNAP);
 			dout("request for non-existent snapshot");
 			result = -ENXIO;
@@ -2295,6 +2293,7 @@ struct rbd_device *rbd_dev_create(struct rbd_client *rbdc,
 		return NULL;
 
 	spin_lock_init(&rbd_dev->lock);
+	atomic_set(&rbd_dev->exists, 0);
 	INIT_LIST_HEAD(&rbd_dev->node);
 	INIT_LIST_HEAD(&rbd_dev->snaps);
 	init_rwsem(&rbd_dev->header_rwsem);
@@ -2919,7 +2918,7 @@ static int rbd_dev_snaps_update(struct rbd_device *rbd_dev)
 			/* Existing snapshot not in the new snap context */
 
 			if (rbd_dev->spec->snap_id == snap->id)
-				rbd_dev->exists = false;
+				atomic_set(&rbd_dev->exists, 0);
 			rbd_remove_snap_dev(snap);
 			dout("%ssnap id %llu has been removed\n",
 				rbd_dev->spec->snap_id == snap->id ?
