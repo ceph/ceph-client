@@ -314,6 +314,7 @@ int fuse_reverse_inval_inode(struct super_block *sb, u64 nodeid,
 	struct inode *inode;
 	pgoff_t pg_start;
 	pgoff_t pg_end;
+	struct fuse_conn *fc;
 
 	inode = ilookup5(sb, nodeid, fuse_inode_eq, &nodeid);
 	if (!inode)
@@ -321,6 +322,8 @@ int fuse_reverse_inval_inode(struct super_block *sb, u64 nodeid,
 
 	fuse_invalidate_attr(inode);
 	if (offset >= 0) {
+		fc = get_fuse_conn(inode);
+		mutex_lock(&fc->invalidate_mutex);
 		pg_start = offset >> PAGE_CACHE_SHIFT;
 		if (len <= 0)
 			pg_end = -1;
@@ -328,6 +331,7 @@ int fuse_reverse_inval_inode(struct super_block *sb, u64 nodeid,
 			pg_end = (offset + len - 1) >> PAGE_CACHE_SHIFT;
 		invalidate_inode_pages2_range(inode->i_mapping,
 					      pg_start, pg_end);
+		mutex_unlock(&fc->invalidate_mutex);
 	}
 	iput(inode);
 	return 0;
@@ -562,6 +566,7 @@ void fuse_conn_init(struct fuse_conn *fc)
 	memset(fc, 0, sizeof(*fc));
 	spin_lock_init(&fc->lock);
 	mutex_init(&fc->inst_mutex);
+	mutex_init(&fc->invalidate_mutex);
 	init_rwsem(&fc->killsb);
 	atomic_set(&fc->count, 1);
 	init_waitqueue_head(&fc->waitq);

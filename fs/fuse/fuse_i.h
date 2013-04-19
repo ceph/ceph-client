@@ -328,6 +328,7 @@ struct fuse_conn {
 
 	/** Mutex protecting against directory alias creation */
 	struct mutex inst_mutex;
+	struct mutex invalidate_mutex;
 
 	/** Refcount */
 	atomic_t count;

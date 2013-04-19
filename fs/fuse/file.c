@@ -704,6 +704,7 @@ static ssize_t fuse_file_aio_read(struct kiocb *iocb, const struct iovec *iov,
 {
 	struct inode *inode = iocb->ki_filp->f_mapping->host;
 	struct fuse_conn *fc = get_fuse_conn(inode);
+	int ret;
 
 	/*
 	 * In auto invalidate mode, always update attributes on read.
@@ -717,8 +718,10 @@ static ssize_t fuse_file_aio_read(struct kiocb *iocb, const struct iovec *iov,
 		if (err)
 			return err;
 	}
-
-	return generic_file_aio_read(iocb, iov, nr_segs, pos);
+	mutex_lock(&fc->invalidate_mutex);
+	ret = generic_file_aio_read(iocb, iov, nr_segs, pos);
+	mutex_unlock(&fc->invalidate_mutex);
+	return ret;
 }
 
 static void fuse_write_fill(struct fuse_req *req, struct fuse_file *ff,
