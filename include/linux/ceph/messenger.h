@@ -62,6 +62,8 @@ struct ceph_messenger {
 
 	u64 supported_features;
 	u64 required_features;
+
+	unsigned long connect_timeout;	/* jiffies */
 };
 
 enum ceph_msg_data_type {
@@ -240,6 +242,8 @@ struct ceph_connection {
 
 	struct delayed_work work;	    /* send|recv work */
 	unsigned long       delay;          /* current delay interval */
+
+	struct delayed_work connect_timeout_work;
 };
 
 
@@ -257,6 +261,7 @@ extern void ceph_messenger_init(struct ceph_messenger *msgr,
 			struct ceph_entity_addr *myaddr,
 			u64 supported_features,
 			u64 required_features,
+			unsigned long connect_timeout,
 			bool nocrc);
 
 extern void ceph_con_init(struct ceph_connection *con, void *private,

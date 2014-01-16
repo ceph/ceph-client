@@ -511,6 +511,7 @@ struct ceph_client *ceph_create_client(struct ceph_options *opt, void *private,
 	ceph_messenger_init(&client->msgr, myaddr,
 		client->supported_features,
 		client->required_features,
+		2 * client->options->mount_timeout * HZ,
 		ceph_test_opt(client, NOCRC));
 
 	/* subsystems */

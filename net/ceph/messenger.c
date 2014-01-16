@@ -385,6 +385,16 @@ static void con_fault_raise(struct ceph_connection *con)
 	queue_con(con);
 }
 
+static void handle_connect_timeout(struct work_struct *work)
+{
+	struct ceph_connection *con = container_of(work,
+						   struct ceph_connection,
+						   connect_timeout_work.work);
+
+	dout("%s connect timeout\n", __func__);
+	con_fault_raise(con);
+}
+
 
 /*
  * socket callback functions
@@ -447,6 +457,18 @@ static void ceph_sock_state_change(struct sock *sk)
 	case TCP_ESTABLISHED:
 		dout("%s TCP_ESTABLISHED\n", __func__);
 		con_sock_state_connected(con);
+		/*
+		 * If not told otherwise, arm connect_timeout hammer to
+		 * be able to deal with half-open (in RFC 793 sense)
+		 * sockets in the interim before we transition to
+		 * CON_STATE_OPEN and regular request keepalive
+		 * mechanism (ceph_con_keepalive()) kicks in.
+		 */
+		if (con->msgr->connect_timeout) {
+			dout("arming connect_timeout hammer\n");
+			schedule_delayed_work(&con->connect_timeout_work,
+					      con->msgr->connect_timeout);
+		}
 		queue_con(con);
 		break;
 	default:	/* Everything else is uninteresting */
@@ -586,6 +608,13 @@ static int con_close_socket(struct ceph_connection *con)
 	int rc = 0;
 
 	dout("con_close_socket on %p sock %p\n", con, con->sock);
+
+	/*
+	 * Sync with con_fault_raise() in handle_connect_timeout() to
+	 * make sure that SOCK_CLOSED is going to be cleared for good.
+	 */
+	cancel_delayed_work_sync(&con->connect_timeout_work);
+
 	if (con->sock) {
 		rc = con->sock->ops->shutdown(con->sock, SHUT_RDWR);
 		sock_release(con->sock);
@@ -595,8 +624,8 @@ static int con_close_socket(struct ceph_connection *con)
 	/*
 	 * Forcibly clear the SOCK_CLOSED flag.  It gets set
 	 * independent of the connection mutex, and we could have
-	 * received a socket close event before we had the chance to
-	 * shut the socket down.
+	 * received a socket close and/or connect_timeout event
+	 * before we had the chance to shut the socket down.
 	 */
 	con_flag_clear(con, CON_FLAG_SOCK_CLOSED);
 
@@ -725,6 +754,7 @@ void ceph_con_init(struct ceph_connection *con, void *private,
 	INIT_LIST_HEAD(&con->out_queue);
 	INIT_LIST_HEAD(&con->out_sent);
 	INIT_DELAYED_WORK(&con->work, con_work);
+	INIT_DELAYED_WORK(&con->connect_timeout_work, handle_connect_timeout);
 
 	con->state = CON_STATE_CLOSED;
 }
@@ -2076,6 +2106,7 @@ static int process_connect(struct ceph_connection *con)
 
 		WARN_ON(con->state != CON_STATE_NEGOTIATING);
 		con->state = CON_STATE_OPEN;
+
 		con->auth_retry = 0;    /* we authenticated; clear flag */
 		con->peer_global_seq = le32_to_cpu(con->in_reply.global_seq);
 		con->connect_seq++;
@@ -2091,6 +2122,11 @@ static int process_connect(struct ceph_connection *con)
 			con_flag_set(con, CON_FLAG_LOSSYTX);
 
 		con->delay = 0;      /* reset backoff memory */
+
+		if (con->msgr->connect_timeout) {
+			dout("disarming connect_timeout hammer\n");
+			cancel_delayed_work(&con->connect_timeout_work);
+		}
 
 		if (con->in_reply.tag == CEPH_MSGR_TAG_SEQ) {
 			prepare_write_seq(con);
@@ -2866,10 +2902,12 @@ void ceph_messenger_init(struct ceph_messenger *msgr,
 			struct ceph_entity_addr *myaddr,
 			u64 supported_features,
 			u64 required_features,
+			unsigned long connect_timeout,
 			bool nocrc)
 {
 	msgr->supported_features = supported_features;
 	msgr->required_features = required_features;
+	msgr->connect_timeout = connect_timeout;
 
 	spin_lock_init(&msgr->global_seq_lock);
 
