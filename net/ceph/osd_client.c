@@ -1402,7 +1402,8 @@ static void handle_timeout(struct work_struct *work)
 	unsigned long keepalive =
 		osdc->client->options->osd_keepalive_timeout * HZ;
 	struct list_head slow_osds;
-	dout("timeout\n");
+
+	dout("%s timeout\n", __func__);
 	down_read(&osdc->map_sem);
 
 	ceph_monc_request_next_osdmap(&osdc->client->monc);
@@ -1446,7 +1447,7 @@ static void handle_osds_timeout(struct work_struct *work)
 	unsigned long delay =
 		osdc->client->options->osd_idle_ttl * HZ >> 2;
 
-	dout("osds timeout\n");
+	dout("%s osds timeout\n", __func__);
 	down_read(&osdc->map_sem);
 	remove_old_osds(osdc);
 	up_read(&osdc->map_sem);
