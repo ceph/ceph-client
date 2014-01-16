@@ -378,6 +378,14 @@ static void con_sock_state_closed(struct ceph_connection *con)
 	     CON_SOCK_STATE_CLOSED);
 }
 
+
+static void con_fault_raise(struct ceph_connection *con)
+{
+	con_flag_set(con, CON_FLAG_SOCK_CLOSED);
+	queue_con(con);
+}
+
+
 /*
  * socket callback functions
  */
@@ -434,8 +442,7 @@ static void ceph_sock_state_change(struct sock *sk)
 	case TCP_CLOSE_WAIT:
 		dout("%s TCP_CLOSE_WAIT\n", __func__);
 		con_sock_state_closing(con);
-		con_flag_set(con, CON_FLAG_SOCK_CLOSED);
-		queue_con(con);
+		con_fault_raise(con);
 		break;
 	case TCP_ESTABLISHED:
 		dout("%s TCP_ESTABLISHED\n", __func__);
