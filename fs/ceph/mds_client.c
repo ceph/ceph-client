@@ -7,6 +7,7 @@
 #include <linux/sched.h>
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
+#include <linux/utsname.h>
 
 #include "super.h"
 #include "mds_client.h"
@@ -814,6 +815,74 @@ static struct ceph_msg *create_session_msg(u32 op, u64 seq)
 	h = msg->front.iov_base;
 	h->op = cpu_to_le32(op);
 	h->seq = cpu_to_le64(seq);
+
+	return msg;
+}
+
+/*
+ * session message, specialization for CEPH_SESSION_REQUEST_OPEN
+ * to include additional client metadata fields.
+ */
+static struct ceph_msg *create_session_open_msg(struct ceph_mds_client *mdsc, u64 seq)
+{
+	struct ceph_msg *msg;
+	struct ceph_mds_session_head *h;
+	int i = -1;
+	int metadata_bytes = 0;
+	int metadata_key_count = 0;
+	u8 *buf_off = NULL;
+	struct ceph_options *opt = mdsc->fsc->client->options;
+
+	const char* metadata[3][2] = {
+		{"hostname", utsname()->nodename},
+		{"entity_id", opt->name ? opt->name : ""},
+		{NULL, NULL}
+	};
+
+	// Calculate serialized length of metadata
+	metadata_bytes = 4;  // map length
+	for (i = 0; metadata[i][0] != NULL; ++i) {
+		metadata_bytes += 8 + strlen(metadata[i][0]) + strlen(metadata[i][1]);
+		metadata_key_count++;
+	}
+
+	// Allocate the message
+	msg = ceph_msg_new(CEPH_MSG_CLIENT_SESSION, sizeof(*h) + metadata_bytes, GFP_NOFS,
+			   false);
+	if (!msg) {
+		pr_err("create_session_msg ENOMEM creating msg\n");
+		return NULL;
+	}
+	h = msg->front.iov_base;
+	h->op = cpu_to_le32(CEPH_SESSION_REQUEST_OPEN);
+	h->seq = cpu_to_le64(seq);
+
+	// Serialize client metadata into waiting buffer space, using
+	// the format that userspace expects for map<string, string>
+	msg->hdr.version = 2;  // ClientSession messages with metadata are v2
+
+	// The write pointer, following the session_head structure
+	buf_off = msg->front.iov_base + sizeof(*h);
+
+	// Number of entries in the map
+	*((u32*)buf_off) = cpu_to_le32(metadata_key_count);
+	buf_off += sizeof(u32);
+
+	// Two length-prefixed strings for each entry in the map
+	for (i = 0; metadata[i][0] != NULL; ++i) {
+		size_t const key_len = strlen(metadata[i][0]);
+		size_t const val_len = strlen(metadata[i][1]);
+
+		*((u32*)buf_off) = cpu_to_le32(key_len);
+		buf_off += sizeof(u32);
+		memcpy(buf_off, metadata[i][0], key_len);
+		buf_off += key_len;
+		*((u32*)buf_off) = cpu_to_le32(val_len);
+		buf_off += sizeof(u32);
+		memcpy(buf_off, metadata[i][1], val_len);
+		buf_off += val_len;
+	}
+
 	return msg;
 }
 
@@ -837,7 +906,7 @@ static int __open_session(struct ceph_mds_client *mdsc,
 	session->s_renew_requested = jiffies;
 
 	/* send connect message */
-	msg = create_session_msg(CEPH_SESSION_REQUEST_OPEN, session->s_seq);
+	msg = create_session_open_msg(mdsc, session->s_seq);
 	if (!msg)
 		return -ENOMEM;
 	ceph_con_send(&session->s_con, msg);
