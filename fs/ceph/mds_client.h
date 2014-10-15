@@ -298,6 +298,7 @@ struct ceph_mds_client {
 	int               num_cap_flushing; /* # caps we are flushing */
 	spinlock_t        cap_dirty_lock;   /* protects above items */
 	wait_queue_head_t cap_flushing_wq;
+	u32               cap_epoch_barrier;
 
 	/*
 	 * Cap reservations

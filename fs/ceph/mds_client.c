@@ -3267,6 +3267,23 @@ static void delayed_work(struct work_struct *work)
 	schedule_delayed(mdsc);
 }
 
+/**
+ * Call this with map_sem held for read
+ */
+static void handle_osd_map(struct ceph_osd_client *osdc, void *p)
+{
+	struct ceph_mds_client *mdsc = (struct ceph_mds_client*)p;
+	u32 cancelled_epoch = 0;
+
+	if (osdc->osdmap->flags & CEPH_OSDMAP_FULL) {
+		cancelled_epoch = ceph_osdc_cancel_writes(osdc, -ENOSPC);
+		if (cancelled_epoch) {
+			mdsc->cap_epoch_barrier = max(cancelled_epoch + 1,
+						      mdsc->cap_epoch_barrier);
+		}
+	}
+}
+
 int ceph_mdsc_init(struct ceph_fs_client *fsc)
 
 {
@@ -3313,6 +3330,10 @@ int ceph_mdsc_init(struct ceph_fs_client *fsc)
 
 	ceph_caps_init(mdsc);
 	ceph_adjust_min_caps(mdsc, fsc->min_caps);
+	mdsc->cap_epoch_barrier = 0;
+
+	ceph_osdc_register_map_cb(&fsc->client->osdc,
+				  handle_osd_map, (void*)mdsc);
 
 	return 0;
 }
