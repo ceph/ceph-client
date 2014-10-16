@@ -92,10 +92,14 @@ struct ceph_mds_reply_info_parsed {
 
 /*
  * cap releases are batched and sent to the MDS en masse.
+ *
+ * Account for per-message overhead of mds_cap_release header
+ * and u32 for osd epoch barrier trailing field.
  */
 #define CEPH_CAPS_PER_RELEASE ((PAGE_CACHE_SIZE -			\
-				sizeof(struct ceph_mds_cap_release)) /	\
-			       sizeof(struct ceph_mds_cap_item))
+				sizeof(struct ceph_mds_cap_release) -   \
+				sizeof(u32)) /	\
+			        sizeof(struct ceph_mds_cap_item))
 
 
 /*

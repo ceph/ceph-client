@@ -1510,12 +1510,25 @@ void ceph_send_cap_releases(struct ceph_mds_client *mdsc,
 			    struct ceph_mds_session *session)
 {
 	struct ceph_msg *msg;
+	u32             *cap_barrier;
 
 	dout("send_cap_releases mds%d\n", session->s_mds);
 	spin_lock(&session->s_cap_lock);
 	while (!list_empty(&session->s_cap_releases_done)) {
 		msg = list_first_entry(&session->s_cap_releases_done,
 				 struct ceph_msg, list_head);
+
+		BUG_ON(msg->front.iov_len + sizeof(*cap_barrier) > \
+		       PAGE_CACHE_SIZE);
+
+		// Append cap_barrier field
+		cap_barrier = msg->front.iov_base + msg->front.iov_len;
+		*cap_barrier = cpu_to_le32(mdsc->cap_epoch_barrier);
+		msg->front.iov_len += sizeof(*cap_barrier);
+
+		msg->hdr.version = cpu_to_le16(2);
+		msg->hdr.compat_version = cpu_to_le16(1);
+
 		list_del_init(&msg->list_head);
 		spin_unlock(&session->s_cap_lock);
 		msg->hdr.front_len = cpu_to_le32(msg->front.iov_len);
