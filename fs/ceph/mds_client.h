@@ -151,6 +151,15 @@ struct ceph_mds_session {
 	atomic_t          s_ref;
 	struct list_head  s_waiting;  /* waiting requests */
 	struct list_head  s_unsafe;   /* unsafe requests */
+
+    struct list_head  s_delayed_msgs;  /* OSD epoch waiters */
+};
+
+struct ceph_delayed_message
+{
+    struct ceph_msg  *dm_msg;
+    u32               dm_epoch;
+	struct list_head  dm_item;
 };
 
 /*
