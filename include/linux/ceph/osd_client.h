@@ -197,7 +197,6 @@ struct ceph_osd_client {
 
 	struct ceph_osdmap     *osdmap;       /* current map */
 	struct rw_semaphore    map_sem;
-	struct completion      map_waiters;
 	u64                    last_requested_map;
 
 	struct mutex           request_mutex;

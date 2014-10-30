@@ -2537,7 +2537,6 @@ int ceph_osdc_init(struct ceph_osd_client *osdc, struct ceph_client *client)
 	osdc->client = client;
 	osdc->osdmap = NULL;
 	init_rwsem(&osdc->map_sem);
-	init_completion(&osdc->map_waiters);
 	osdc->last_requested_map = 0;
 	mutex_init(&osdc->request_mutex);
 	osdc->last_tid = 0;
