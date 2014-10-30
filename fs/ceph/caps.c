@@ -979,6 +979,8 @@ static int send_cap_msg(struct ceph_mds_session *session,
 {
 	struct ceph_mds_caps *fc;
 	struct ceph_msg *msg;
+	int msg_len;
+	__le32 *epoch_barrier;
 
 	dout("send_cap_msg %s %llx %llx caps %s wanted %s dirty %s"
 	     " seq %u/%u mseq %u follows %lld size %llu/%llu"
@@ -988,15 +990,31 @@ static int send_cap_msg(struct ceph_mds_session *session,
 	     seq, issue_seq, mseq, follows, size, max_size,
 	     xattr_version, xattrs_buf ? (int)xattrs_buf->vec.iov_len : 0);
 
-	msg = ceph_msg_new(CEPH_MSG_CLIENT_CAPS, sizeof(*fc), GFP_NOFS, false);
+	/*
+	 * MSG_CLIENT_CAPS version 5 size calculation:
+		sizeof(ceph_mds_caps) for caps field
+		0 bytes for snapbl field (headerless)
+		4 bytes for flockbl field len=0
+		0 bytes for peer field (op not in import|export)
+		8 bytes for inline_version
+		4 bytes for inline_data len=0
+		4 bytes for epoch barrier
+	*/
+	msg_len = sizeof(*fc) + 4 + 8 + 4 + 4;
+
+	msg = ceph_msg_new(CEPH_MSG_CLIENT_CAPS, msg_len, GFP_NOFS, false);
 	if (!msg)
 		return -ENOMEM;
+	memset(msg->front.iov_base, 0, msg_len);
 
+	epoch_barrier = msg->front.iov_base + sizeof(*fc) + 4 + 8 + 4;
+	*epoch_barrier = cpu_to_le32(session->s_mdsc->cap_epoch_barrier);
+
+	msg->hdr.version = cpu_to_le16(5);
+	msg->hdr.compat_version = cpu_to_le16(1);
 	msg->hdr.tid = cpu_to_le64(flush_tid);
 
 	fc = msg->front.iov_base;
-	memset(fc, 0, sizeof(*fc));
-
 	fc->cap_id = cpu_to_le64(cid);
 	fc->op = cpu_to_le32(op);
 	fc->seq = cpu_to_le32(seq);
@@ -2973,14 +2991,39 @@ retry:
 	*target_cap = cap;
 }
 
+
+
+/**
+ * Delay handling a cap message until a given OSD epoch
+ *
+ * Call with session mutex held
+ * Call with OSD map_sem held for read
+ */
+static void delay_message(struct ceph_mds_session *session, struct ceph_msg *msg, u32 epoch)
+{
+    struct ceph_delayed_message *dm;
+
+    ceph_msg_get(msg);
+
+    dm = kmalloc(sizeof(*dm), GFP_NOFS);
+    memset(dm, 0, sizeof(*dm));
+    dm->dm_epoch = epoch;
+    dm->dm_msg = msg;
+
+    list_add(&dm->dm_item, &session->s_delayed_msgs);
+}
+
 /*
  * Handle a caps message from the MDS.
  *
  * Identify the appropriate session, inode, and call the right handler
  * based on the cap op.
+ *
+ * skip_epoch_check: skip checking epoch_barrier (avoid taking mdsc and osdc locks)
  */
 void ceph_handle_caps(struct ceph_mds_session *session,
-		      struct ceph_msg *msg)
+		      struct ceph_msg *msg,
+		      bool skip_epoch_check)
 {
 	struct ceph_mds_client *mdsc = session->s_mdsc;
 	struct super_block *sb = mdsc->fsc->sb;
@@ -3001,6 +3044,9 @@ void ceph_handle_caps(struct ceph_mds_session *session,
 	void *flock;
 	void *end;
 	u32 flock_len;
+	u64 inline_version;
+	u32 inline_len;
+	u32 epoch_barrier = 0;
 
 	dout("handle_caps from mds%d\n", mds);
 
@@ -3042,6 +3088,62 @@ void ceph_handle_caps(struct ceph_mds_session *session,
 		} else if (op == CEPH_CAP_OP_EXPORT) {
 			/* recorded in unused fields */
 			peer = (void *)&h->size;
+		}
+	}
+
+	if (le16_to_cpu(msg->hdr.version) >= 5) {
+		void *p = flock + flock_len;
+
+		// Skip peer if applicable
+		if (op == CEPH_CAP_OP_IMPORT) {
+			p += sizeof(struct ceph_mds_cap_peer);
+		}
+
+		// We don't use this, but decode it to advance p
+		ceph_decode_64_safe(&p, end, inline_version, bad);
+
+		// Read 4 bytes for length of inline_data
+		ceph_decode_32_safe(&p, end, inline_len, bad);
+
+		// Skip length of inline_data
+		if (inline_len != 0) {
+			p += inline_len;
+		}
+
+		// Read epoch_barrier field
+		ceph_decode_32_safe(&p, end, epoch_barrier, bad);
+	}
+
+	dout("handle_caps v=%d barrier=%d skip=%d\n",
+		le16_to_cpu(msg->hdr.version),
+		epoch_barrier,
+		skip_epoch_check);
+
+	if (epoch_barrier && !skip_epoch_check) {
+		struct ceph_osd_client *osdc = &mdsc->fsc->client->osdc;
+		// We are required to wait until we have this OSD map epoch
+		// before using the capability.
+		mutex_lock(&mdsc->mutex);
+		if (epoch_barrier > mdsc->cap_epoch_barrier) {
+			mdsc->cap_epoch_barrier = epoch_barrier;
+		}
+		mutex_unlock(&mdsc->mutex);
+
+		down_read(&osdc->map_sem);
+		if (osdc->osdmap->epoch < epoch_barrier) {
+			dout("handle_caps delaying message until OSD epoch %d\n", epoch_barrier);
+			mutex_lock(&session->s_mutex);
+			delay_message(session, msg, epoch_barrier);
+			mutex_unlock(&session->s_mutex);
+
+			// Kick OSD client to get the latest map
+			ceph_monc_request_next_osdmap(&osdc->client->monc);
+
+			up_read(&osdc->map_sem);
+			return;
+		} else {
+			dout("handle_caps barrier %d already satisfied (%d)\n", epoch_barrier, osdc->osdmap->epoch);
+			up_read(&osdc->map_sem);
 		}
 	}
 

@@ -174,6 +174,9 @@ static int mds_sessions_show(struct seq_file *s, void *ptr)
 	/* The -o name mount argument */
 	seq_printf(s, "name \"%s\"\n", opt->name ? opt->name : "");
 
+	/* The latest OSD epoch barrier known to this client */
+	seq_printf(s, "osd_epoch_barrier \"%d\"\n", mdsc->cap_epoch_barrier);
+
 	/* The list of MDS session rank+state */
 	for (mds = 0; mds < mdsc->max_sessions; mds++) {
 		struct ceph_mds_session *session =

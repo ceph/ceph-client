@@ -814,7 +814,8 @@ static inline void ceph_forget_all_cached_acls(struct inode *inode)
 /* caps.c */
 extern const char *ceph_cap_string(int c);
 extern void ceph_handle_caps(struct ceph_mds_session *session,
-			     struct ceph_msg *msg);
+			     struct ceph_msg *msg,
+			     bool skip_epoch_check);
 extern struct ceph_cap *ceph_get_cap(struct ceph_mds_client *mdsc,
 				     struct ceph_cap_reservation *ctx);
 extern void ceph_add_cap(struct inode *inode,

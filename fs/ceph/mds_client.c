@@ -332,6 +332,94 @@ static void destroy_reply_info(struct ceph_mds_reply_info_parsed *info)
 }
 
 
+/**
+ * Unlink and delete a ceph_delayed message
+ */
+static void discard_delayed(
+		struct ceph_mds_session *session,
+		struct ceph_delayed_message *dm)
+{
+	dout("discard_delayed: putting msg %p\n", dm->dm_msg);
+	ceph_msg_put(dm->dm_msg);
+	list_del(&dm->dm_item);
+	kfree(dm);
+}
+
+
+/**
+ * For all messages waiting for <= this epoch,
+ * dispatch
+ */
+static void replay_delayed(
+		struct ceph_mds_session *session,
+		struct ceph_delayed_message *dm)
+{
+	dout("replay_delayed: releasing delayed msg %p\n", dm->dm_msg);
+	ceph_handle_caps(session, dm->dm_msg, true);
+	discard_delayed(session, dm);
+}
+
+
+/**
+ * Find any delayed messages that are ready to be replayed,
+ * and move them to replay_list
+ */
+static void find_ready_delayed(
+		struct ceph_mds_session *session,
+		struct ceph_delayed_message *dm,
+		struct list_head *replay_list,
+		u32 epoch)
+{
+	if (dm->dm_epoch <= epoch) {
+		dout("find_ready_delayed: delayed msg %p ready (%d vs %d)\n", dm->dm_msg, dm->dm_epoch, epoch);
+		list_del(&dm->dm_item);
+		list_add(&dm->dm_item, replay_list);
+	}
+}
+
+
+/**
+ * Call this with map_sem held for read
+ */
+static void handle_osd_map(struct ceph_osd_client *osdc, void *p)
+{
+	struct ceph_mds_client *mdsc = (struct ceph_mds_client*)p;
+	u32 cancelled_epoch = 0;
+	int mds_id;
+
+	if (osdc->osdmap->flags & CEPH_OSDMAP_FULL) {
+		cancelled_epoch = ceph_osdc_cancel_writes(osdc, -ENOSPC);
+		if (cancelled_epoch) {
+			mdsc->cap_epoch_barrier = max(cancelled_epoch + 1,
+						      mdsc->cap_epoch_barrier);
+		}
+	}
+
+	dout("handle_osd_map: epoch=%d\n", osdc->osdmap->epoch);
+
+	// Release any cap messages waiting for this epoch
+	for (mds_id = 0; mds_id < mdsc->max_sessions; ++mds_id) {
+		struct ceph_mds_session *session = mdsc->sessions[mds_id];
+		if (session != NULL) {
+			struct ceph_delayed_message *dm = NULL;
+			struct ceph_delayed_message *dm_next = NULL;
+			struct list_head replay_msgs;
+			INIT_LIST_HEAD(&replay_msgs);
+
+			dout("find_ready_delayed... (s=%p)\n", session);
+			mutex_lock(&session->s_mutex);
+			list_for_each_entry_safe(dm, dm_next, &session->s_delayed_msgs, dm_item)
+				find_ready_delayed(session, dm, &replay_msgs, osdc->osdmap->epoch);
+			mutex_unlock(&session->s_mutex);
+
+			dout("replay_delayed... (s=%p)\n", session);
+			list_for_each_entry_safe(dm, dm_next, &replay_msgs, dm_item)
+				replay_delayed(session, dm);
+		}
+	}
+}
+
+
 /*
  * sessions
  */
@@ -451,6 +539,7 @@ static struct ceph_mds_session *register_session(struct ceph_mds_client *mdsc,
 	INIT_LIST_HEAD(&s->s_cap_releases_done);
 	INIT_LIST_HEAD(&s->s_cap_flushing);
 	INIT_LIST_HEAD(&s->s_cap_snaps_flushing);
+	INIT_LIST_HEAD(&s->s_delayed_msgs);
 
 	dout("register_session mds%d\n", mds);
 	if (mds >= mdsc->max_sessions) {
@@ -488,10 +577,17 @@ fail_realloc:
 static void __unregister_session(struct ceph_mds_client *mdsc,
 			       struct ceph_mds_session *s)
 {
+	struct ceph_delayed_message *dm;
+	struct ceph_delayed_message *dm_next;
+
 	dout("__unregister_session mds%d %p\n", s->s_mds, s);
 	BUG_ON(mdsc->sessions[s->s_mds] != s);
 	mdsc->sessions[s->s_mds] = NULL;
 	ceph_con_close(&s->s_con);
+
+	list_for_each_entry_safe(dm, dm_next, &s->s_delayed_msgs, dm_item)
+		discard_delayed(s, dm);
+
 	ceph_put_mds_session(s);
 }
 
@@ -1510,12 +1606,25 @@ void ceph_send_cap_releases(struct ceph_mds_client *mdsc,
 			    struct ceph_mds_session *session)
 {
 	struct ceph_msg *msg;
+	u32             *cap_barrier;
 
 	dout("send_cap_releases mds%d\n", session->s_mds);
 	spin_lock(&session->s_cap_lock);
 	while (!list_empty(&session->s_cap_releases_done)) {
 		msg = list_first_entry(&session->s_cap_releases_done,
 				 struct ceph_msg, list_head);
+
+		BUG_ON(msg->front.iov_len + sizeof(*cap_barrier) > \
+		       PAGE_CACHE_SIZE);
+
+		// Append cap_barrier field
+		cap_barrier = msg->front.iov_base + msg->front.iov_len;
+		*cap_barrier = cpu_to_le32(mdsc->cap_epoch_barrier);
+		msg->front.iov_len += sizeof(*cap_barrier);
+
+		msg->hdr.version = cpu_to_le16(2);
+		msg->hdr.compat_version = cpu_to_le16(1);
+
 		list_del_init(&msg->list_head);
 		spin_unlock(&session->s_cap_lock);
 		msg->hdr.front_len = cpu_to_le32(msg->front.iov_len);
@@ -3267,6 +3376,7 @@ static void delayed_work(struct work_struct *work)
 	schedule_delayed(mdsc);
 }
 
+
 int ceph_mdsc_init(struct ceph_fs_client *fsc)
 
 {
@@ -3313,6 +3423,10 @@ int ceph_mdsc_init(struct ceph_fs_client *fsc)
 
 	ceph_caps_init(mdsc);
 	ceph_adjust_min_caps(mdsc, fsc->min_caps);
+	mdsc->cap_epoch_barrier = 0;
+
+	ceph_osdc_register_map_cb(&fsc->client->osdc,
+				  handle_osd_map, (void*)mdsc);
 
 	return 0;
 }
@@ -3651,7 +3765,7 @@ static void dispatch(struct ceph_connection *con, struct ceph_msg *msg)
 		handle_forward(mdsc, s, msg);
 		break;
 	case CEPH_MSG_CLIENT_CAPS:
-		ceph_handle_caps(s, msg);
+		ceph_handle_caps(s, msg, false);
 		break;
 	case CEPH_MSG_CLIENT_SNAP:
 		ceph_handle_snap(mdsc, s, msg);

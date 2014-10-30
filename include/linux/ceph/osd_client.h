@@ -21,6 +21,7 @@ struct ceph_authorizer;
 /*
  * completion callback for async writepages
  */
+typedef void (*ceph_osdc_full_callback_t)(struct ceph_osd_client *, void *);
 typedef void (*ceph_osdc_callback_t)(struct ceph_osd_request *,
 				     struct ceph_msg *);
 typedef void (*ceph_osdc_unsafe_callback_t)(struct ceph_osd_request *, bool);
@@ -197,7 +198,6 @@ struct ceph_osd_client {
 
 	struct ceph_osdmap     *osdmap;       /* current map */
 	struct rw_semaphore    map_sem;
-	struct completion      map_waiters;
 	u64                    last_requested_map;
 
 	struct mutex           request_mutex;
@@ -227,6 +227,9 @@ struct ceph_osd_client {
 	u64			event_count;
 
 	struct workqueue_struct	*notify_wq;
+
+    ceph_osdc_full_callback_t map_cb;
+    void                     *map_p;
 };
 
 extern int ceph_osdc_setup(void);
@@ -332,6 +335,7 @@ extern void ceph_osdc_put_request(struct ceph_osd_request *req);
 extern int ceph_osdc_start_request(struct ceph_osd_client *osdc,
 				   struct ceph_osd_request *req,
 				   bool nofail);
+extern u32 ceph_osdc_cancel_writes(struct ceph_osd_client *osdc, int r);
 extern void ceph_osdc_cancel_request(struct ceph_osd_request *req);
 extern int ceph_osdc_wait_request(struct ceph_osd_client *osdc,
 				  struct ceph_osd_request *req);
@@ -362,5 +366,8 @@ extern int ceph_osdc_create_event(struct ceph_osd_client *osdc,
 				  void *data, struct ceph_osd_event **pevent);
 extern void ceph_osdc_cancel_event(struct ceph_osd_event *event);
 extern void ceph_osdc_put_event(struct ceph_osd_event *event);
+
+extern void ceph_osdc_register_map_cb(struct ceph_osd_client *osdc,
+				  ceph_osdc_full_callback_t cb, void *data);
 #endif
 

@@ -92,10 +92,14 @@ struct ceph_mds_reply_info_parsed {
 
 /*
  * cap releases are batched and sent to the MDS en masse.
+ *
+ * Account for per-message overhead of mds_cap_release header
+ * and u32 for osd epoch barrier trailing field.
  */
 #define CEPH_CAPS_PER_RELEASE ((PAGE_CACHE_SIZE -			\
-				sizeof(struct ceph_mds_cap_release)) /	\
-			       sizeof(struct ceph_mds_cap_item))
+				sizeof(struct ceph_mds_cap_release) -   \
+				sizeof(u32)) /	\
+			        sizeof(struct ceph_mds_cap_item))
 
 
 /*
@@ -147,6 +151,15 @@ struct ceph_mds_session {
 	atomic_t          s_ref;
 	struct list_head  s_waiting;  /* waiting requests */
 	struct list_head  s_unsafe;   /* unsafe requests */
+
+    struct list_head  s_delayed_msgs;  /* OSD epoch waiters */
+};
+
+struct ceph_delayed_message
+{
+    struct ceph_msg  *dm_msg;
+    u32               dm_epoch;
+	struct list_head  dm_item;
 };
 
 /*
@@ -298,6 +311,7 @@ struct ceph_mds_client {
 	int               num_cap_flushing; /* # caps we are flushing */
 	spinlock_t        cap_dirty_lock;   /* protects above items */
 	wait_queue_head_t cap_flushing_wq;
+	u32               cap_epoch_barrier;
 
 	/*
 	 * Cap reservations
