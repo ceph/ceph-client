@@ -1736,7 +1736,7 @@ static bool addr_is_blank(struct sockaddr_storage *ss)
 		     ((struct sockaddr_in6 *)ss)->sin6_addr.s6_addr32[2] == 0 &&
 		     ((struct sockaddr_in6 *)ss)->sin6_addr.s6_addr32[3] == 0;
 	}
-	return false;
+	return true;
 }
 
 static int addr_port(struct sockaddr_storage *ss)
