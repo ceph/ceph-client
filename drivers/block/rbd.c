@@ -207,6 +207,9 @@ typedef void (*rbd_img_callback_t)(struct rbd_img_request *);
 struct rbd_obj_request;
 typedef void (*rbd_obj_callback_t)(struct rbd_obj_request *);
 
+struct rbd_copyup_request;
+typedef void (*rbd_copyup_callback_t)(struct rbd_copyup_request *);
+
 enum obj_request_type {
 	OBJ_REQUEST_NODATA, OBJ_REQUEST_BIO, OBJ_REQUEST_PAGES
 };
@@ -279,6 +282,27 @@ struct rbd_obj_request {
 	struct kref		kref;
 };
 
+struct rbd_copyup_request {
+	const char *	object_name;
+	u64		object_no;
+
+	struct page 	**copyup_pages;
+	u32		copyup_page_count;
+
+	struct rbd_img_request *img_request;
+	/* links for img_request->copyup_requests list */
+	struct list_head	links;
+
+	struct ceph_osd_request		*osd_req;
+
+	rbd_copyup_callback_t 	callback;
+	struct completion	completion;
+
+	int result;
+
+	struct kref	kref;
+};
+
 enum img_req_flags {
 	IMG_REQ_WRITE,		/* I/O direction: read = 0, write = 1 */
 	IMG_REQ_CHILD,		/* initiator: block = 0, child image = 1 */
@@ -310,6 +334,9 @@ struct rbd_img_request {
 	u32			obj_request_count;
 	struct list_head	obj_requests;	/* rbd_obj_request structs */
 
+	struct list_head	copyup_list;	/* rbd_copyup_request list */
+	spinlock_t		copyup_list_lock; /* protects copyup list */
+
 	struct kref		kref;
 };
 
@@ -319,6 +346,9 @@ struct rbd_img_request {
 	list_for_each_entry_from(oreq, &(ireq)->obj_requests, links)
 #define for_each_obj_request_safe(ireq, oreq, n) \
 	list_for_each_entry_safe_reverse(oreq, n, &(ireq)->obj_requests, links)
+
+#define for_each_copyup_request(ireq, cpreq) \
+	list_for_each_entry(cpreq, &(ireq)->copyup_list, links)
 
 struct rbd_mapping {
 	u64                     size;
@@ -399,6 +429,7 @@ static DEFINE_SPINLOCK(rbd_client_list_lock);
 
 static struct kmem_cache	*rbd_img_request_cache;
 static struct kmem_cache	*rbd_obj_request_cache;
+static struct kmem_cache	*rbd_copyup_request_cache;
 static struct kmem_cache	*rbd_segment_name_cache;
 
 static int rbd_major;
@@ -2178,6 +2209,8 @@ static struct rbd_img_request *rbd_img_request_create(
 	img_request->result = 0;
 	img_request->obj_request_count = 0;
 	INIT_LIST_HEAD(&img_request->obj_requests);
+	INIT_LIST_HEAD(&img_request->copyup_list);
+	spin_lock_init(&img_request->copyup_list_lock);
 	kref_init(&img_request->kref);
 
 	dout("%s: rbd_dev %p %s %llu/%llu -> img %p\n", __func__, rbd_dev,
@@ -5666,6 +5699,14 @@ static int rbd_slab_init(void)
 	if (!rbd_obj_request_cache)
 		goto out_err;
 
+	rbd_assert(!rbd_copyup_request_cache);
+	rbd_copyup_request_cache = kmem_cache_create("rbd_copyup_request",
+					sizeof (struct rbd_copyup_request),
+					__alignof__(struct rbd_copyup_request),
+					0, NULL);
+	if (!rbd_copyup_request_cache)
+		goto out_err;
+
 	rbd_assert(!rbd_segment_name_cache);
 	rbd_segment_name_cache = kmem_cache_create("rbd_segment_name",
 					CEPH_MAX_OID_NAME_LEN + 1, 1, 0, NULL);
@@ -5675,6 +5716,11 @@ out_err:
 	if (rbd_obj_request_cache) {
 		kmem_cache_destroy(rbd_obj_request_cache);
 		rbd_obj_request_cache = NULL;
+	}
+
+	if (rbd_copyup_request_cache) {
+		kmem_cache_destroy(rbd_copyup_request_cache);
+		rbd_copyup_request_cache = NULL;
 	}
 
 	kmem_cache_destroy(rbd_img_request_cache);
@@ -5692,6 +5738,10 @@ static void rbd_slab_exit(void)
 	rbd_assert(rbd_obj_request_cache);
 	kmem_cache_destroy(rbd_obj_request_cache);
 	rbd_obj_request_cache = NULL;
+
+	rbd_assert(rbd_copyup_request_cache);
+	kmem_cache_destroy(rbd_copyup_request_cache);
+	rbd_copyup_request_cache = NULL;
 
 	rbd_assert(rbd_img_request_cache);
 	kmem_cache_destroy(rbd_img_request_cache);
