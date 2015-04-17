@@ -99,6 +99,7 @@ struct ceph_osd_req_op {
 			struct ceph_osd_data request_info;
 			struct ceph_osd_data request_data;
 			struct ceph_osd_data response_data;
+			struct ceph_osd_data chain_data;
 			__u8 class_len;
 			__u8 method_len;
 			__u8 argc;
