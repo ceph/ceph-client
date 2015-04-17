@@ -907,6 +907,10 @@ static void ceph_msg_data_pages_cursor_init(struct ceph_msg_data_cursor *cursor,
 	BUG_ON(!data->pages);
 	BUG_ON(!data->length);
 
+	/*
+	 * bug here if a short read occurs and length < data->length; see
+	 * http://tracker.ceph.com/issues/11424
+	 */
 	cursor->resid = min(length, data->length);
 	page_count = calc_pages_for(data->alignment, (u64)data->length);
 	cursor->page_offset = data->alignment & ~PAGE_MASK;
