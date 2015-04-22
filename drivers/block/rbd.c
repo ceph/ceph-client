@@ -320,9 +320,16 @@ struct rbd_img_request {
 #define for_each_obj_request_safe(ireq, oreq, n) \
 	list_for_each_entry_safe_reverse(oreq, n, &(ireq)->obj_requests, links)
 
+enum rbd_mapping_state {
+	MAP_STATE_MAPPED,
+	MAP_STATE_DETACHED,
+};
+		
+
 struct rbd_mapping {
 	u64                     size;
 	u64                     features;
+	enum rbd_mapping_state	state;
 	bool			read_only;
 };
 
@@ -527,7 +534,7 @@ static void rbd_img_parent_read(struct rbd_obj_request *obj_request);
 static void rbd_dev_remove_parent(struct rbd_device *rbd_dev);
 
 static int rbd_dev_refresh(struct rbd_device *rbd_dev);
-static int rbd_dev_v2_header_onetime(struct rbd_device *rbd_dev);
+static int rbd_dev_v2_header_data(struct rbd_device *rbd_dev);
 static int rbd_dev_header_info(struct rbd_device *rbd_dev);
 static int rbd_dev_v2_parent_info(struct rbd_device *rbd_dev);
 static const char *rbd_dev_v2_snap_name(struct rbd_device *rbd_dev,
@@ -3336,6 +3343,14 @@ static void rbd_queue_workfn(struct work_struct *work)
 	else
 		op_type = OBJ_OP_READ;
 
+	/* If a configuration change was detected, issue EIO. */
+
+	if (rbd_dev->mapping.state == MAP_STATE_DETACHED)
+	{
+		result = -EIO;
+		goto err_rq;
+	}
+
 	/* Ignore/skip any zero-length requests */
 
 	if (!length) {
@@ -3670,12 +3685,23 @@ static void rbd_dev_update_size(struct rbd_device *rbd_dev)
 static int rbd_dev_refresh(struct rbd_device *rbd_dev)
 {
 	u64 mapping_size;
+	u64 features;
 	int ret;
 
 	down_write(&rbd_dev->header_rwsem);
 	mapping_size = rbd_dev->mapping.size;
+	features = rbd_dev->mapping.features;
 
 	ret = rbd_dev_header_info(rbd_dev);
+
+	if (ret == -ENXIO || (ret && features != rbd_dev->mapping.features))
+	{
+		rbd_dev->mapping.read_only = 1;
+		rbd_dev->mapping.state = MAP_STATE_DETACHED;
+		rbd_warn(rbd_dev,
+			"detected feature change in mapped device, setting read-only");
+	}
+
 	if (ret)
 		goto out;
 
@@ -3698,6 +3724,9 @@ static int rbd_dev_refresh(struct rbd_device *rbd_dev)
 
 out:
 	up_write(&rbd_dev->header_rwsem);
+
+	if (rbd_dev->mapping.read_only)
+		set_disk_ro(rbd_dev->disk, 1);
 	if (!ret && mapping_size != rbd_dev->mapping.size)
 		rbd_dev_update_size(rbd_dev);
 
@@ -4111,47 +4140,6 @@ static int _rbd_dev_v2_snap_size(struct rbd_device *rbd_dev, u64 snap_id,
 	return 0;
 }
 
-static int rbd_dev_v2_image_size(struct rbd_device *rbd_dev)
-{
-	return _rbd_dev_v2_snap_size(rbd_dev, CEPH_NOSNAP,
-					&rbd_dev->header.obj_order,
-					&rbd_dev->header.image_size);
-}
-
-static int rbd_dev_v2_object_prefix(struct rbd_device *rbd_dev)
-{
-	void *reply_buf;
-	int ret;
-	void *p;
-
-	reply_buf = kzalloc(RBD_OBJ_PREFIX_LEN_MAX, GFP_KERNEL);
-	if (!reply_buf)
-		return -ENOMEM;
-
-	ret = rbd_obj_method_sync(rbd_dev, rbd_dev->header_name,
-				"rbd", "get_object_prefix", NULL, 0,
-				reply_buf, RBD_OBJ_PREFIX_LEN_MAX);
-	dout("%s: rbd_obj_method_sync returned %d\n", __func__, ret);
-	if (ret < 0)
-		goto out;
-
-	p = reply_buf;
-	rbd_dev->header.object_prefix = ceph_extract_encoded_string(&p,
-						p + ret, NULL, GFP_NOIO);
-	ret = 0;
-
-	if (IS_ERR(rbd_dev->header.object_prefix)) {
-		ret = PTR_ERR(rbd_dev->header.object_prefix);
-		rbd_dev->header.object_prefix = NULL;
-	} else {
-		dout("  object_prefix = %s\n", rbd_dev->header.object_prefix);
-	}
-out:
-	kfree(reply_buf);
-
-	return ret;
-}
-
 static int _rbd_dev_v2_snap_features(struct rbd_device *rbd_dev, u64 snap_id,
 		u64 *snap_features)
 {
@@ -4185,12 +4173,6 @@ static int _rbd_dev_v2_snap_features(struct rbd_device *rbd_dev, u64 snap_id,
 		(unsigned long long)le64_to_cpu(features_buf.incompat));
 
 	return 0;
-}
-
-static int rbd_dev_v2_features(struct rbd_device *rbd_dev)
-{
-	return _rbd_dev_v2_snap_features(rbd_dev, CEPH_NOSNAP,
-						&rbd_dev->header.features);
 }
 
 static int rbd_dev_v2_parent_info(struct rbd_device *rbd_dev)
@@ -4549,78 +4531,6 @@ out_err:
 	return ret;
 }
 
-static int rbd_dev_v2_snap_context(struct rbd_device *rbd_dev)
-{
-	size_t size;
-	int ret;
-	void *reply_buf;
-	void *p;
-	void *end;
-	u64 seq;
-	u32 snap_count;
-	struct ceph_snap_context *snapc;
-	u32 i;
-
-	/*
-	 * We'll need room for the seq value (maximum snapshot id),
-	 * snapshot count, and array of that many snapshot ids.
-	 * For now we have a fixed upper limit on the number we're
-	 * prepared to receive.
-	 */
-	size = sizeof (__le64) + sizeof (__le32) +
-			RBD_MAX_SNAP_COUNT * sizeof (__le64);
-	reply_buf = kzalloc(size, GFP_KERNEL);
-	if (!reply_buf)
-		return -ENOMEM;
-
-	ret = rbd_obj_method_sync(rbd_dev, rbd_dev->header_name,
-				"rbd", "get_snapcontext", NULL, 0,
-				reply_buf, size);
-	dout("%s: rbd_obj_method_sync returned %d\n", __func__, ret);
-	if (ret < 0)
-		goto out;
-
-	p = reply_buf;
-	end = reply_buf + ret;
-	ret = -ERANGE;
-	ceph_decode_64_safe(&p, end, seq, out);
-	ceph_decode_32_safe(&p, end, snap_count, out);
-
-	/*
-	 * Make sure the reported number of snapshot ids wouldn't go
-	 * beyond the end of our buffer.  But before checking that,
-	 * make sure the computed size of the snapshot context we
-	 * allocate is representable in a size_t.
-	 */
-	if (snap_count > (SIZE_MAX - sizeof (struct ceph_snap_context))
-				 / sizeof (u64)) {
-		ret = -EINVAL;
-		goto out;
-	}
-	if (!ceph_has_room(&p, end, snap_count * sizeof (__le64)))
-		goto out;
-	ret = 0;
-
-	snapc = ceph_create_snap_context(snap_count, GFP_KERNEL);
-	if (!snapc) {
-		ret = -ENOMEM;
-		goto out;
-	}
-	snapc->seq = seq;
-	for (i = 0; i < snap_count; i++)
-		snapc->snaps[i] = ceph_decode_64(&p);
-
-	ceph_put_snap_context(rbd_dev->header.snapc);
-	rbd_dev->header.snapc = snapc;
-
-	dout("  snap context seq = %llu, snap_count = %u\n",
-		(unsigned long long)seq, (unsigned int)snap_count);
-out:
-	kfree(reply_buf);
-
-	return ret;
-}
-
 static const char *rbd_dev_v2_snap_name(struct rbd_device *rbd_dev,
 					u64 snap_id)
 {
@@ -4662,6 +4572,16 @@ out:
 	return snap_name;
 }
 
+static int rbd_dev_v2_mutable_metadata(struct rbd_device *rbd_dev)
+{
+	return rbd_dev_v2_header_data(rbd_dev);
+}
+
+static int rbd_dev_v2_immutable_metadata(struct rbd_device *rbd_dev)
+{
+	return rbd_dev_v2_header_data(rbd_dev);
+}
+
 static int rbd_dev_v2_header_info(struct rbd_device *rbd_dev)
 {
 	bool first_time = rbd_dev->header.object_prefix == NULL;
@@ -4669,26 +4589,38 @@ static int rbd_dev_v2_header_info(struct rbd_device *rbd_dev)
 
 	if (!first_time)
 	{
-		ret = rbd_dev_v2_image_size(rbd_dev);
+		ret = rbd_dev_v2_mutable_metadata(rbd_dev);
 		if (ret)
-			return ret;
-
-		ret = rbd_dev_v2_snap_context(rbd_dev);
-		dout("rbd_dev_v2_snap_context returned %d\n", ret);
-		return ret;
+			goto out_err;
 	}
 	else
 	{
-		ret = rbd_dev_v2_header_onetime(rbd_dev);
+		ret = rbd_dev_v2_immutable_metadata(rbd_dev);
 		if (ret)
-			return ret;
+			goto out_err;
 	}
-	return ret; /* XXX change logic? */
+
+	if (rbd_dev->header.features & RBD_FEATURE_STRIPINGV2)
+	{
+		ret = rbd_dev_v2_striping_info(rbd_dev);
+		if (ret)
+			goto out_err;
+	}
+
+	ret = 0;
+out_err:
+	rbd_dev->header.features = 0;
+	kfree(rbd_dev->header.object_prefix);
+	rbd_dev->header.object_prefix = NULL;
+
+	return ret;
 }
 
 static int rbd_dev_header_info(struct rbd_device *rbd_dev)
 {
 	rbd_assert(rbd_image_format_valid(rbd_dev->image_format));
+
+	/* XXX need to fix 11418 here too? */
 
 	if (rbd_dev->image_format == 1)
 		return rbd_dev_v1_header_info(rbd_dev);
@@ -5139,7 +5071,6 @@ static int rbd_obj_header_method_add(struct ceph_osd_request *osd_req,
 	if (outbound_size) {
 		struct ceph_pagelist *pagelist;
 		pagelist = kmalloc(sizeof(*pagelist), GFP_NOFS);
-		/* XXX is this ever freed? */
 		if (!pagelist)
 			return -ENOMEM;
 
@@ -5279,6 +5210,12 @@ static int __extract_snapcontext(struct rbd_device *rbd_dev,
 	int i;
 	int ret;
 
+	/*
+	 * We'll need room for the seq value (maximum snapshot id),
+	 * snapshot count, and array of that many snapshot ids.
+	 * For now we have a fixed upper limit on the number we're
+	 * prepared to receive.
+	 */
 	snapc_max = sizeof(__le64) + sizeof(__le32) +
 		RBD_MAX_SNAP_COUNT * sizeof(__le64);
 
@@ -5297,6 +5234,12 @@ static int __extract_snapcontext(struct rbd_device *rbd_dev,
 	ceph_decode_64_safe(&p, q, seq, out_err);
 	ceph_decode_32_safe(&p, q, snap_count, out_err);
 
+	/*
+	 * Make sure the reported number of snapshot ids wouldn't go
+	 * beyond the end of our buffer.  But before checking that,
+	 * make sure the computed size of the snapshot context we
+	 * allocate is representable in a size_t.
+	 */
 	if (snap_count > (SIZE_MAX - sizeof(struct ceph_snap_context)) /
 		sizeof(u64)) {
 		ret = -EINVAL;
@@ -5339,7 +5282,7 @@ static int __extract_size(struct rbd_device *rbd_dev,
 	return 0;
 }
 
-static int rbd_dev_v2_header_onetime(struct rbd_device *rbd_dev)
+static int rbd_dev_v2_header_data(struct rbd_device *rbd_dev)
 {
 	int ret;
 
@@ -5711,6 +5654,8 @@ static ssize_t do_rbd_add(struct bus_type *bus,
 	if (rbd_dev->spec->snap_id != CEPH_NOSNAP)
 		read_only = true;
 	rbd_dev->mapping.read_only = read_only;
+
+	rbd_dev->mapping.state = MAP_STATE_MAPPED;
 
 	rc = rbd_dev_device_setup(rbd_dev);
 	if (rc) {
