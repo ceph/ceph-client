@@ -2876,6 +2876,7 @@ static void handle_cap_flushsnap_ack(struct inode *inode, u64 flush_tid,
 				     struct ceph_mds_session *session)
 {
 	struct ceph_inode_info *ci = ceph_inode(inode);
+	struct ceph_mds_client *mdsc = ceph_sb_to_client(inode->i_sb)->mdsc;
 	u64 follows = le64_to_cpu(m->snap_follows);
 	struct ceph_cap_snap *capsnap;
 	int drop = 0;
@@ -2899,6 +2900,7 @@ static void handle_cap_flushsnap_ack(struct inode *inode, u64 flush_tid,
 			list_del(&capsnap->ci_item);
 			list_del(&capsnap->flushing_item);
 			ceph_put_cap_snap(capsnap);
+			wake_up_all(&mdsc->cap_flushing_wq);
 			drop = 1;
 			break;
 		} else {
