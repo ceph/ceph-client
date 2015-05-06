@@ -110,12 +110,7 @@ typedef void (dio_iodone_t)(struct kiocb *iocb, loff_t offset,
 /* 64bit hashes as llseek() offset (for directories) */
 #define FMODE_64BITHASH         ((__force fmode_t)0x400)
 
-/*
- * Don't update ctime and mtime.
- *
- * Currently a special hack for the XFS open_by_handle ioctl, but we'll
- * hopefully graduate it to a proper O_CMTIME flag supported by open(2) soon.
- */
+/* Don't update ctime and mtime. */
 #define FMODE_NOCMTIME		((__force fmode_t)0x800)
 
 /* Expect random access pattern */
