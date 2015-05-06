@@ -65,7 +65,6 @@
 #endif
 /* struct ptlrpc_request, lustre_msg* */
 #include "../include/lustre_req_layout.h"
-#include "../include/lustre_update.h"
 #include "../include/lustre_acl.h"
 #include "../include/lustre_debug.h"
 
@@ -812,8 +811,8 @@ struct req_capsule;
 	.rmf_name    = (name),				  \
 	.rmf_flags   = (flags),				 \
 	.rmf_size    = (size),				  \
-	.rmf_swabber = (void (*)(void*))(swabber),	      \
-	.rmf_dumper  = (void (*)(void*))(dumper)		\
+	.rmf_swabber = (void (*)(void *))(swabber),	      \
+	.rmf_dumper  = (void (*)(void *))(dumper)		\
 }
 
 struct req_msg_field RMF_GENERIC_DATA =
@@ -1840,7 +1839,7 @@ static int __req_capsule_offset(const struct req_capsule *pill,
 	LASSERTF(offset > 0, "%s:%s, off=%d, loc=%d\n",
 			    pill->rc_fmt->rf_name,
 			    field->rmf_name, offset, loc);
-	offset --;
+	offset--;
 
 	LASSERT(0 <= offset && offset < REQ_MAX_FIELD_NR);
 	return offset;

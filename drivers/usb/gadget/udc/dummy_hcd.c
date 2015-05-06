@@ -802,6 +802,7 @@ static int dummy_set_selfpowered(struct usb_gadget *_gadget, int value)
 {
 	struct dummy	*dum;
 
+	_gadget->is_selfpowered = (value != 0);
 	dum = gadget_to_dummy_hcd(_gadget)->dum;
 	if (value)
 		dum->devstatus |= (1 << USB_DEVICE_SELF_POWERED);
@@ -1922,9 +1923,11 @@ static inline void
 ss_hub_descriptor(struct usb_hub_descriptor *desc)
 {
 	memset(desc, 0, sizeof *desc);
-	desc->bDescriptorType = 0x2a;
+	desc->bDescriptorType = USB_DT_SS_HUB;
 	desc->bDescLength = 12;
-	desc->wHubCharacteristics = cpu_to_le16(0x0001);
+	desc->wHubCharacteristics = cpu_to_le16(
+			HUB_CHAR_INDV_PORT_LPSM |
+			HUB_CHAR_COMMON_OCPM);
 	desc->bNbrPorts = 1;
 	desc->u.ss.bHubHdrDecLat = 0x04; /* Worst case: 0.4 micro sec*/
 	desc->u.ss.DeviceRemovable = 0xffff;
@@ -1933,9 +1936,11 @@ ss_hub_descriptor(struct usb_hub_descriptor *desc)
 static inline void hub_descriptor(struct usb_hub_descriptor *desc)
 {
 	memset(desc, 0, sizeof *desc);
-	desc->bDescriptorType = 0x29;
+	desc->bDescriptorType = USB_DT_HUB;
 	desc->bDescLength = 9;
-	desc->wHubCharacteristics = cpu_to_le16(0x0001);
+	desc->wHubCharacteristics = cpu_to_le16(
+			HUB_CHAR_INDV_PORT_LPSM |
+			HUB_CHAR_COMMON_OCPM);
 	desc->bNbrPorts = 1;
 	desc->u.hs.DeviceRemovable[0] = 0xff;
 	desc->u.hs.DeviceRemovable[1] = 0xff;
@@ -2626,7 +2631,7 @@ static int __init init(void)
 		return -EINVAL;
 
 	if (mod_data.num < 1 || mod_data.num > MAX_NUM_UDC) {
-		pr_err("Number of emulated UDC must be in range of 1…%d\n",
+		pr_err("Number of emulated UDC must be in range of 1...%d\n",
 				MAX_NUM_UDC);
 		return -EINVAL;
 	}

@@ -738,7 +738,7 @@ config CPU_ICACHE_DISABLE
 
 config CPU_DCACHE_DISABLE
 	bool "Disable D-Cache (C-bit)"
-	depends on CPU_CP15
+	depends on CPU_CP15 && !SMP
 	help
 	  Say Y here to disable the processor data cache. Unless
 	  you have a reason not to or are unsure, say N.
@@ -825,6 +825,20 @@ config KUSER_HELPERS
 	  Say N here only if you are absolutely certain that you do not
 	  need these helpers; otherwise, the safe option is to say Y.
 
+config VDSO
+	bool "Enable VDSO for acceleration of some system calls"
+	depends on AEABI && MMU && CPU_V7
+	default y if ARM_ARCH_TIMER
+	select GENERIC_TIME_VSYSCALL
+	help
+	  Place in the process address space an ELF shared object
+	  providing fast implementations of gettimeofday and
+	  clock_gettime.  Systems that implement the ARM architected
+	  timer will receive maximum benefit.
+
+	  You must have glibc 2.22 or later for programs to seamlessly
+	  take advantage of this.
+
 config DMA_CACHE_RWFO
 	bool "Enable read/write for ownership DMA cache maintenance"
 	depends on CPU_V6K && SMP
@@ -891,13 +905,6 @@ config CACHE_L2X0
 	  This option enables the L2x0 PrimeCell.
 
 if CACHE_L2X0
-
-config CACHE_PL310
-	bool
-	default y if CPU_V7 && !(CPU_V6 || CPU_V6K)
-	help
-	  This option enables optimisations for the PL310 cache
-	  controller.
 
 config PL310_ERRATA_588369
 	bool "PL310 errata: Clean & Invalidate maintenance operations do not invalidate clean lines"

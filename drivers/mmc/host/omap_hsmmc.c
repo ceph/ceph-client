@@ -36,6 +36,7 @@
 #include <linux/mmc/host.h>
 #include <linux/mmc/core.h>
 #include <linux/mmc/mmc.h>
+#include <linux/mmc/slot-gpio.h>
 #include <linux/io.h>
 #include <linux/irq.h>
 #include <linux/gpio.h>
@@ -221,10 +222,6 @@ struct omap_hsmmc_host {
 	struct omap_hsmmc_next	next_data;
 	struct	omap_hsmmc_platform_data	*pdata;
 
-	/* To handle board related suspend/resume functionality for MMC */
-	int (*suspend)(struct device *dev);
-	int (*resume)(struct device *dev);
-
 	/* return MMC cover switch state, can be NULL if not supported.
 	 *
 	 * possible return values:
@@ -233,12 +230,7 @@ struct omap_hsmmc_host {
 	 */
 	int (*get_cover_state)(struct device *dev);
 
-	/* Card detection IRQs */
-	int card_detect_irq;
-
 	int (*card_detect)(struct device *dev);
-	int (*get_ro)(struct device *dev);
-
 };
 
 struct omap_mmc_of_data {
@@ -251,54 +243,16 @@ static void omap_hsmmc_start_dma_transfer(struct omap_hsmmc_host *host);
 static int omap_hsmmc_card_detect(struct device *dev)
 {
 	struct omap_hsmmc_host *host = dev_get_drvdata(dev);
-	struct omap_hsmmc_platform_data *mmc = host->pdata;
 
-	/* NOTE: assumes card detect signal is active-low */
-	return !gpio_get_value_cansleep(mmc->switch_pin);
-}
-
-static int omap_hsmmc_get_wp(struct device *dev)
-{
-	struct omap_hsmmc_host *host = dev_get_drvdata(dev);
-	struct omap_hsmmc_platform_data *mmc = host->pdata;
-
-	/* NOTE: assumes write protect signal is active-high */
-	return gpio_get_value_cansleep(mmc->gpio_wp);
+	return mmc_gpio_get_cd(host->mmc);
 }
 
 static int omap_hsmmc_get_cover_state(struct device *dev)
 {
 	struct omap_hsmmc_host *host = dev_get_drvdata(dev);
-	struct omap_hsmmc_platform_data *mmc = host->pdata;
 
-	/* NOTE: assumes card detect signal is active-low */
-	return !gpio_get_value_cansleep(mmc->switch_pin);
+	return mmc_gpio_get_cd(host->mmc);
 }
-
-#ifdef CONFIG_PM
-
-static int omap_hsmmc_suspend_cdirq(struct device *dev)
-{
-	struct omap_hsmmc_host *host = dev_get_drvdata(dev);
-
-	disable_irq(host->card_detect_irq);
-	return 0;
-}
-
-static int omap_hsmmc_resume_cdirq(struct device *dev)
-{
-	struct omap_hsmmc_host *host = dev_get_drvdata(dev);
-
-	enable_irq(host->card_detect_irq);
-	return 0;
-}
-
-#else
-
-#define omap_hsmmc_suspend_cdirq	NULL
-#define omap_hsmmc_resume_cdirq		NULL
-
-#endif
 
 #ifdef CONFIG_REGULATOR
 
@@ -464,59 +418,36 @@ static inline int omap_hsmmc_have_reg(void)
 
 #endif
 
-static int omap_hsmmc_gpio_init(struct omap_hsmmc_host *host,
+static irqreturn_t omap_hsmmc_cover_irq(int irq, void *dev_id);
+
+static int omap_hsmmc_gpio_init(struct mmc_host *mmc,
+				struct omap_hsmmc_host *host,
 				struct omap_hsmmc_platform_data *pdata)
 {
 	int ret;
 
-	if (gpio_is_valid(pdata->switch_pin)) {
-		if (pdata->cover)
-			host->get_cover_state =
-				omap_hsmmc_get_cover_state;
-		else
-			host->card_detect = omap_hsmmc_card_detect;
-		host->card_detect_irq =
-				gpio_to_irq(pdata->switch_pin);
-		ret = gpio_request(pdata->switch_pin, "mmc_cd");
+	if (gpio_is_valid(pdata->gpio_cod)) {
+		ret = mmc_gpio_request_cd(mmc, pdata->gpio_cod, 0);
 		if (ret)
 			return ret;
-		ret = gpio_direction_input(pdata->switch_pin);
+
+		host->get_cover_state = omap_hsmmc_get_cover_state;
+		mmc_gpio_set_cd_isr(mmc, omap_hsmmc_cover_irq);
+	} else if (gpio_is_valid(pdata->gpio_cd)) {
+		ret = mmc_gpio_request_cd(mmc, pdata->gpio_cd, 0);
 		if (ret)
-			goto err_free_sp;
-	} else {
-		pdata->switch_pin = -EINVAL;
+			return ret;
+
+		host->card_detect = omap_hsmmc_card_detect;
 	}
 
 	if (gpio_is_valid(pdata->gpio_wp)) {
-		host->get_ro = omap_hsmmc_get_wp;
-		ret = gpio_request(pdata->gpio_wp, "mmc_wp");
+		ret = mmc_gpio_request_ro(mmc, pdata->gpio_wp);
 		if (ret)
-			goto err_free_cd;
-		ret = gpio_direction_input(pdata->gpio_wp);
-		if (ret)
-			goto err_free_wp;
-	} else {
-		pdata->gpio_wp = -EINVAL;
+			return ret;
 	}
 
 	return 0;
-
-err_free_wp:
-	gpio_free(pdata->gpio_wp);
-err_free_cd:
-	if (gpio_is_valid(pdata->switch_pin))
-err_free_sp:
-		gpio_free(pdata->switch_pin);
-	return ret;
-}
-
-static void omap_hsmmc_gpio_free(struct omap_hsmmc_host *host,
-				 struct omap_hsmmc_platform_data *pdata)
-{
-	if (gpio_is_valid(pdata->gpio_wp))
-		gpio_free(pdata->gpio_wp);
-	if (gpio_is_valid(pdata->switch_pin))
-		gpio_free(pdata->switch_pin);
 }
 
 /*
@@ -931,6 +862,8 @@ static void omap_hsmmc_request_done(struct omap_hsmmc_host *host, struct mmc_req
 		return;
 	host->mrq = NULL;
 	mmc_request_done(host->mmc, mrq);
+	pm_runtime_mark_last_busy(host->dev);
+	pm_runtime_put_autosuspend(host->dev);
 }
 
 /*
@@ -1301,26 +1234,16 @@ static void omap_hsmmc_protect_card(struct omap_hsmmc_host *host)
 }
 
 /*
- * irq handler to notify the core about card insertion/removal
+ * irq handler when (cell-phone) cover is mounted/removed
  */
-static irqreturn_t omap_hsmmc_detect(int irq, void *dev_id)
+static irqreturn_t omap_hsmmc_cover_irq(int irq, void *dev_id)
 {
 	struct omap_hsmmc_host *host = dev_id;
-	int carddetect;
 
 	sysfs_notify(&host->mmc->class_dev.kobj, NULL, "cover_switch");
 
-	if (host->card_detect)
-		carddetect = host->card_detect(host->dev);
-	else {
-		omap_hsmmc_protect_card(host);
-		carddetect = -ENOSYS;
-	}
-
-	if (carddetect)
-		mmc_detect_change(host->mmc, (HZ * 200) / 1000);
-	else
-		mmc_detect_change(host->mmc, (HZ * 50) / 1000);
+	omap_hsmmc_protect_card(host);
+	mmc_detect_change(host->mmc, (HZ * 200) / 1000);
 	return IRQ_HANDLED;
 }
 
@@ -1354,6 +1277,8 @@ static void omap_hsmmc_dma_callback(void *param)
 
 		host->mrq = NULL;
 		mmc_request_done(host->mmc, mrq);
+		pm_runtime_mark_last_busy(host->dev);
+		pm_runtime_put_autosuspend(host->dev);
 	}
 }
 
@@ -1586,6 +1511,7 @@ static void omap_hsmmc_request(struct mmc_host *mmc, struct mmc_request *req)
 
 	BUG_ON(host->req_in_progress);
 	BUG_ON(host->dma_ch != -1);
+	pm_runtime_get_sync(host->dev);
 	if (host->protect_card) {
 		if (host->reqs_blocked < 3) {
 			/*
@@ -1602,6 +1528,8 @@ static void omap_hsmmc_request(struct mmc_host *mmc, struct mmc_request *req)
 			req->data->error = -EBADF;
 		req->cmd->retries = 0;
 		mmc_request_done(mmc, req);
+		pm_runtime_mark_last_busy(host->dev);
+		pm_runtime_put_autosuspend(host->dev);
 		return;
 	} else if (host->reqs_blocked)
 		host->reqs_blocked = 0;
@@ -1615,6 +1543,8 @@ static void omap_hsmmc_request(struct mmc_host *mmc, struct mmc_request *req)
 			req->data->error = err;
 		host->mrq = NULL;
 		mmc_request_done(mmc, req);
+		pm_runtime_mark_last_busy(host->dev);
+		pm_runtime_put_autosuspend(host->dev);
 		return;
 	}
 	if (req->sbc && !(host->flags & AUTO_CMD23)) {
@@ -1688,15 +1618,6 @@ static int omap_hsmmc_get_cd(struct mmc_host *mmc)
 	if (!host->card_detect)
 		return -ENOSYS;
 	return host->card_detect(host->dev);
-}
-
-static int omap_hsmmc_get_ro(struct mmc_host *mmc)
-{
-	struct omap_hsmmc_host *host = mmc_priv(mmc);
-
-	if (!host->get_ro)
-		return -ENOSYS;
-	return host->get_ro(host->dev);
 }
 
 static void omap_hsmmc_init_card(struct mmc_host *mmc, struct mmc_card *card)
@@ -1827,25 +1748,6 @@ static void omap_hsmmc_conf_bus_power(struct omap_hsmmc_host *host)
 	set_sd_bus_power(host);
 }
 
-static int omap_hsmmc_enable_fclk(struct mmc_host *mmc)
-{
-	struct omap_hsmmc_host *host = mmc_priv(mmc);
-
-	pm_runtime_get_sync(host->dev);
-
-	return 0;
-}
-
-static int omap_hsmmc_disable_fclk(struct mmc_host *mmc)
-{
-	struct omap_hsmmc_host *host = mmc_priv(mmc);
-
-	pm_runtime_mark_last_busy(host->dev);
-	pm_runtime_put_autosuspend(host->dev);
-
-	return 0;
-}
-
 static int omap_hsmmc_multi_io_quirk(struct mmc_card *card,
 				     unsigned int direction, int blk_size)
 {
@@ -1857,14 +1759,12 @@ static int omap_hsmmc_multi_io_quirk(struct mmc_card *card,
 }
 
 static struct mmc_host_ops omap_hsmmc_ops = {
-	.enable = omap_hsmmc_enable_fclk,
-	.disable = omap_hsmmc_disable_fclk,
 	.post_req = omap_hsmmc_post_req,
 	.pre_req = omap_hsmmc_pre_req,
 	.request = omap_hsmmc_request,
 	.set_ios = omap_hsmmc_set_ios,
 	.get_cd = omap_hsmmc_get_cd,
-	.get_ro = omap_hsmmc_get_ro,
+	.get_ro = mmc_gpio_get_ro,
 	.init_card = omap_hsmmc_init_card,
 	.enable_sdio_irq = omap_hsmmc_enable_sdio_irq,
 };
@@ -1978,13 +1878,6 @@ static struct omap_hsmmc_platform_data *of_get_hsmmc_pdata(struct device *dev)
 {
 	struct omap_hsmmc_platform_data *pdata;
 	struct device_node *np = dev->of_node;
-	u32 bus_width, max_freq;
-	int cd_gpio, wp_gpio;
-
-	cd_gpio = of_get_named_gpio(np, "cd-gpios", 0);
-	wp_gpio = of_get_named_gpio(np, "wp-gpios", 0);
-	if (cd_gpio == -EPROBE_DEFER || wp_gpio == -EPROBE_DEFER)
-		return ERR_PTR(-EPROBE_DEFER);
 
 	pdata = devm_kzalloc(dev, sizeof(*pdata), GFP_KERNEL);
 	if (!pdata)
@@ -1993,33 +1886,20 @@ static struct omap_hsmmc_platform_data *of_get_hsmmc_pdata(struct device *dev)
 	if (of_find_property(np, "ti,dual-volt", NULL))
 		pdata->controller_flags |= OMAP_HSMMC_SUPPORTS_DUAL_VOLT;
 
-	pdata->switch_pin = cd_gpio;
-	pdata->gpio_wp = wp_gpio;
+	pdata->gpio_cd = -EINVAL;
+	pdata->gpio_cod = -EINVAL;
+	pdata->gpio_wp = -EINVAL;
 
 	if (of_find_property(np, "ti,non-removable", NULL)) {
 		pdata->nonremovable = true;
 		pdata->no_regulator_off_init = true;
 	}
-	of_property_read_u32(np, "bus-width", &bus_width);
-	if (bus_width == 4)
-		pdata->caps |= MMC_CAP_4_BIT_DATA;
-	else if (bus_width == 8)
-		pdata->caps |= MMC_CAP_8_BIT_DATA;
 
 	if (of_find_property(np, "ti,needs-special-reset", NULL))
 		pdata->features |= HSMMC_HAS_UPDATED_RESET;
 
-	if (!of_property_read_u32(np, "max-frequency", &max_freq))
-		pdata->max_freq = max_freq;
-
 	if (of_find_property(np, "ti,needs-special-hs-handling", NULL))
 		pdata->features |= HSMMC_HAS_HSPE_SUPPORT;
-
-	if (of_find_property(np, "keep-power-in-suspend", NULL))
-		pdata->pm_caps |= MMC_PM_KEEP_POWER;
-
-	if (of_find_property(np, "enable-sdio-wakeup", NULL))
-		pdata->pm_caps |= MMC_PM_WAKE_SDIO_IRQ;
 
 	return pdata;
 }
@@ -2078,6 +1958,10 @@ static int omap_hsmmc_probe(struct platform_device *pdev)
 		goto err;
 	}
 
+	ret = mmc_of_parse(mmc);
+	if (ret)
+		goto err1;
+
 	host		= mmc_priv(mmc);
 	host->mmc	= mmc;
 	host->pdata	= pdata;
@@ -2091,7 +1975,7 @@ static int omap_hsmmc_probe(struct platform_device *pdev)
 	host->next_data.cookie = 1;
 	host->pbias_enabled = 0;
 
-	ret = omap_hsmmc_gpio_init(host, pdata);
+	ret = omap_hsmmc_gpio_init(mmc, host, pdata);
 	if (ret)
 		goto err_gpio;
 
@@ -2106,7 +1990,7 @@ static int omap_hsmmc_probe(struct platform_device *pdev)
 
 	if (pdata->max_freq > 0)
 		mmc->f_max = pdata->max_freq;
-	else
+	else if (mmc->f_max == 0)
 		mmc->f_max = OMAP_MMC_MAX_CLOCK;
 
 	spin_lock_init(&host->irq_lock);
@@ -2160,7 +2044,7 @@ static int omap_hsmmc_probe(struct platform_device *pdev)
 	if (mmc_pdata(host)->nonremovable)
 		mmc->caps |= MMC_CAP_NONREMOVABLE;
 
-	mmc->pm_caps = mmc_pdata(host)->pm_caps;
+	mmc->pm_caps |= mmc_pdata(host)->pm_caps;
 
 	omap_hsmmc_conf_bus_power(host);
 
@@ -2222,22 +2106,6 @@ static int omap_hsmmc_probe(struct platform_device *pdev)
 
 	mmc->ocr_avail = mmc_pdata(host)->ocr_mask;
 
-	/* Request IRQ for card detect */
-	if (host->card_detect_irq) {
-		ret = devm_request_threaded_irq(&pdev->dev,
-						host->card_detect_irq,
-						NULL, omap_hsmmc_detect,
-					   IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
-					   mmc_hostname(mmc), host);
-		if (ret) {
-			dev_err(mmc_dev(host->mmc),
-				"Unable to grab MMC CD IRQ\n");
-			goto err_irq_cd;
-		}
-		host->suspend = omap_hsmmc_suspend_cdirq;
-		host->resume = omap_hsmmc_resume_cdirq;
-	}
-
 	omap_hsmmc_disable_irq(host);
 
 	/*
@@ -2261,9 +2129,9 @@ static int omap_hsmmc_probe(struct platform_device *pdev)
 		if (ret < 0)
 			goto err_slot_name;
 	}
-	if (host->card_detect_irq && host->get_cover_state) {
+	if (host->get_cover_state) {
 		ret = device_create_file(&mmc->class_dev,
-					&dev_attr_cover_switch);
+					 &dev_attr_cover_switch);
 		if (ret < 0)
 			goto err_slot_name;
 	}
@@ -2276,7 +2144,6 @@ static int omap_hsmmc_probe(struct platform_device *pdev)
 
 err_slot_name:
 	mmc_remove_host(mmc);
-err_irq_cd:
 	if (host->use_reg)
 		omap_hsmmc_reg_put(host);
 err_irq:
@@ -2289,7 +2156,6 @@ err_irq:
 	if (host->dbclk)
 		clk_disable_unprepare(host->dbclk);
 err1:
-	omap_hsmmc_gpio_free(host, pdata);
 err_gpio:
 	mmc_free_host(mmc);
 err:
@@ -2315,32 +2181,12 @@ static int omap_hsmmc_remove(struct platform_device *pdev)
 	if (host->dbclk)
 		clk_disable_unprepare(host->dbclk);
 
-	omap_hsmmc_gpio_free(host, host->pdata);
 	mmc_free_host(host->mmc);
 
 	return 0;
 }
 
-#ifdef CONFIG_PM
-static int omap_hsmmc_prepare(struct device *dev)
-{
-	struct omap_hsmmc_host *host = dev_get_drvdata(dev);
-
-	if (host->suspend)
-		return host->suspend(dev);
-
-	return 0;
-}
-
-static void omap_hsmmc_complete(struct device *dev)
-{
-	struct omap_hsmmc_host *host = dev_get_drvdata(dev);
-
-	if (host->resume)
-		host->resume(dev);
-
-}
-
+#ifdef CONFIG_PM_SLEEP
 static int omap_hsmmc_suspend(struct device *dev)
 {
 	struct omap_hsmmc_host *host = dev_get_drvdata(dev);
@@ -2396,12 +2242,6 @@ static int omap_hsmmc_resume(struct device *dev)
 	pm_runtime_put_autosuspend(host->dev);
 	return 0;
 }
-
-#else
-#define omap_hsmmc_prepare	NULL
-#define omap_hsmmc_complete	NULL
-#define omap_hsmmc_suspend	NULL
-#define omap_hsmmc_resume	NULL
 #endif
 
 static int omap_hsmmc_runtime_suspend(struct device *dev)
@@ -2482,10 +2322,7 @@ static int omap_hsmmc_runtime_resume(struct device *dev)
 }
 
 static struct dev_pm_ops omap_hsmmc_dev_pm_ops = {
-	.suspend	= omap_hsmmc_suspend,
-	.resume		= omap_hsmmc_resume,
-	.prepare	= omap_hsmmc_prepare,
-	.complete	= omap_hsmmc_complete,
+	SET_SYSTEM_SLEEP_PM_OPS(omap_hsmmc_suspend, omap_hsmmc_resume)
 	.runtime_suspend = omap_hsmmc_runtime_suspend,
 	.runtime_resume = omap_hsmmc_runtime_resume,
 };

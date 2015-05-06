@@ -460,8 +460,7 @@ xfs_iomap_prealloc_size(
 	alloc_blocks = XFS_FILEOFF_MIN(roundup_pow_of_two(MAXEXTLEN),
 				       alloc_blocks);
 
-	xfs_icsb_sync_counters(mp, XFS_ICSB_LAZY_COUNT);
-	freesp = mp->m_sb.sb_fdblocks;
+	freesp = percpu_counter_read_positive(&mp->m_fdblocks);
 	if (freesp < mp->m_low_space[XFS_LOWSP_5_PCNT]) {
 		shift = 2;
 		if (freesp < mp->m_low_space[XFS_LOWSP_4_PCNT])
@@ -802,7 +801,7 @@ int
 xfs_iomap_write_unwritten(
 	xfs_inode_t	*ip,
 	xfs_off_t	offset,
-	size_t		count)
+	xfs_off_t	count)
 {
 	xfs_mount_t	*mp = ip->i_mount;
 	xfs_fileoff_t	offset_fsb;

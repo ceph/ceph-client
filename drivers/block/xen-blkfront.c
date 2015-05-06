@@ -1245,6 +1245,7 @@ static int setup_blkring(struct xenbus_device *dev,
 			 struct blkfront_info *info)
 {
 	struct blkif_sring *sring;
+	grant_ref_t gref;
 	int err;
 
 	info->ring_ref = GRANT_INVALID_REF;
@@ -1257,13 +1258,13 @@ static int setup_blkring(struct xenbus_device *dev,
 	SHARED_RING_INIT(sring);
 	FRONT_RING_INIT(&info->ring, sring, PAGE_SIZE);
 
-	err = xenbus_grant_ring(dev, virt_to_mfn(info->ring.sring));
+	err = xenbus_grant_ring(dev, info->ring.sring, 1, &gref);
 	if (err < 0) {
 		free_page((unsigned long)sring);
 		info->ring.sring = NULL;
 		goto fail;
 	}
-	info->ring_ref = err;
+	info->ring_ref = gref;
 
 	err = xenbus_alloc_evtchn(dev, &info->evtchn);
 	if (err)
@@ -1391,7 +1392,7 @@ static int blkfront_probe(struct xenbus_device *dev,
 			if (major != XENVBD_MAJOR) {
 				printk(KERN_INFO
 						"%s: HVM does not support vbd %d as xen block device\n",
-						__FUNCTION__, vdevice);
+						__func__, vdevice);
 				return -ENODEV;
 			}
 		}
@@ -1511,7 +1512,7 @@ static int blkif_recover(struct blkfront_info *info)
 		merge_bio.tail = copy[i].request->biotail;
 		bio_list_merge(&bio_list, &merge_bio);
 		copy[i].request->bio = NULL;
-		blk_put_request(copy[i].request);
+		blk_end_request_all(copy[i].request, 0);
 	}
 
 	kfree(copy);
@@ -1534,7 +1535,7 @@ static int blkif_recover(struct blkfront_info *info)
 		req->bio = NULL;
 		if (req->cmd_flags & (REQ_FLUSH | REQ_FUA))
 			pr_alert("diskcache flush request found!\n");
-		__blk_put_request(info->rq, req);
+		__blk_end_request_all(req, 0);
 	}
 	spin_unlock_irq(&info->io_lock);
 

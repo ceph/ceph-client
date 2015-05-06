@@ -1756,6 +1756,9 @@ static int si_calculate_sclk_params(struct radeon_device *rdev,
 				    u32 engine_clock,
 				    SISLANDS_SMC_SCLK_VALUE *sclk);
 
+static void si_thermal_start_smc_fan_control(struct radeon_device *rdev);
+static void si_fan_ctrl_set_default_mode(struct radeon_device *rdev);
+
 static struct si_power_info *si_get_pi(struct radeon_device *rdev)
 {
         struct si_power_info *pi = rdev->pm.dpm.priv;
@@ -2921,6 +2924,7 @@ struct si_dpm_quirk {
 static struct si_dpm_quirk si_dpm_quirk_list[] = {
 	/* PITCAIRN - https://bugs.freedesktop.org/show_bug.cgi?id=76490 */
 	{ PCI_VENDOR_ID_ATI, 0x6810, 0x1462, 0x3036, 0, 120000 },
+	{ PCI_VENDOR_ID_ATI, 0x6811, 0x174b, 0xe271, 0, 120000 },
 	{ 0, 0, 0, 0 },
 };
 
@@ -3359,11 +3363,13 @@ int si_dpm_force_performance_level(struct radeon_device *rdev,
 	return 0;
 }
 
+#if 0
 static int si_set_boot_state(struct radeon_device *rdev)
 {
 	return (si_send_msg_to_smc(rdev, PPSMC_MSG_SwitchToInitialState) == PPSMC_Result_OK) ?
 		0 : -EINVAL;
 }
+#endif
 
 static int si_set_sw_state(struct radeon_device *rdev)
 {
@@ -5973,6 +5979,10 @@ static int si_thermal_setup_fan_table(struct radeon_device *rdev)
 	slope1 = (u16)((50 + ((16 * duty100 * pwm_diff1) / t_diff1)) / 100);
 	slope2 = (u16)((50 + ((16 * duty100 * pwm_diff2) / t_diff2)) / 100);
 
+	fan_table.temp_min = cpu_to_be16((50 + rdev->pm.dpm.fan.t_min) / 100);
+	fan_table.temp_med = cpu_to_be16((50 + rdev->pm.dpm.fan.t_med) / 100);
+	fan_table.temp_max = cpu_to_be16((50 + rdev->pm.dpm.fan.t_max) / 100);
+
 	fan_table.slope1 = cpu_to_be16(slope1);
 	fan_table.slope2 = cpu_to_be16(slope2);
 
@@ -6012,29 +6022,35 @@ static int si_thermal_setup_fan_table(struct radeon_device *rdev)
 
 static int si_fan_ctrl_start_smc_fan_control(struct radeon_device *rdev)
 {
+	struct si_power_info *si_pi = si_get_pi(rdev);
 	PPSMC_Result ret;
 
 	ret = si_send_msg_to_smc(rdev, PPSMC_StartFanControl);
-	if (ret == PPSMC_Result_OK)
+	if (ret == PPSMC_Result_OK) {
+		si_pi->fan_is_controlled_by_smc = true;
 		return 0;
-	else
+	} else {
 		return -EINVAL;
+	}
 }
 
 static int si_fan_ctrl_stop_smc_fan_control(struct radeon_device *rdev)
 {
+	struct si_power_info *si_pi = si_get_pi(rdev);
 	PPSMC_Result ret;
 
 	ret = si_send_msg_to_smc(rdev, PPSMC_StopFanControl);
-	if (ret == PPSMC_Result_OK)
+
+	if (ret == PPSMC_Result_OK) {
+		si_pi->fan_is_controlled_by_smc = false;
 		return 0;
-	else
+	} else {
 		return -EINVAL;
+	}
 }
 
-#if 0
-static int si_fan_ctrl_get_fan_speed_percent(struct radeon_device *rdev,
-					     u32 *speed)
+int si_fan_ctrl_get_fan_speed_percent(struct radeon_device *rdev,
+				      u32 *speed)
 {
 	u32 duty, duty100;
 	u64 tmp64;
@@ -6058,9 +6074,10 @@ static int si_fan_ctrl_get_fan_speed_percent(struct radeon_device *rdev,
 	return 0;
 }
 
-static int si_fan_ctrl_set_fan_speed_percent(struct radeon_device *rdev,
-					     u32 speed)
+int si_fan_ctrl_set_fan_speed_percent(struct radeon_device *rdev,
+				      u32 speed)
 {
+	struct si_power_info *si_pi = si_get_pi(rdev);
 	u32 tmp;
 	u32 duty, duty100;
 	u64 tmp64;
@@ -6068,11 +6085,11 @@ static int si_fan_ctrl_set_fan_speed_percent(struct radeon_device *rdev,
 	if (rdev->pm.no_fan)
 		return -ENOENT;
 
-	if (speed > 100)
+	if (si_pi->fan_is_controlled_by_smc)
 		return -EINVAL;
 
-	if (rdev->pm.dpm.fan.ucode_fan_control)
-		si_fan_ctrl_stop_smc_fan_control(rdev);
+	if (speed > 100)
+		return -EINVAL;
 
 	duty100 = (RREG32(CG_FDO_CTRL1) & FMAX_DUTY100_MASK) >> FMAX_DUTY100_SHIFT;
 
@@ -6087,11 +6104,38 @@ static int si_fan_ctrl_set_fan_speed_percent(struct radeon_device *rdev,
 	tmp |= FDO_STATIC_DUTY(duty);
 	WREG32(CG_FDO_CTRL0, tmp);
 
-	si_fan_ctrl_set_static_mode(rdev, FDO_PWM_MODE_STATIC);
-
 	return 0;
 }
 
+void si_fan_ctrl_set_mode(struct radeon_device *rdev, u32 mode)
+{
+	if (mode) {
+		/* stop auto-manage */
+		if (rdev->pm.dpm.fan.ucode_fan_control)
+			si_fan_ctrl_stop_smc_fan_control(rdev);
+		si_fan_ctrl_set_static_mode(rdev, mode);
+	} else {
+		/* restart auto-manage */
+		if (rdev->pm.dpm.fan.ucode_fan_control)
+			si_thermal_start_smc_fan_control(rdev);
+		else
+			si_fan_ctrl_set_default_mode(rdev);
+	}
+}
+
+u32 si_fan_ctrl_get_mode(struct radeon_device *rdev)
+{
+	struct si_power_info *si_pi = si_get_pi(rdev);
+	u32 tmp;
+
+	if (si_pi->fan_is_controlled_by_smc)
+		return 0;
+
+	tmp = RREG32(CG_FDO_CTRL2) & FDO_PWM_MODE_MASK;
+	return (tmp >> FDO_PWM_MODE_SHIFT);
+}
+
+#if 0
 static int si_fan_ctrl_get_fan_speed_rpm(struct radeon_device *rdev,
 					 u32 *speed)
 {
@@ -6538,13 +6582,14 @@ void si_dpm_post_set_power_state(struct radeon_device *rdev)
 	ni_update_current_ps(rdev, new_ps);
 }
 
-
+#if 0
 void si_dpm_reset_asic(struct radeon_device *rdev)
 {
 	si_restrict_performance_levels_before_switch(rdev);
 	si_disable_ulv(rdev);
 	si_set_boot_state(rdev);
 }
+#endif
 
 void si_dpm_display_configuration_changed(struct radeon_device *rdev)
 {
@@ -6912,7 +6957,6 @@ int si_dpm_init(struct radeon_device *rdev)
 			rdev->pm.dpm.dyn_state.max_clock_voltage_on_ac;
 
 	si_pi->fan_ctrl_is_in_default_mode = true;
-	rdev->pm.dpm.fan.ucode_fan_control = false;
 
 	return 0;
 }
@@ -6948,5 +6992,41 @@ void si_dpm_debugfs_print_current_performance_level(struct radeon_device *rdev,
 		seq_printf(m, "uvd    vclk: %d dclk: %d\n", rps->vclk, rps->dclk);
 		seq_printf(m, "power level %d    sclk: %u mclk: %u vddc: %u vddci: %u pcie gen: %u\n",
 			   current_index, pl->sclk, pl->mclk, pl->vddc, pl->vddci, pl->pcie_gen + 1);
+	}
+}
+
+u32 si_dpm_get_current_sclk(struct radeon_device *rdev)
+{
+	struct evergreen_power_info *eg_pi = evergreen_get_pi(rdev);
+	struct radeon_ps *rps = &eg_pi->current_rps;
+	struct ni_ps *ps = ni_get_ps(rps);
+	struct rv7xx_pl *pl;
+	u32 current_index =
+		(RREG32(TARGET_AND_CURRENT_PROFILE_INDEX) & CURRENT_STATE_INDEX_MASK) >>
+		CURRENT_STATE_INDEX_SHIFT;
+
+	if (current_index >= ps->performance_level_count) {
+		return 0;
+	} else {
+		pl = &ps->performance_levels[current_index];
+		return pl->sclk;
+	}
+}
+
+u32 si_dpm_get_current_mclk(struct radeon_device *rdev)
+{
+	struct evergreen_power_info *eg_pi = evergreen_get_pi(rdev);
+	struct radeon_ps *rps = &eg_pi->current_rps;
+	struct ni_ps *ps = ni_get_ps(rps);
+	struct rv7xx_pl *pl;
+	u32 current_index =
+		(RREG32(TARGET_AND_CURRENT_PROFILE_INDEX) & CURRENT_STATE_INDEX_MASK) >>
+		CURRENT_STATE_INDEX_SHIFT;
+
+	if (current_index >= ps->performance_level_count) {
+		return 0;
+	} else {
+		pl = &ps->performance_levels[current_index];
+		return pl->mclk;
 	}
 }

@@ -19,7 +19,7 @@
 static int mn88472_get_tune_settings(struct dvb_frontend *fe,
 	struct dvb_frontend_tune_settings *s)
 {
-	s->min_delay_ms = 400;
+	s->min_delay_ms = 800;
 	return 0;
 }
 
@@ -30,6 +30,7 @@ static int mn88472_set_frontend(struct dvb_frontend *fe)
 	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	int ret, i;
 	u32 if_frequency = 0;
+	u64 tmp;
 	u8 delivery_system_val, if_val[3], bw_val[7], bw_val2;
 
 	dev_dbg(&client->dev,
@@ -57,36 +58,22 @@ static int mn88472_set_frontend(struct dvb_frontend *fe)
 		goto err;
 	}
 
-	switch (c->delivery_system) {
-	case SYS_DVBT:
-	case SYS_DVBT2:
-		if (c->bandwidth_hz <= 6000000) {
-			/* IF 3570000 Hz, BW 6000000 Hz */
-			memcpy(if_val, "\x2c\x94\xdb", 3);
-			memcpy(bw_val, "\xbf\x55\x55\x15\x6b\x15\x6b", 7);
-			bw_val2 = 0x02;
-		} else if (c->bandwidth_hz <= 7000000) {
-			/* IF 4570000 Hz, BW 7000000 Hz */
-			memcpy(if_val, "\x39\x11\xbc", 3);
-			memcpy(bw_val, "\xa4\x00\x00\x0f\x2c\x0f\x2c", 7);
-			bw_val2 = 0x01;
-		} else if (c->bandwidth_hz <= 8000000) {
-			/* IF 4570000 Hz, BW 8000000 Hz */
-			memcpy(if_val, "\x39\x11\xbc", 3);
-			memcpy(bw_val, "\x8f\x80\x00\x08\xee\x08\xee", 7);
-			bw_val2 = 0x00;
-		} else {
-			ret = -EINVAL;
-			goto err;
-		}
-		break;
-	case SYS_DVBC_ANNEX_A:
-		/* IF 5070000 Hz, BW 8000000 Hz */
-		memcpy(if_val, "\x3f\x50\x2c", 3);
+	if (c->bandwidth_hz <= 5000000) {
+		memcpy(bw_val, "\xe5\x99\x9a\x1b\xa9\x1b\xa9", 7);
+		bw_val2 = 0x03;
+	} else if (c->bandwidth_hz <= 6000000) {
+		/* IF 3570000 Hz, BW 6000000 Hz */
+		memcpy(bw_val, "\xbf\x55\x55\x15\x6b\x15\x6b", 7);
+		bw_val2 = 0x02;
+	} else if (c->bandwidth_hz <= 7000000) {
+		/* IF 4570000 Hz, BW 7000000 Hz */
+		memcpy(bw_val, "\xa4\x00\x00\x0f\x2c\x0f\x2c", 7);
+		bw_val2 = 0x01;
+	} else if (c->bandwidth_hz <= 8000000) {
+		/* IF 4570000 Hz, BW 8000000 Hz */
 		memcpy(bw_val, "\x8f\x80\x00\x08\xee\x08\xee", 7);
 		bw_val2 = 0x00;
-		break;
-	default:
+	} else {
 		ret = -EINVAL;
 		goto err;
 	}
@@ -106,17 +93,12 @@ static int mn88472_set_frontend(struct dvb_frontend *fe)
 		dev_dbg(&client->dev, "get_if_frequency=%d\n", if_frequency);
 	}
 
-	switch (if_frequency) {
-	case 3570000:
-	case 4570000:
-	case 5070000:
-		break;
-	default:
-		dev_err(&client->dev, "IF frequency %d not supported\n",
-				if_frequency);
-		ret = -EINVAL;
-		goto err;
-	}
+	/* Calculate IF registers ( (1<<24)*IF / Xtal ) */
+	tmp =  div_u64(if_frequency * (u64)(1<<24) + (dev->xtal / 2),
+				   dev->xtal);
+	if_val[0] = ((tmp >> 16) & 0xff);
+	if_val[1] = ((tmp >>  8) & 0xff);
+	if_val[2] = ((tmp >>  0) & 0xff);
 
 	ret = regmap_write(dev->regmap[2], 0xfb, 0x13);
 	ret = regmap_write(dev->regmap[2], 0xef, 0x13);
@@ -196,8 +178,34 @@ static int mn88472_set_frontend(struct dvb_frontend *fe)
 
 	ret = regmap_write(dev->regmap[0], 0x46, 0x00);
 	ret = regmap_write(dev->regmap[0], 0xae, 0x00);
-	ret = regmap_write(dev->regmap[2], 0x08, 0x1d);
-	ret = regmap_write(dev->regmap[0], 0xd9, 0xe3);
+
+	switch (dev->ts_mode) {
+	case SERIAL_TS_MODE:
+		ret = regmap_write(dev->regmap[2], 0x08, 0x1d);
+		break;
+	case PARALLEL_TS_MODE:
+		ret = regmap_write(dev->regmap[2], 0x08, 0x00);
+		break;
+	default:
+		dev_dbg(&client->dev, "ts_mode error: %d\n", dev->ts_mode);
+		ret = -EINVAL;
+		goto err;
+	}
+
+	switch (dev->ts_clock) {
+	case VARIABLE_TS_CLOCK:
+		ret = regmap_write(dev->regmap[0], 0xd9, 0xe3);
+		break;
+	case FIXED_TS_CLOCK:
+		ret = regmap_write(dev->regmap[0], 0xd9, 0xe1);
+		break;
+	default:
+		dev_dbg(&client->dev, "ts_clock error: %d\n", dev->ts_clock);
+		ret = -EINVAL;
+		goto err;
+	}
+
+	/* Reset demod */
 	ret = regmap_write(dev->regmap[2], 0xf8, 0x9f);
 	if (ret)
 		goto err;
@@ -217,6 +225,7 @@ static int mn88472_read_status(struct dvb_frontend *fe, fe_status_t *status)
 	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	int ret;
 	unsigned int utmp;
+	int lock = 0;
 
 	*status = 0;
 
@@ -227,21 +236,36 @@ static int mn88472_read_status(struct dvb_frontend *fe, fe_status_t *status)
 
 	switch (c->delivery_system) {
 	case SYS_DVBT:
+		ret = regmap_read(dev->regmap[0], 0x7F, &utmp);
+		if (ret)
+			goto err;
+		if ((utmp & 0xF) >= 0x09)
+			lock = 1;
+		break;
 	case SYS_DVBT2:
-		/* FIXME: implement me */
-		utmp = 0x08; /* DVB-C lock value */
+		ret = regmap_read(dev->regmap[2], 0x92, &utmp);
+		if (ret)
+			goto err;
+		if ((utmp & 0xF) >= 0x07)
+			*status |= FE_HAS_SIGNAL;
+		if ((utmp & 0xF) >= 0x0a)
+			*status |= FE_HAS_CARRIER;
+		if ((utmp & 0xF) >= 0x0d)
+			*status |= FE_HAS_VITERBI | FE_HAS_SYNC | FE_HAS_LOCK;
 		break;
 	case SYS_DVBC_ANNEX_A:
 		ret = regmap_read(dev->regmap[1], 0x84, &utmp);
 		if (ret)
 			goto err;
+		if ((utmp & 0xF) >= 0x08)
+			lock = 1;
 		break;
 	default:
 		ret = -EINVAL;
 		goto err;
 	}
 
-	if (utmp == 0x08)
+	if (lock)
 		*status = FE_HAS_SIGNAL | FE_HAS_CARRIER | FE_HAS_VITERBI |
 				FE_HAS_SYNC | FE_HAS_LOCK;
 
@@ -258,6 +282,7 @@ static int mn88472_init(struct dvb_frontend *fe)
 	int ret, len, remaining;
 	const struct firmware *fw = NULL;
 	u8 *fw_file = MN88472_FIRMWARE;
+	unsigned int tmp;
 
 	dev_dbg(&client->dev, "\n");
 
@@ -273,6 +298,17 @@ static int mn88472_init(struct dvb_frontend *fe)
 	if (ret)
 		goto err;
 
+	/* check if firmware is already running */
+	ret = regmap_read(dev->regmap[0], 0xf5, &tmp);
+	if (ret)
+		goto err;
+
+	if (!(tmp & 0x1)) {
+		dev_info(&client->dev, "firmware already running\n");
+		dev->warm = true;
+		return 0;
+	}
+
 	/* request the firmware, this will block and timeout */
 	ret = request_firmware(&fw, fw_file, &client->dev);
 	if (ret) {
@@ -286,26 +322,40 @@ static int mn88472_init(struct dvb_frontend *fe)
 
 	ret = regmap_write(dev->regmap[0], 0xf5, 0x03);
 	if (ret)
-		goto err;
+		goto firmware_release;
 
 	for (remaining = fw->size; remaining > 0;
 			remaining -= (dev->i2c_wr_max - 1)) {
 		len = remaining;
 		if (len > (dev->i2c_wr_max - 1))
-			len = (dev->i2c_wr_max - 1);
+			len = dev->i2c_wr_max - 1;
 
 		ret = regmap_bulk_write(dev->regmap[0], 0xf6,
 				&fw->data[fw->size - remaining], len);
 		if (ret) {
 			dev_err(&client->dev,
 					"firmware download failed=%d\n", ret);
-			goto err;
+			goto firmware_release;
 		}
 	}
 
+	/* parity check of firmware */
+	ret = regmap_read(dev->regmap[0], 0xf8, &tmp);
+	if (ret) {
+		dev_err(&client->dev,
+				"parity reg read failed=%d\n", ret);
+		goto err;
+	}
+	if (tmp & 0x10) {
+		dev_err(&client->dev,
+				"firmware parity check failed=0x%x\n", tmp);
+		goto err;
+	}
+	dev_err(&client->dev, "firmware parity check succeeded=0x%x\n", tmp);
+
 	ret = regmap_write(dev->regmap[0], 0xf5, 0x00);
 	if (ret)
-		goto err;
+		goto firmware_release;
 
 	release_firmware(fw);
 	fw = NULL;
@@ -314,10 +364,9 @@ static int mn88472_init(struct dvb_frontend *fe)
 	dev->warm = true;
 
 	return 0;
+firmware_release:
+	release_firmware(fw);
 err:
-	if (fw)
-		release_firmware(fw);
-
 	dev_dbg(&client->dev, "failed=%d\n", ret);
 	return ret;
 }
@@ -352,6 +401,8 @@ static struct dvb_frontend_ops mn88472_ops = {
 	.delsys = {SYS_DVBT, SYS_DVBT2, SYS_DVBC_ANNEX_A},
 	.info = {
 		.name = "Panasonic MN88472",
+		.symbol_rate_min = 1000000,
+		.symbol_rate_max = 7200000,
 		.caps =	FE_CAN_FEC_1_2                 |
 			FE_CAN_FEC_2_3                 |
 			FE_CAN_FEC_3_4                 |
@@ -411,6 +462,9 @@ static int mn88472_probe(struct i2c_client *client,
 	}
 
 	dev->i2c_wr_max = config->i2c_wr_max;
+	dev->xtal = config->xtal;
+	dev->ts_mode = config->ts_mode;
+	dev->ts_clock = config->ts_clock;
 	dev->client[0] = client;
 	dev->regmap[0] = regmap_init_i2c(dev->client[0], &regmap_config);
 	if (IS_ERR(dev->regmap[0])) {

@@ -112,7 +112,6 @@ static struct gfs2_sbd *init_sbd(struct super_block *sb)
 	mapping->flags = 0;
 	mapping_set_gfp_mask(mapping, GFP_NOFS);
 	mapping->private_data = NULL;
-	mapping->backing_dev_info = sb->s_bdi;
 	mapping->writeback_index = 0;
 
 	spin_lock_init(&sdp->sd_log_lock);
@@ -648,7 +647,7 @@ out_unlock:
 
 static int init_journal(struct gfs2_sbd *sdp, int undo)
 {
-	struct inode *master = sdp->sd_master_dir->d_inode;
+	struct inode *master = d_inode(sdp->sd_master_dir);
 	struct gfs2_holder ji_gh;
 	struct gfs2_inode *ip;
 	int jindex = 1;
@@ -783,7 +782,7 @@ static struct lock_class_key gfs2_quota_imutex_key;
 static int init_inodes(struct gfs2_sbd *sdp, int undo)
 {
 	int error = 0;
-	struct inode *master = sdp->sd_master_dir->d_inode;
+	struct inode *master = d_inode(sdp->sd_master_dir);
 
 	if (undo)
 		goto fail_qinode;
@@ -849,7 +848,7 @@ static int init_per_node(struct gfs2_sbd *sdp, int undo)
 	char buf[30];
 	int error = 0;
 	struct gfs2_inode *ip;
-	struct inode *master = sdp->sd_master_dir->d_inode;
+	struct inode *master = d_inode(sdp->sd_master_dir);
 
 	if (sdp->sd_args.ar_spectator)
 		return 0;
@@ -1358,7 +1357,7 @@ static struct dentry *gfs2_mount_meta(struct file_system_type *fs_type,
 		return ERR_PTR(error);
 	}
 	s = sget(&gfs2_fs_type, test_gfs2_super, set_meta_super, flags,
-		 path.dentry->d_inode->i_sb->s_bdev);
+		 d_inode(path.dentry)->i_sb->s_bdev);
 	path_put(&path);
 	if (IS_ERR(s)) {
 		pr_warn("gfs2 mount does not exist\n");

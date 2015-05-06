@@ -859,6 +859,9 @@ int ubi_io_write_ec_hdr(struct ubi_device *ubi, int pnum,
 	if (err)
 		return err;
 
+	if (ubi_dbg_power_cut(ubi, POWER_CUT_EC_WRITE))
+		return -EROFS;
+
 	err = ubi_io_write(ubi, ec_hdr, pnum, 0, ubi->ec_hdr_alsize);
 	return err;
 }
@@ -1105,6 +1108,9 @@ int ubi_io_write_vid_hdr(struct ubi_device *ubi, int pnum,
 	err = self_check_vid_hdr(ubi, pnum, vid_hdr);
 	if (err)
 		return err;
+
+	if (ubi_dbg_power_cut(ubi, POWER_CUT_VID_WRITE))
+		return -EROFS;
 
 	p = (char *)vid_hdr - ubi->vid_hdr_shift;
 	err = ubi_io_write(ubi, p, pnum, ubi->vid_hdr_aloffset,
@@ -1419,8 +1425,7 @@ int ubi_self_check_all_ff(struct ubi_device *ubi, int pnum, int offset, int len)
 
 fail:
 	ubi_err(ubi, "self-check failed for PEB %d", pnum);
-	ubi_msg(ubi, "hex dump of the %d-%d region",
-		 offset, offset + len);
+	ubi_msg(ubi, "hex dump of the %d-%d region", offset, offset + len);
 	print_hex_dump(KERN_DEBUG, "", DUMP_PREFIX_OFFSET, 32, 1, buf, len, 1);
 	err = -EINVAL;
 error:

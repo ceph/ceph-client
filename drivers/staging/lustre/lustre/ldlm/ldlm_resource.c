@@ -62,7 +62,7 @@ LIST_HEAD(ldlm_cli_active_namespace_list);
 LIST_HEAD(ldlm_cli_inactive_namespace_list);
 
 struct proc_dir_entry *ldlm_type_proc_dir = NULL;
-struct proc_dir_entry *ldlm_ns_proc_dir = NULL;
+static struct proc_dir_entry *ldlm_ns_proc_dir = NULL;
 struct proc_dir_entry *ldlm_svc_proc_dir = NULL;
 
 extern unsigned int ldlm_cancel_unused_locks_before_replay;
@@ -72,7 +72,7 @@ extern unsigned int ldlm_cancel_unused_locks_before_replay;
 unsigned int ldlm_dump_granted_max = 256;
 
 #if defined(CONFIG_PROC_FS)
-static ssize_t lprocfs_wr_dump_ns(struct file *file, const char *buffer,
+static ssize_t lprocfs_wr_dump_ns(struct file *file, const char __user *buffer,
 				  size_t count, loff_t *off)
 {
 	ldlm_dump_all_namespaces(LDLM_NAMESPACE_SERVER, D_DLMTRACE);
@@ -287,8 +287,9 @@ static int lprocfs_elc_seq_show(struct seq_file *m, void *v)
 	return lprocfs_rd_uint(m, &supp);
 }
 
-static ssize_t lprocfs_elc_seq_write(struct file *file, const char *buffer,
-				 size_t count, loff_t *off)
+static ssize_t lprocfs_elc_seq_write(struct file *file,
+				const char __user *buffer,
+				size_t count, loff_t *off)
 {
 	struct ldlm_namespace *ns = ((struct seq_file *)file->private_data)->private;
 	unsigned int supp = -1;

@@ -261,12 +261,12 @@ static int do_dev_config(struct comedi_device *dev, struct comedi_devconfig *it)
 			{
 				/* Append dev:subdev to devpriv->name */
 				char buf[20];
+
 				snprintf(buf, sizeof(buf), "%u:%u ",
 					 bdev->minor, bdev->subdev);
 				strlcat(devpriv->name, buf,
 					sizeof(devpriv->name));
 			}
-
 		}
 	}
 
@@ -312,9 +312,9 @@ static int bonding_attach(struct comedi_device *dev,
 	s->insn_config = bonding_dio_insn_config;
 
 	dev_info(dev->class_dev,
-		"%s: %s attached, %u channels from %u devices\n",
-		dev->driver->driver_name, dev->board_name,
-		devpriv->nchans, devpriv->ndevs);
+		 "%s: %s attached, %u channels from %u devices\n",
+		 dev->driver->driver_name, dev->board_name,
+		 devpriv->nchans, devpriv->ndevs);
 
 	return 0;
 }

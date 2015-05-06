@@ -313,7 +313,7 @@ static rx_handler_result_t macvtap_handle_frame(struct sk_buff **pskb)
 	 */
 	if (q->flags & IFF_VNET_HDR)
 		features |= vlan->tap_features;
-	if (netif_needs_gso(dev, skb, features)) {
+	if (netif_needs_gso(skb, features)) {
 		struct sk_buff *segs = __skb_gso_segment(skb, features, false);
 
 		if (IS_ERR(segs))
@@ -642,7 +642,7 @@ static void macvtap_skb_to_vnet_hdr(struct macvtap_queue *q,
 
 	if (skb->ip_summed == CHECKSUM_PARTIAL) {
 		vnet_hdr->flags = VIRTIO_NET_HDR_F_NEEDS_CSUM;
-		if (vlan_tx_tag_present(skb))
+		if (skb_vlan_tag_present(skb))
 			vnet_hdr->csum_start = cpu_to_macvtap16(q,
 				skb_checksum_start_offset(skb) + VLAN_HLEN);
 		else
@@ -654,11 +654,14 @@ static void macvtap_skb_to_vnet_hdr(struct macvtap_queue *q,
 	} /* else everything is zero */
 }
 
+/* Neighbour code has some assumptions on HH_DATA_MOD alignment */
+#define MACVTAP_RESERVE HH_DATA_OFF(ETH_HLEN)
+
 /* Get packet from user space buffer */
 static ssize_t macvtap_get_user(struct macvtap_queue *q, struct msghdr *m,
 				struct iov_iter *from, int noblock)
 {
-	int good_linear = SKB_MAX_HEAD(NET_IP_ALIGN);
+	int good_linear = SKB_MAX_HEAD(MACVTAP_RESERVE);
 	struct sk_buff *skb;
 	struct macvlan_dev *vlan;
 	unsigned long total_len = iov_iter_count(from);
@@ -722,7 +725,7 @@ static ssize_t macvtap_get_user(struct macvtap_queue *q, struct msghdr *m,
 			linear = macvtap16_to_cpu(q, vnet_hdr.hdr_len);
 	}
 
-	skb = macvtap_alloc_skb(&q->sk, NET_IP_ALIGN, copylen,
+	skb = macvtap_alloc_skb(&q->sk, MACVTAP_RESERVE, copylen,
 				linear, noblock, &err);
 	if (!skb)
 		goto err;
@@ -818,13 +821,13 @@ static ssize_t macvtap_put_user(struct macvtap_queue *q,
 	total = vnet_hdr_len;
 	total += skb->len;
 
-	if (vlan_tx_tag_present(skb)) {
+	if (skb_vlan_tag_present(skb)) {
 		struct {
 			__be16 h_vlan_proto;
 			__be16 h_vlan_TCI;
 		} veth;
 		veth.h_vlan_proto = skb->vlan_proto;
-		veth.h_vlan_TCI = htons(vlan_tx_tag_get(skb));
+		veth.h_vlan_TCI = htons(skb_vlan_tag_get(skb));
 
 		vlan_offset = offsetof(struct vlan_ethhdr, h_vlan_proto);
 		total += VLAN_HLEN;
@@ -1115,8 +1118,6 @@ static const struct file_operations macvtap_fops = {
 	.owner		= THIS_MODULE,
 	.open		= macvtap_open,
 	.release	= macvtap_release,
-	.read		= new_sync_read,
-	.write		= new_sync_write,
 	.read_iter	= macvtap_read_iter,
 	.write_iter	= macvtap_write_iter,
 	.poll		= macvtap_poll,
@@ -1127,16 +1128,15 @@ static const struct file_operations macvtap_fops = {
 #endif
 };
 
-static int macvtap_sendmsg(struct kiocb *iocb, struct socket *sock,
-			   struct msghdr *m, size_t total_len)
+static int macvtap_sendmsg(struct socket *sock, struct msghdr *m,
+			   size_t total_len)
 {
 	struct macvtap_queue *q = container_of(sock, struct macvtap_queue, sock);
 	return macvtap_get_user(q, m, &m->msg_iter, m->msg_flags & MSG_DONTWAIT);
 }
 
-static int macvtap_recvmsg(struct kiocb *iocb, struct socket *sock,
-			   struct msghdr *m, size_t total_len,
-			   int flags)
+static int macvtap_recvmsg(struct socket *sock, struct msghdr *m,
+			   size_t total_len, int flags)
 {
 	struct macvtap_queue *q = container_of(sock, struct macvtap_queue, sock);
 	int ret;

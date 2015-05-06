@@ -50,6 +50,7 @@
 #include <linux/if_bridge.h>
 #include <linux/prefetch.h>
 #include <scsi/fc/fc_fcoe.h>
+#include <net/vxlan.h>
 
 #ifdef CONFIG_OF
 #include <linux/of_net.h>
@@ -1396,11 +1397,22 @@ static inline void ixgbe_rx_checksum(struct ixgbe_ring *ring,
 				     union ixgbe_adv_rx_desc *rx_desc,
 				     struct sk_buff *skb)
 {
+	__le16 pkt_info = rx_desc->wb.lower.lo_dword.hs_rss.pkt_info;
+	__le16 hdr_info = rx_desc->wb.lower.lo_dword.hs_rss.hdr_info;
+	bool encap_pkt = false;
+
 	skb_checksum_none_assert(skb);
 
 	/* Rx csum disabled */
 	if (!(ring->netdev->features & NETIF_F_RXCSUM))
 		return;
+
+	if ((pkt_info & cpu_to_le16(IXGBE_RXDADV_PKTTYPE_VXLAN)) &&
+	    (hdr_info & cpu_to_le16(IXGBE_RXDADV_PKTTYPE_TUNNEL >> 16))) {
+		encap_pkt = true;
+		skb->encapsulation = 1;
+		skb->ip_summed = CHECKSUM_NONE;
+	}
 
 	/* if IP and error */
 	if (ixgbe_test_staterr(rx_desc, IXGBE_RXD_STAT_IPCS) &&
@@ -1413,8 +1425,6 @@ static inline void ixgbe_rx_checksum(struct ixgbe_ring *ring,
 		return;
 
 	if (ixgbe_test_staterr(rx_desc, IXGBE_RXDADV_ERR_TCPE)) {
-		__le16 pkt_info = rx_desc->wb.lower.lo_dword.hs_rss.pkt_info;
-
 		/*
 		 * 82599 errata, UDP frames with a 0 checksum can be marked as
 		 * checksum errors.
@@ -1429,6 +1439,17 @@ static inline void ixgbe_rx_checksum(struct ixgbe_ring *ring,
 
 	/* It must be a TCP or UDP packet with a valid checksum */
 	skb->ip_summed = CHECKSUM_UNNECESSARY;
+	if (encap_pkt) {
+		if (!ixgbe_test_staterr(rx_desc, IXGBE_RXD_STAT_OUTERIPCS))
+			return;
+
+		if (ixgbe_test_staterr(rx_desc, IXGBE_RXDADV_ERR_OUTERIPER)) {
+			ring->rx_stats.csum_err++;
+			return;
+		}
+		/* If we checked the outer header let the stack know */
+		skb->csum_level = 1;
+	}
 }
 
 static bool ixgbe_alloc_mapped_page(struct ixgbe_ring *rx_ring,
@@ -1598,14 +1619,10 @@ static void ixgbe_process_skb_fields(struct ixgbe_ring *rx_ring,
 static void ixgbe_rx_skb(struct ixgbe_q_vector *q_vector,
 			 struct sk_buff *skb)
 {
-	struct ixgbe_adapter *adapter = q_vector->adapter;
-
 	if (ixgbe_qv_busy_polling(q_vector))
 		netif_receive_skb(skb);
-	else if (!(adapter->flags & IXGBE_FLAG_IN_NETPOLL))
-		napi_gro_receive(&q_vector->napi, skb);
 	else
-		netif_rx(skb);
+		napi_gro_receive(&q_vector->napi, skb);
 }
 
 /**
@@ -2588,7 +2605,7 @@ static irqreturn_t ixgbe_msix_other(int irq, void *data)
 	eicr = IXGBE_READ_REG(hw, IXGBE_EICS);
 
 	/* The lower 16bits of the EICR register are for the queue interrupts
-	 * which should be masked here in order to not accidently clear them if
+	 * which should be masked here in order to not accidentally clear them if
 	 * the bits are high when ixgbe_msix_other is called. There is a race
 	 * condition otherwise which results in possible performance loss
 	 * especially if the ixgbe_msix_other interrupt is triggering
@@ -3211,17 +3228,98 @@ static void ixgbe_configure_srrctl(struct ixgbe_adapter *adapter,
 	IXGBE_WRITE_REG(hw, IXGBE_SRRCTL(reg_idx), srrctl);
 }
 
-static void ixgbe_setup_reta(struct ixgbe_adapter *adapter, const u32 *seed)
+/**
+ * Return a number of entries in the RSS indirection table
+ *
+ * @adapter: device handle
+ *
+ *  - 82598/82599/X540:     128
+ *  - X550(non-SRIOV mode): 512
+ *  - X550(SRIOV mode):     64
+ */
+u32 ixgbe_rss_indir_tbl_entries(struct ixgbe_adapter *adapter)
 {
+	if (adapter->hw.mac.type < ixgbe_mac_X550)
+		return 128;
+	else if (adapter->flags & IXGBE_FLAG_SRIOV_ENABLED)
+		return 64;
+	else
+		return 512;
+}
+
+/**
+ * Write the RETA table to HW
+ *
+ * @adapter: device handle
+ *
+ * Write the RSS redirection table stored in adapter.rss_indir_tbl[] to HW.
+ */
+static void ixgbe_store_reta(struct ixgbe_adapter *adapter)
+{
+	u32 i, reta_entries = ixgbe_rss_indir_tbl_entries(adapter);
 	struct ixgbe_hw *hw = &adapter->hw;
 	u32 reta = 0;
-	int i, j;
-	int reta_entries = 128;
-	u16 rss_i = adapter->ring_feature[RING_F_RSS].indices;
-	int indices_multi;
+	u32 indices_multi;
+	u8 *indir_tbl = adapter->rss_indir_tbl;
 
-	/*
-	 * Program table for at least 2 queues w/ SR-IOV so that VFs can
+	/* Fill out the redirection table as follows:
+	 *  - 82598:      8 bit wide entries containing pair of 4 bit RSS
+	 *    indices.
+	 *  - 82599/X540: 8 bit wide entries containing 4 bit RSS index
+	 *  - X550:       8 bit wide entries containing 6 bit RSS index
+	 */
+	if (adapter->hw.mac.type == ixgbe_mac_82598EB)
+		indices_multi = 0x11;
+	else
+		indices_multi = 0x1;
+
+	/* Write redirection table to HW */
+	for (i = 0; i < reta_entries; i++) {
+		reta |= indices_multi * indir_tbl[i] << (i & 0x3) * 8;
+		if ((i & 3) == 3) {
+			if (i < 128)
+				IXGBE_WRITE_REG(hw, IXGBE_RETA(i >> 2), reta);
+			else
+				IXGBE_WRITE_REG(hw, IXGBE_ERETA((i >> 2) - 32),
+						reta);
+			reta = 0;
+		}
+	}
+}
+
+/**
+ * Write the RETA table to HW (for x550 devices in SRIOV mode)
+ *
+ * @adapter: device handle
+ *
+ * Write the RSS redirection table stored in adapter.rss_indir_tbl[] to HW.
+ */
+static void ixgbe_store_vfreta(struct ixgbe_adapter *adapter)
+{
+	u32 i, reta_entries = ixgbe_rss_indir_tbl_entries(adapter);
+	struct ixgbe_hw *hw = &adapter->hw;
+	u32 vfreta = 0;
+	unsigned int pf_pool = adapter->num_vfs;
+
+	/* Write redirection table to HW */
+	for (i = 0; i < reta_entries; i++) {
+		vfreta |= (u32)adapter->rss_indir_tbl[i] << (i & 0x3) * 8;
+		if ((i & 3) == 3) {
+			IXGBE_WRITE_REG(hw, IXGBE_PFVFRETA(i >> 2, pf_pool),
+					vfreta);
+			vfreta = 0;
+		}
+	}
+}
+
+static void ixgbe_setup_reta(struct ixgbe_adapter *adapter)
+{
+	struct ixgbe_hw *hw = &adapter->hw;
+	u32 i, j;
+	u32 reta_entries = ixgbe_rss_indir_tbl_entries(adapter);
+	u16 rss_i = adapter->ring_feature[RING_F_RSS].indices;
+
+	/* Program table for at least 2 queues w/ SR-IOV so that VFs can
 	 * make full use of any rings they may have.  We will use the
 	 * PSRTYPE register to control how many rings we use within the PF.
 	 */
@@ -3230,70 +3328,48 @@ static void ixgbe_setup_reta(struct ixgbe_adapter *adapter, const u32 *seed)
 
 	/* Fill out hash function seeds */
 	for (i = 0; i < 10; i++)
-		IXGBE_WRITE_REG(hw, IXGBE_RSSRK(i), seed[i]);
-
-	/* Fill out the redirection table as follows:
-	 * 82598: 128 (8 bit wide) entries containing pair of 4 bit RSS indices
-	 * 82599/X540: 128 (8 bit wide) entries containing 4 bit RSS index
-	 * X550: 512 (8 bit wide) entries containing 6 bit RSS index
-	 */
-	if (adapter->hw.mac.type == ixgbe_mac_82598EB)
-		indices_multi = 0x11;
-	else
-		indices_multi = 0x1;
-
-	switch (adapter->hw.mac.type) {
-	case ixgbe_mac_X550:
-	case ixgbe_mac_X550EM_x:
-		if (!(adapter->flags & IXGBE_FLAG_SRIOV_ENABLED))
-			reta_entries = 512;
-	default:
-		break;
-	}
+		IXGBE_WRITE_REG(hw, IXGBE_RSSRK(i), adapter->rss_key[i]);
 
 	/* Fill out redirection table */
+	memset(adapter->rss_indir_tbl, 0, sizeof(adapter->rss_indir_tbl));
+
 	for (i = 0, j = 0; i < reta_entries; i++, j++) {
 		if (j == rss_i)
 			j = 0;
-		reta = (reta << 8) | (j * indices_multi);
-		if ((i & 3) == 3) {
-			if (i < 128)
-				IXGBE_WRITE_REG(hw, IXGBE_RETA(i >> 2), reta);
-			else
-				IXGBE_WRITE_REG(hw, IXGBE_ERETA((i >> 2) - 32),
-						reta);
-		}
+
+		adapter->rss_indir_tbl[i] = j;
 	}
+
+	ixgbe_store_reta(adapter);
 }
 
-static void ixgbe_setup_vfreta(struct ixgbe_adapter *adapter, const u32 *seed)
+static void ixgbe_setup_vfreta(struct ixgbe_adapter *adapter)
 {
 	struct ixgbe_hw *hw = &adapter->hw;
-	u32 vfreta = 0;
 	u16 rss_i = adapter->ring_feature[RING_F_RSS].indices;
 	unsigned int pf_pool = adapter->num_vfs;
 	int i, j;
 
 	/* Fill out hash function seeds */
 	for (i = 0; i < 10; i++)
-		IXGBE_WRITE_REG(hw, IXGBE_PFVFRSSRK(i, pf_pool), seed[i]);
+		IXGBE_WRITE_REG(hw, IXGBE_PFVFRSSRK(i, pf_pool),
+				adapter->rss_key[i]);
 
 	/* Fill out the redirection table */
 	for (i = 0, j = 0; i < 64; i++, j++) {
 		if (j == rss_i)
 			j = 0;
-		vfreta = (vfreta << 8) | j;
-		if ((i & 3) == 3)
-			IXGBE_WRITE_REG(hw, IXGBE_PFVFRETA(i >> 2, pf_pool),
-					vfreta);
+
+		adapter->rss_indir_tbl[i] = j;
 	}
+
+	ixgbe_store_vfreta(adapter);
 }
 
 static void ixgbe_setup_mrqc(struct ixgbe_adapter *adapter)
 {
 	struct ixgbe_hw *hw = &adapter->hw;
 	u32 mrqc = 0, rss_field = 0, vfmrqc = 0;
-	u32 rss_key[10];
 	u32 rxcsum;
 
 	/* Disable indicating checksum in descriptor, enables RSS hash */
@@ -3337,7 +3413,7 @@ static void ixgbe_setup_mrqc(struct ixgbe_adapter *adapter)
 	if (adapter->flags2 & IXGBE_FLAG2_RSS_FIELD_IPV6_UDP)
 		rss_field |= IXGBE_MRQC_RSS_FIELD_IPV6_UDP;
 
-	netdev_rss_key_fill(rss_key, sizeof(rss_key));
+	netdev_rss_key_fill(adapter->rss_key, sizeof(adapter->rss_key));
 	if ((hw->mac.type >= ixgbe_mac_X550) &&
 	    (adapter->flags & IXGBE_FLAG_SRIOV_ENABLED)) {
 		unsigned int pf_pool = adapter->num_vfs;
@@ -3347,12 +3423,12 @@ static void ixgbe_setup_mrqc(struct ixgbe_adapter *adapter)
 		IXGBE_WRITE_REG(hw, IXGBE_MRQC, mrqc);
 
 		/* Setup RSS through the VF registers */
-		ixgbe_setup_vfreta(adapter, rss_key);
+		ixgbe_setup_vfreta(adapter);
 		vfmrqc = IXGBE_MRQC_RSSEN;
 		vfmrqc |= rss_field;
 		IXGBE_WRITE_REG(hw, IXGBE_PFVFMRQC(pf_pool), vfmrqc);
 	} else {
-		ixgbe_setup_reta(adapter, rss_key);
+		ixgbe_setup_reta(adapter);
 		mrqc |= rss_field;
 		IXGBE_WRITE_REG(hw, IXGBE_MRQC, mrqc);
 	}
@@ -3536,7 +3612,7 @@ static void ixgbe_configure_virtualization(struct ixgbe_adapter *adapter)
 	IXGBE_WRITE_REG(hw, IXGBE_VFRE(reg_offset ^ 1), reg_offset - 1);
 	IXGBE_WRITE_REG(hw, IXGBE_VFTE(reg_offset), (~0) << vf_shift);
 	IXGBE_WRITE_REG(hw, IXGBE_VFTE(reg_offset ^ 1), reg_offset - 1);
-	if (adapter->flags2 & IXGBE_FLAG2_BRIDGE_MODE_VEB)
+	if (adapter->bridge_mode == BRIDGE_MODE_VEB)
 		IXGBE_WRITE_REG(hw, IXGBE_PFDTXGSWC, IXGBE_PFDTXGSWC_VT_LBEN);
 
 	/* Map PF MAC address in RAR Entry 0 to first pool following VFs */
@@ -3564,10 +3640,28 @@ static void ixgbe_configure_virtualization(struct ixgbe_adapter *adapter)
 	/* Enable MAC Anti-Spoofing */
 	hw->mac.ops.set_mac_anti_spoofing(hw, (adapter->num_vfs != 0),
 					  adapter->num_vfs);
+
+	/* Ensure LLDP is set for Ethertype Antispoofing if we will be
+	 * calling set_ethertype_anti_spoofing for each VF in loop below
+	 */
+	if (hw->mac.ops.set_ethertype_anti_spoofing)
+		IXGBE_WRITE_REG(hw, IXGBE_ETQF(IXGBE_ETQF_FILTER_LLDP),
+				(IXGBE_ETQF_FILTER_EN    | /* enable filter */
+				 IXGBE_ETQF_TX_ANTISPOOF | /* tx antispoof */
+				 IXGBE_ETH_P_LLDP));	   /* LLDP eth type */
+
 	/* For VFs that have spoof checking turned off */
 	for (i = 0; i < adapter->num_vfs; i++) {
 		if (!adapter->vfinfo[i].spoofchk_enabled)
 			ixgbe_ndo_set_vf_spoofchk(adapter->netdev, i, false);
+
+		/* enable ethertype anti spoofing if hw supports it */
+		if (hw->mac.ops.set_ethertype_anti_spoofing)
+			hw->mac.ops.set_ethertype_anti_spoofing(hw, true, i);
+
+		/* Enable/Disable RSS query feature  */
+		ixgbe_ndo_set_vf_rss_query_en(adapter->netdev, i,
+					  adapter->vfinfo[i].rss_query_enabled);
 	}
 }
 
@@ -3670,8 +3764,7 @@ static void ixgbe_configure_rx(struct ixgbe_adapter *adapter)
 	u32 rxctrl, rfctl;
 
 	/* disable receives while setting up the descriptors */
-	rxctrl = IXGBE_READ_REG(hw, IXGBE_RXCTRL);
-	IXGBE_WRITE_REG(hw, IXGBE_RXCTRL, rxctrl & ~IXGBE_RXCTRL_RXEN);
+	hw->mac.ops.disable_rx(hw);
 
 	ixgbe_setup_psrtype(adapter);
 	ixgbe_setup_rdrxctl(adapter);
@@ -3696,6 +3789,7 @@ static void ixgbe_configure_rx(struct ixgbe_adapter *adapter)
 	for (i = 0; i < adapter->num_rx_queues; i++)
 		ixgbe_configure_rx_ring(adapter, adapter->rx_ring[i]);
 
+	rxctrl = IXGBE_READ_REG(hw, IXGBE_RXCTRL);
 	/* disable drop enable for 82598 parts */
 	if (hw->mac.type == ixgbe_mac_82598EB)
 		rxctrl |= IXGBE_RXCTRL_DMBYPS;
@@ -3889,7 +3983,7 @@ static void ixgbe_flush_sw_mac_table(struct ixgbe_adapter *adapter)
 	for (i = 0; i < hw->mac.num_rar_entries; i++) {
 		adapter->mac_table[i].state |= IXGBE_MAC_STATE_MODIFIED;
 		adapter->mac_table[i].state &= ~IXGBE_MAC_STATE_IN_USE;
-		memset(adapter->mac_table[i].addr, 0, ETH_ALEN);
+		eth_zero_addr(adapter->mac_table[i].addr);
 		adapter->mac_table[i].queue = 0;
 	}
 	ixgbe_sync_mac_table(adapter);
@@ -3957,7 +4051,7 @@ int ixgbe_del_mac_filter(struct ixgbe_adapter *adapter, u8 *addr, u16 queue)
 		    adapter->mac_table[i].queue == queue) {
 			adapter->mac_table[i].state |= IXGBE_MAC_STATE_MODIFIED;
 			adapter->mac_table[i].state &= ~IXGBE_MAC_STATE_IN_USE;
-			memset(adapter->mac_table[i].addr, 0, ETH_ALEN);
+			eth_zero_addr(adapter->mac_table[i].addr);
 			adapter->mac_table[i].queue = 0;
 			ixgbe_sync_mac_table(adapter);
 			return 0;
@@ -4979,7 +5073,6 @@ void ixgbe_down(struct ixgbe_adapter *adapter)
 	struct ixgbe_hw *hw = &adapter->hw;
 	struct net_device *upper;
 	struct list_head *iter;
-	u32 rxctrl;
 	int i;
 
 	/* signal that we are down to the interrupt handler */
@@ -4987,8 +5080,7 @@ void ixgbe_down(struct ixgbe_adapter *adapter)
 		return; /* do nothing if already down */
 
 	/* disable receives */
-	rxctrl = IXGBE_READ_REG(hw, IXGBE_RXCTRL);
-	IXGBE_WRITE_REG(hw, IXGBE_RXCTRL, rxctrl & ~IXGBE_RXCTRL_RXEN);
+	hw->mac.ops.disable_rx(hw);
 
 	/* disable all enabled rx queues */
 	for (i = 0; i < adapter->num_rx_queues; i++)
@@ -5627,6 +5719,10 @@ static int ixgbe_open(struct net_device *netdev)
 
 	ixgbe_up_complete(adapter);
 
+#if IS_ENABLED(CONFIG_IXGBE_VXLAN)
+	vxlan_get_rx_port(netdev);
+
+#endif
 	return 0;
 
 err_set_queues:
@@ -6135,7 +6231,6 @@ static void ixgbe_check_hang_subtask(struct ixgbe_adapter *adapter)
 
 	/* Cause software interrupt to ensure rings are cleaned */
 	ixgbe_irq_rearm_queues(adapter, eics);
-
 }
 
 /**
@@ -7217,8 +7312,8 @@ netdev_tx_t ixgbe_xmit_frame_ring(struct sk_buff *skb,
 	first->gso_segs = 1;
 
 	/* if we have a HW VLAN tag being added default to the HW one */
-	if (vlan_tx_tag_present(skb)) {
-		tx_flags |= vlan_tx_tag_get(skb) << IXGBE_TX_FLAGS_VLAN_SHIFT;
+	if (skb_vlan_tag_present(skb)) {
+		tx_flags |= skb_vlan_tag_get(skb) << IXGBE_TX_FLAGS_VLAN_SHIFT;
 		tx_flags |= IXGBE_TX_FLAGS_HW_VLAN;
 	/* else if it is a SW VLAN check the next protocol and store the tag */
 	} else if (protocol == htons(ETH_P_8021Q)) {
@@ -7468,14 +7563,9 @@ static void ixgbe_netpoll(struct net_device *netdev)
 	if (test_bit(__IXGBE_DOWN, &adapter->state))
 		return;
 
-	adapter->flags |= IXGBE_FLAG_IN_NETPOLL;
-	if (adapter->flags & IXGBE_FLAG_MSIX_ENABLED) {
-		for (i = 0; i < adapter->num_q_vectors; i++)
-			ixgbe_msix_clean_rings(0, adapter->q_vector[i]);
-	} else {
-		ixgbe_intr(adapter->pdev->irq, netdev);
-	}
-	adapter->flags &= ~IXGBE_FLAG_IN_NETPOLL;
+	/* loop through and schedule all active queues */
+	for (i = 0; i < adapter->num_q_vectors; i++)
+		ixgbe_msix_clean_rings(0, adapter->q_vector[i]);
 }
 
 #endif
@@ -7771,6 +7861,64 @@ static int ixgbe_set_features(struct net_device *netdev,
 	return 0;
 }
 
+/**
+ * ixgbe_add_vxlan_port - Get notifications about VXLAN ports that come up
+ * @dev: The port's netdev
+ * @sa_family: Socket Family that VXLAN is notifiying us about
+ * @port: New UDP port number that VXLAN started listening to
+ **/
+static void ixgbe_add_vxlan_port(struct net_device *dev, sa_family_t sa_family,
+				 __be16 port)
+{
+	struct ixgbe_adapter *adapter = netdev_priv(dev);
+	struct ixgbe_hw *hw = &adapter->hw;
+	u16 new_port = ntohs(port);
+
+	if (sa_family == AF_INET6)
+		return;
+
+	if (adapter->vxlan_port == new_port) {
+		netdev_info(dev, "Port %d already offloaded\n", new_port);
+		return;
+	}
+
+	if (adapter->vxlan_port) {
+		netdev_info(dev,
+			    "Hit Max num of UDP ports, not adding port %d\n",
+			    new_port);
+		return;
+	}
+
+	adapter->vxlan_port = new_port;
+	IXGBE_WRITE_REG(hw, IXGBE_VXLANCTRL, new_port);
+}
+
+/**
+ * ixgbe_del_vxlan_port - Get notifications about VXLAN ports that go away
+ * @dev: The port's netdev
+ * @sa_family: Socket Family that VXLAN is notifying us about
+ * @port: UDP port number that VXLAN stopped listening to
+ **/
+static void ixgbe_del_vxlan_port(struct net_device *dev, sa_family_t sa_family,
+				 __be16 port)
+{
+	struct ixgbe_adapter *adapter = netdev_priv(dev);
+	struct ixgbe_hw *hw = &adapter->hw;
+	u16 new_port = ntohs(port);
+
+	if (sa_family == AF_INET6)
+		return;
+
+	if (adapter->vxlan_port != new_port) {
+		netdev_info(dev, "Port %d was not found, not deleting\n",
+			    new_port);
+		return;
+	}
+
+	adapter->vxlan_port = 0;
+	IXGBE_WRITE_REG(hw, IXGBE_VXLANCTRL, 0);
+}
+
 static int ixgbe_ndo_fdb_add(struct ndmsg *ndm, struct nlattr *tb[],
 			     struct net_device *dev,
 			     const unsigned char *addr, u16 vid,
@@ -7785,8 +7933,82 @@ static int ixgbe_ndo_fdb_add(struct ndmsg *ndm, struct nlattr *tb[],
 	return ndo_dflt_fdb_add(ndm, tb, dev, addr, vid, flags);
 }
 
+/**
+ * ixgbe_configure_bridge_mode - set various bridge modes
+ * @adapter - the private structure
+ * @mode - requested bridge mode
+ *
+ * Configure some settings require for various bridge modes.
+ **/
+static int ixgbe_configure_bridge_mode(struct ixgbe_adapter *adapter,
+				       __u16 mode)
+{
+	struct ixgbe_hw *hw = &adapter->hw;
+	unsigned int p, num_pools;
+	u32 vmdctl;
+
+	switch (mode) {
+	case BRIDGE_MODE_VEPA:
+		/* disable Tx loopback, rely on switch hairpin mode */
+		IXGBE_WRITE_REG(&adapter->hw, IXGBE_PFDTXGSWC, 0);
+
+		/* must enable Rx switching replication to allow multicast
+		 * packet reception on all VFs, and to enable source address
+		 * pruning.
+		 */
+		vmdctl = IXGBE_READ_REG(hw, IXGBE_VMD_CTL);
+		vmdctl |= IXGBE_VT_CTL_REPLEN;
+		IXGBE_WRITE_REG(hw, IXGBE_VMD_CTL, vmdctl);
+
+		/* enable Rx source address pruning. Note, this requires
+		 * replication to be enabled or else it does nothing.
+		 */
+		num_pools = adapter->num_vfs + adapter->num_rx_pools;
+		for (p = 0; p < num_pools; p++) {
+			if (hw->mac.ops.set_source_address_pruning)
+				hw->mac.ops.set_source_address_pruning(hw,
+								       true,
+								       p);
+		}
+		break;
+	case BRIDGE_MODE_VEB:
+		/* enable Tx loopback for internal VF/PF communication */
+		IXGBE_WRITE_REG(&adapter->hw, IXGBE_PFDTXGSWC,
+				IXGBE_PFDTXGSWC_VT_LBEN);
+
+		/* disable Rx switching replication unless we have SR-IOV
+		 * virtual functions
+		 */
+		vmdctl = IXGBE_READ_REG(hw, IXGBE_VMD_CTL);
+		if (!adapter->num_vfs)
+			vmdctl &= ~IXGBE_VT_CTL_REPLEN;
+		IXGBE_WRITE_REG(hw, IXGBE_VMD_CTL, vmdctl);
+
+		/* disable Rx source address pruning, since we don't expect to
+		 * be receiving external loopback of our transmitted frames.
+		 */
+		num_pools = adapter->num_vfs + adapter->num_rx_pools;
+		for (p = 0; p < num_pools; p++) {
+			if (hw->mac.ops.set_source_address_pruning)
+				hw->mac.ops.set_source_address_pruning(hw,
+								       false,
+								       p);
+		}
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	adapter->bridge_mode = mode;
+
+	e_info(drv, "enabling bridge mode: %s\n",
+	       mode == BRIDGE_MODE_VEPA ? "VEPA" : "VEB");
+
+	return 0;
+}
+
 static int ixgbe_ndo_bridge_setlink(struct net_device *dev,
-				    struct nlmsghdr *nlh)
+				    struct nlmsghdr *nlh, u16 flags)
 {
 	struct ixgbe_adapter *adapter = netdev_priv(dev);
 	struct nlattr *attr, *br_spec;
@@ -7800,8 +8022,8 @@ static int ixgbe_ndo_bridge_setlink(struct net_device *dev,
 		return -EINVAL;
 
 	nla_for_each_nested(attr, br_spec, rem) {
+		u32 status;
 		__u16 mode;
-		u32 reg = 0;
 
 		if (nla_type(attr) != IFLA_BRIDGE_MODE)
 			continue;
@@ -7810,19 +8032,11 @@ static int ixgbe_ndo_bridge_setlink(struct net_device *dev,
 			return -EINVAL;
 
 		mode = nla_get_u16(attr);
-		if (mode == BRIDGE_MODE_VEPA) {
-			reg = 0;
-			adapter->flags2 &= ~IXGBE_FLAG2_BRIDGE_MODE_VEB;
-		} else if (mode == BRIDGE_MODE_VEB) {
-			reg = IXGBE_PFDTXGSWC_VT_LBEN;
-			adapter->flags2 |= IXGBE_FLAG2_BRIDGE_MODE_VEB;
-		} else
-			return -EINVAL;
+		status = ixgbe_configure_bridge_mode(adapter, mode);
+		if (status)
+			return status;
 
-		IXGBE_WRITE_REG(&adapter->hw, IXGBE_PFDTXGSWC, reg);
-
-		e_info(drv, "enabling bridge mode: %s\n",
-			mode == BRIDGE_MODE_VEPA ? "VEPA" : "VEB");
+		break;
 	}
 
 	return 0;
@@ -7830,20 +8044,15 @@ static int ixgbe_ndo_bridge_setlink(struct net_device *dev,
 
 static int ixgbe_ndo_bridge_getlink(struct sk_buff *skb, u32 pid, u32 seq,
 				    struct net_device *dev,
-				    u32 filter_mask)
+				    u32 filter_mask, int nlflags)
 {
 	struct ixgbe_adapter *adapter = netdev_priv(dev);
-	u16 mode;
 
 	if (!(adapter->flags & IXGBE_FLAG_SRIOV_ENABLED))
 		return 0;
 
-	if (adapter->flags2 & IXGBE_FLAG2_BRIDGE_MODE_VEB)
-		mode = BRIDGE_MODE_VEB;
-	else
-		mode = BRIDGE_MODE_VEPA;
-
-	return ndo_dflt_bridge_getlink(skb, pid, seq, dev, mode, 0, 0);
+	return ndo_dflt_bridge_getlink(skb, pid, seq, dev,
+				       adapter->bridge_mode, 0, 0, nlflags);
 }
 
 static void *ixgbe_fwd_add(struct net_device *pdev, struct net_device *vdev)
@@ -7955,6 +8164,7 @@ static const struct net_device_ops ixgbe_netdev_ops = {
 	.ndo_set_vf_vlan	= ixgbe_ndo_set_vf_vlan,
 	.ndo_set_vf_rate	= ixgbe_ndo_set_vf_bw,
 	.ndo_set_vf_spoofchk	= ixgbe_ndo_set_vf_spoofchk,
+	.ndo_set_vf_rss_query_en = ixgbe_ndo_set_vf_rss_query_en,
 	.ndo_get_vf_config	= ixgbe_ndo_get_vf_config,
 	.ndo_get_stats64	= ixgbe_get_stats64,
 #ifdef CONFIG_IXGBE_DCB
@@ -7982,6 +8192,8 @@ static const struct net_device_ops ixgbe_netdev_ops = {
 	.ndo_bridge_getlink	= ixgbe_ndo_bridge_getlink,
 	.ndo_dfwd_add_station	= ixgbe_fwd_add,
 	.ndo_dfwd_del_station	= ixgbe_fwd_del,
+	.ndo_add_vxlan_port	= ixgbe_add_vxlan_port,
+	.ndo_del_vxlan_port	= ixgbe_del_vxlan_port,
 };
 
 /**
@@ -8307,7 +8519,6 @@ skip_sriov:
 			   NETIF_F_IPV6_CSUM |
 			   NETIF_F_HW_VLAN_CTAG_TX |
 			   NETIF_F_HW_VLAN_CTAG_RX |
-			   NETIF_F_HW_VLAN_CTAG_FILTER |
 			   NETIF_F_TSO |
 			   NETIF_F_TSO6 |
 			   NETIF_F_RXHASH |
@@ -8329,6 +8540,7 @@ skip_sriov:
 	}
 
 	netdev->hw_features |= NETIF_F_RXALL;
+	netdev->features |= NETIF_F_HW_VLAN_CTAG_FILTER;
 
 	netdev->vlan_features |= NETIF_F_TSO;
 	netdev->vlan_features |= NETIF_F_TSO6;
@@ -8338,6 +8550,15 @@ skip_sriov:
 
 	netdev->priv_flags |= IFF_UNICAST_FLT;
 	netdev->priv_flags |= IFF_SUPP_NOFCS;
+
+	switch (adapter->hw.mac.type) {
+	case ixgbe_mac_X550:
+	case ixgbe_mac_X550EM_x:
+		netdev->hw_enc_features |= NETIF_F_RXCSUM;
+		break;
+	default:
+		break;
+	}
 
 #ifdef CONFIG_IXGBE_DCB
 	netdev->dcbnl_ops = &dcbnl_ops;
@@ -8881,8 +9102,6 @@ static void __exit ixgbe_exit_module(void)
 	pci_unregister_driver(&ixgbe_driver);
 
 	ixgbe_dbg_exit();
-
-	rcu_barrier(); /* Wait for completion of call_rcu()'s */
 }
 
 #ifdef CONFIG_IXGBE_DCA

@@ -446,7 +446,7 @@ int start_dma_without_bch_irq(struct gpmi_nand_data *this,
 				struct dma_async_tx_descriptor *desc)
 {
 	struct completion *dma_c = &this->dma_done;
-	int err;
+	unsigned long timeout;
 
 	init_completion(dma_c);
 
@@ -456,8 +456,8 @@ int start_dma_without_bch_irq(struct gpmi_nand_data *this,
 	dma_async_issue_pending(get_dma_chan(this));
 
 	/* Wait for the interrupt from the DMA block. */
-	err = wait_for_completion_timeout(dma_c, msecs_to_jiffies(1000));
-	if (!err) {
+	timeout = wait_for_completion_timeout(dma_c, msecs_to_jiffies(1000));
+	if (!timeout) {
 		dev_err(this->dev, "DMA timeout, last DMA :%d\n",
 			this->last_dma_type);
 		gpmi_dump_info(this);
@@ -477,7 +477,7 @@ int start_dma_with_bch_irq(struct gpmi_nand_data *this,
 			struct dma_async_tx_descriptor *desc)
 {
 	struct completion *bch_c = &this->bch_done;
-	int err;
+	unsigned long timeout;
 
 	/* Prepare to receive an interrupt from the BCH block. */
 	init_completion(bch_c);
@@ -486,8 +486,8 @@ int start_dma_with_bch_irq(struct gpmi_nand_data *this,
 	start_dma_without_bch_irq(this, desc);
 
 	/* Wait for the interrupt from the BCH block. */
-	err = wait_for_completion_timeout(bch_c, msecs_to_jiffies(1000));
-	if (!err) {
+	timeout = wait_for_completion_timeout(bch_c, msecs_to_jiffies(1000));
+	if (!timeout) {
 		dev_err(this->dev, "BCH timeout, last DMA :%d\n",
 			this->last_dma_type);
 		gpmi_dump_info(this);
@@ -1294,14 +1294,6 @@ exit_auxiliary:
  * ecc.read_page or ecc.read_page_raw function. Thus, the fact that MTD wants an
  * ECC-based or raw view of the page is implicit in which function it calls
  * (there is a similar pair of ECC-based/raw functions for writing).
- *
- * FIXME: The following paragraph is incorrect, now that there exist
- * ecc.read_oob_raw and ecc.write_oob_raw functions.
- *
- * Since MTD assumes the OOB is not covered by ECC, there is no pair of
- * ECC-based/raw functions for reading or or writing the OOB. The fact that the
- * caller wants an ECC-based or raw view of the page is not propagated down to
- * this driver.
  */
 static int gpmi_ecc_read_oob(struct mtd_info *mtd, struct nand_chip *chip,
 				int page)
@@ -1958,7 +1950,9 @@ static int gpmi_nand_init(struct gpmi_nand_data *this)
 	ret = nand_boot_init(this);
 	if (ret)
 		goto err_out;
-	chip->scan_bbt(mtd);
+	ret = chip->scan_bbt(mtd);
+	if (ret)
+		goto err_out;
 
 	ppdata.of_node = this->pdev->dev.of_node;
 	ret = mtd_device_parse_register(mtd, NULL, &ppdata, NULL, 0);
@@ -2029,7 +2023,6 @@ static int gpmi_nand_probe(struct platform_device *pdev)
 exit_nfc_init:
 	release_resources(this);
 exit_acquire_resources:
-	dev_err(this->dev, "driver registration failed: %d\n", ret);
 
 	return ret;
 }

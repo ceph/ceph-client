@@ -162,10 +162,16 @@ static void kfd_process_wq_release(struct work_struct *work)
 
 	p = my_work->p;
 
+	pr_debug("Releasing process (pasid %d) in workqueue\n",
+			p->pasid);
+
 	mutex_lock(&p->mutex);
 
 	list_for_each_entry_safe(pdd, temp, &p->per_device_data,
 							per_device_list) {
+		pr_debug("Releasing pdd (topology id %d) for process (pasid %d) in workqueue\n",
+				pdd->dev->id, p->pasid);
+
 		amd_iommu_unbind_pasid(pdd->dev->pdev, p->pasid);
 		list_del(&pdd->per_device_list);
 
@@ -311,24 +317,29 @@ err_alloc_process:
 }
 
 struct kfd_process_device *kfd_get_process_device_data(struct kfd_dev *dev,
-							struct kfd_process *p,
-							int create_pdd)
+							struct kfd_process *p)
 {
 	struct kfd_process_device *pdd = NULL;
 
 	list_for_each_entry(pdd, &p->per_device_data, per_device_list)
 		if (pdd->dev == dev)
-			return pdd;
+			break;
 
-	if (create_pdd) {
-		pdd = kzalloc(sizeof(*pdd), GFP_KERNEL);
-		if (pdd != NULL) {
-			pdd->dev = dev;
-			INIT_LIST_HEAD(&pdd->qpd.queues_list);
-			INIT_LIST_HEAD(&pdd->qpd.priv_queue_list);
-			pdd->qpd.dqm = dev->dqm;
-			list_add(&pdd->per_device_list, &p->per_device_data);
-		}
+	return pdd;
+}
+
+struct kfd_process_device *kfd_create_process_device_data(struct kfd_dev *dev,
+							struct kfd_process *p)
+{
+	struct kfd_process_device *pdd = NULL;
+
+	pdd = kzalloc(sizeof(*pdd), GFP_KERNEL);
+	if (pdd != NULL) {
+		pdd->dev = dev;
+		INIT_LIST_HEAD(&pdd->qpd.queues_list);
+		INIT_LIST_HEAD(&pdd->qpd.priv_queue_list);
+		pdd->qpd.dqm = dev->dqm;
+		list_add(&pdd->per_device_list, &p->per_device_data);
 	}
 
 	return pdd;
@@ -344,11 +355,14 @@ struct kfd_process_device *kfd_get_process_device_data(struct kfd_dev *dev,
 struct kfd_process_device *kfd_bind_process_to_device(struct kfd_dev *dev,
 							struct kfd_process *p)
 {
-	struct kfd_process_device *pdd = kfd_get_process_device_data(dev, p, 1);
+	struct kfd_process_device *pdd;
 	int err;
 
-	if (pdd == NULL)
+	pdd = kfd_get_process_device_data(dev, p);
+	if (!pdd) {
+		pr_err("Process device data doesn't exist\n");
 		return ERR_PTR(-ENOMEM);
+	}
 
 	if (pdd->bound)
 		return pdd;
@@ -384,7 +398,7 @@ void kfd_unbind_process_from_device(struct kfd_dev *dev, unsigned int pasid)
 
 	pqm_uninit(&p->pqm);
 
-	pdd = kfd_get_process_device_data(dev, p, 0);
+	pdd = kfd_get_process_device_data(dev, p);
 
 	/*
 	 * Just mark pdd as unbound, because we still need it to call

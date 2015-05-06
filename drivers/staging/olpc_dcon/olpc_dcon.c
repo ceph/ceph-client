@@ -18,8 +18,6 @@
 #include <linux/console.h>
 #include <linux/i2c.h>
 #include <linux/platform_device.h>
-#include <linux/pci.h>
-#include <linux/pci_ids.h>
 #include <linux/interrupt.h>
 #include <linux/delay.h>
 #include <linux/module.h>
@@ -780,7 +778,7 @@ static const struct i2c_device_id dcon_idtable[] = {
 };
 MODULE_DEVICE_TABLE(i2c, dcon_idtable);
 
-struct i2c_driver dcon_driver = {
+static struct i2c_driver dcon_driver = {
 	.driver = {
 		.name	= "olpc_dcon",
 		.pm = &dcon_pm_ops,

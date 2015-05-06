@@ -14,31 +14,29 @@
  */
 
 /*
- Driver: dyna_pci10xx
- Devices: Dynalog India PCI DAQ Cards, http://www.dynalogindia.com/
- Author: Prashant Shah <pshah.mumbai@gmail.com>
- Developed at Automation Labs, Chemical Dept., IIT Bombay, India.
- Prof. Kannan Moudgalya <kannan@iitb.ac.in>
- http://www.iitb.ac.in
- Status: Stable
- Version: 1.0
- Device Supported :
- - Dynalog PCI 1050
-
- Notes :
- - Dynalog India Pvt. Ltd. does not have a registered PCI Vendor ID and
- they are using the PLX Technlogies Vendor ID since that is the PCI Chip used
- in the card.
- - Dynalog India Pvt. Ltd. has provided the internal register specification for
- their cards in their manuals.
-*/
+ * Driver: dyna_pci10xx
+ * Description: Dynalog India PCI DAQ Cards, http://www.dynalogindia.com/
+ * Devices: [Dynalog] PCI-1050 (dyna_pci1050)
+ * Author: Prashant Shah <pshah.mumbai@gmail.com>
+ * Status: Stable
+ *
+ * Developed at Automation Labs, Chemical Dept., IIT Bombay, India.
+ * Prof. Kannan Moudgalya <kannan@iitb.ac.in>
+ * http://www.iitb.ac.in
+ *
+ * Notes :
+ * - Dynalog India Pvt. Ltd. does not have a registered PCI Vendor ID and
+ *   they are using the PLX Technlogies Vendor ID since that is the PCI Chip
+ *   used in the card.
+ * - Dynalog India Pvt. Ltd. has provided the internal register specification
+ *   for their cards in their manuals.
+ */
 
 #include <linux/module.h>
 #include <linux/delay.h>
-#include <linux/pci.h>
 #include <linux/mutex.h>
 
-#include "../comedidev.h"
+#include "../comedi_pci.h"
 
 #define READ_TIMEOUT 50
 
@@ -71,8 +69,9 @@ static int dyna_pci10xx_ai_eoc(struct comedi_device *dev,
 }
 
 static int dyna_pci10xx_insn_read_ai(struct comedi_device *dev,
-			struct comedi_subdevice *s,
-			struct comedi_insn *insn, unsigned int *data)
+				     struct comedi_subdevice *s,
+				     struct comedi_insn *insn,
+				     unsigned int *data)
 {
 	struct dyna_pci10xx_private *devpriv = dev->private;
 	int n;
@@ -110,8 +109,9 @@ static int dyna_pci10xx_insn_read_ai(struct comedi_device *dev,
 
 /* analog output callback */
 static int dyna_pci10xx_insn_write_ao(struct comedi_device *dev,
-				 struct comedi_subdevice *s,
-				 struct comedi_insn *insn, unsigned int *data)
+				      struct comedi_subdevice *s,
+				      struct comedi_insn *insn,
+				      unsigned int *data)
 {
 	struct dyna_pci10xx_private *devpriv = dev->private;
 	int n;
@@ -133,8 +133,9 @@ static int dyna_pci10xx_insn_write_ao(struct comedi_device *dev,
 
 /* digital input bit interface */
 static int dyna_pci10xx_di_insn_bits(struct comedi_device *dev,
-			      struct comedi_subdevice *s,
-			      struct comedi_insn *insn, unsigned int *data)
+				     struct comedi_subdevice *s,
+				     struct comedi_insn *insn,
+				     unsigned int *data)
 {
 	struct dyna_pci10xx_private *devpriv = dev->private;
 	u16 d = 0;
@@ -172,7 +173,7 @@ static int dyna_pci10xx_do_insn_bits(struct comedi_device *dev,
 }
 
 static int dyna_pci10xx_auto_attach(struct comedi_device *dev,
-					      unsigned long context_unused)
+				    unsigned long context_unused)
 {
 	struct pci_dev *pcidev = comedi_to_pci_dev(dev);
 	struct dyna_pci10xx_private *devpriv;

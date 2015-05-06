@@ -129,14 +129,13 @@ enum omap_rfbi_te_mode {
 };
 
 enum omap_dss_signal_level {
-	OMAPDSS_SIG_ACTIVE_HIGH	= 0,
-	OMAPDSS_SIG_ACTIVE_LOW	= 1,
+	OMAPDSS_SIG_ACTIVE_LOW,
+	OMAPDSS_SIG_ACTIVE_HIGH,
 };
 
 enum omap_dss_signal_edge {
-	OMAPDSS_DRIVE_SIG_OPPOSITE_EDGES,
-	OMAPDSS_DRIVE_SIG_RISING_EDGE,
 	OMAPDSS_DRIVE_SIG_FALLING_EDGE,
+	OMAPDSS_DRIVE_SIG_RISING_EDGE,
 };
 
 enum omap_dss_venc_type {
@@ -314,6 +313,7 @@ enum omapdss_version {
 	OMAPDSS_VER_OMAP4,		/* All other OMAP4s */
 	OMAPDSS_VER_OMAP5,
 	OMAPDSS_VER_AM43xx,
+	OMAPDSS_VER_DRA7xx,
 };
 
 /* Board specific data */
@@ -688,6 +688,7 @@ struct omapdss_dsi_ops {
 };
 
 struct omap_dss_device {
+	struct kobject kobj;
 	struct device *dev;
 
 	struct module *owner;

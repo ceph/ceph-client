@@ -118,25 +118,15 @@
  * POSIX.1 2.4: an empty pathname is invalid (ENOENT).
  * PATH_MAX includes the nul terminator --RR.
  */
-void final_putname(struct filename *name)
-{
-	if (name->separate) {
-		__putname(name->name);
-		kfree(name);
-	} else {
-		__putname(name);
-	}
-}
 
-#define EMBEDDED_NAME_MAX	(PATH_MAX - sizeof(struct filename))
+#define EMBEDDED_NAME_MAX	(PATH_MAX - offsetof(struct filename, iname))
 
 struct filename *
 getname_flags(const char __user *filename, int flags, int *empty)
 {
-	struct filename *result, *err;
-	int len;
-	long max;
+	struct filename *result;
 	char *kname;
+	int len;
 
 	result = audit_reusename(filename);
 	if (result)
@@ -150,16 +140,13 @@ getname_flags(const char __user *filename, int flags, int *empty)
 	 * First, try to embed the struct filename inside the names_cache
 	 * allocation
 	 */
-	kname = (char *)result + sizeof(*result);
+	kname = (char *)result->iname;
 	result->name = kname;
-	result->separate = false;
-	max = EMBEDDED_NAME_MAX;
 
-recopy:
-	len = strncpy_from_user(kname, filename, max);
+	len = strncpy_from_user(kname, filename, EMBEDDED_NAME_MAX);
 	if (unlikely(len < 0)) {
-		err = ERR_PTR(len);
-		goto error;
+		__putname(result);
+		return ERR_PTR(len);
 	}
 
 	/*
@@ -168,42 +155,49 @@ recopy:
 	 * names_cache allocation for the pathname, and re-do the copy from
 	 * userland.
 	 */
-	if (len == EMBEDDED_NAME_MAX && max == EMBEDDED_NAME_MAX) {
+	if (unlikely(len == EMBEDDED_NAME_MAX)) {
+		const size_t size = offsetof(struct filename, iname[1]);
 		kname = (char *)result;
 
-		result = kzalloc(sizeof(*result), GFP_KERNEL);
-		if (!result) {
-			err = ERR_PTR(-ENOMEM);
-			result = (struct filename *)kname;
-			goto error;
+		/*
+		 * size is chosen that way we to guarantee that
+		 * result->iname[0] is within the same object and that
+		 * kname can't be equal to result->iname, no matter what.
+		 */
+		result = kzalloc(size, GFP_KERNEL);
+		if (unlikely(!result)) {
+			__putname(kname);
+			return ERR_PTR(-ENOMEM);
 		}
 		result->name = kname;
-		result->separate = true;
-		max = PATH_MAX;
-		goto recopy;
+		len = strncpy_from_user(kname, filename, PATH_MAX);
+		if (unlikely(len < 0)) {
+			__putname(kname);
+			kfree(result);
+			return ERR_PTR(len);
+		}
+		if (unlikely(len == PATH_MAX)) {
+			__putname(kname);
+			kfree(result);
+			return ERR_PTR(-ENAMETOOLONG);
+		}
 	}
 
+	result->refcnt = 1;
 	/* The empty path is special. */
 	if (unlikely(!len)) {
 		if (empty)
 			*empty = 1;
-		err = ERR_PTR(-ENOENT);
-		if (!(flags & LOOKUP_EMPTY))
-			goto error;
+		if (!(flags & LOOKUP_EMPTY)) {
+			putname(result);
+			return ERR_PTR(-ENOENT);
+		}
 	}
-
-	err = ERR_PTR(-ENAMETOOLONG);
-	if (unlikely(len >= PATH_MAX))
-		goto error;
 
 	result->uptr = filename;
 	result->aname = NULL;
 	audit_getname(result);
 	return result;
-
-error:
-	final_putname(result);
-	return err;
 }
 
 struct filename *
@@ -212,43 +206,54 @@ getname(const char __user * filename)
 	return getname_flags(filename, 0, NULL);
 }
 
-/*
- * The "getname_kernel()" interface doesn't do pathnames longer
- * than EMBEDDED_NAME_MAX. Deal with it - you're a kernel user.
- */
 struct filename *
 getname_kernel(const char * filename)
 {
 	struct filename *result;
-	char *kname;
-	int len;
-
-	len = strlen(filename);
-	if (len >= EMBEDDED_NAME_MAX)
-		return ERR_PTR(-ENAMETOOLONG);
+	int len = strlen(filename) + 1;
 
 	result = __getname();
 	if (unlikely(!result))
 		return ERR_PTR(-ENOMEM);
 
-	kname = (char *)result + sizeof(*result);
-	result->name = kname;
+	if (len <= EMBEDDED_NAME_MAX) {
+		result->name = (char *)result->iname;
+	} else if (len <= PATH_MAX) {
+		struct filename *tmp;
+
+		tmp = kmalloc(sizeof(*tmp), GFP_KERNEL);
+		if (unlikely(!tmp)) {
+			__putname(result);
+			return ERR_PTR(-ENOMEM);
+		}
+		tmp->name = (char *)result;
+		result = tmp;
+	} else {
+		__putname(result);
+		return ERR_PTR(-ENAMETOOLONG);
+	}
+	memcpy((char *)result->name, filename, len);
 	result->uptr = NULL;
 	result->aname = NULL;
-	result->separate = false;
+	result->refcnt = 1;
+	audit_getname(result);
 
-	strlcpy(kname, filename, EMBEDDED_NAME_MAX);
 	return result;
 }
 
-#ifdef CONFIG_AUDITSYSCALL
 void putname(struct filename *name)
 {
-	if (unlikely(!audit_dummy_context()))
-		return audit_putname(name);
-	final_putname(name);
+	BUG_ON(name->refcnt <= 0);
+
+	if (--name->refcnt > 0)
+		return;
+
+	if (name->name != name->iname) {
+		__putname(name->name);
+		kfree(name);
+	} else
+		__putname(name);
 }
-#endif
 
 static int check_acl(struct inode *inode, int mask)
 {
@@ -1580,12 +1585,13 @@ static inline int walk_component(struct nameidata *nd, struct path *path,
 		inode = path->dentry->d_inode;
 	}
 	err = -ENOENT;
-	if (!inode || d_is_negative(path->dentry))
+	if (d_is_negative(path->dentry))
 		goto out_path_put;
 
 	if (should_follow_link(path->dentry, follow)) {
 		if (nd->flags & LOOKUP_RCU) {
-			if (unlikely(unlazy_walk(nd, path->dentry))) {
+			if (unlikely(nd->path.mnt != path->mnt ||
+				     unlazy_walk(nd, path->dentry))) {
 				err = -ECHILD;
 				goto out_err;
 			}
@@ -1845,10 +1851,11 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 	return err;
 }
 
-static int path_init(int dfd, const char *name, unsigned int flags,
+static int path_init(int dfd, const struct filename *name, unsigned int flags,
 		     struct nameidata *nd)
 {
 	int retval = 0;
+	const char *s = name->name;
 
 	nd->last_type = LAST_ROOT; /* if there are only slashes... */
 	nd->flags = flags | LOOKUP_JUMPED | LOOKUP_PARENT;
@@ -1857,7 +1864,7 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 	if (flags & LOOKUP_ROOT) {
 		struct dentry *root = nd->root.dentry;
 		struct inode *inode = root->d_inode;
-		if (*name) {
+		if (*s) {
 			if (!d_can_lookup(root))
 				return -ENOTDIR;
 			retval = inode_permission(inode, MAY_EXEC);
@@ -1879,7 +1886,7 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 	nd->root.mnt = NULL;
 
 	nd->m_seq = read_seqbegin(&mount_lock);
-	if (*name=='/') {
+	if (*s == '/') {
 		if (flags & LOOKUP_RCU) {
 			rcu_read_lock();
 			nd->seq = set_root_rcu(nd);
@@ -1913,7 +1920,7 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 
 		dentry = f.file->f_path.dentry;
 
-		if (*name) {
+		if (*s) {
 			if (!d_can_lookup(dentry)) {
 				fdput(f);
 				return -ENOTDIR;
@@ -1943,7 +1950,7 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 	return -ECHILD;
 done:
 	current->total_link_count = 0;
-	return link_path_walk(name, nd);
+	return link_path_walk(s, nd);
 }
 
 static void path_cleanup(struct nameidata *nd)
@@ -1966,7 +1973,7 @@ static inline int lookup_last(struct nameidata *nd, struct path *path)
 }
 
 /* Returns 0 and nd will be valid on success; Retuns error, otherwise. */
-static int path_lookupat(int dfd, const char *name,
+static int path_lookupat(int dfd, const struct filename *name,
 				unsigned int flags, struct nameidata *nd)
 {
 	struct path path;
@@ -2021,55 +2028,63 @@ static int path_lookupat(int dfd, const char *name,
 static int filename_lookup(int dfd, struct filename *name,
 				unsigned int flags, struct nameidata *nd)
 {
-	int retval = path_lookupat(dfd, name->name, flags | LOOKUP_RCU, nd);
+	int retval = path_lookupat(dfd, name, flags | LOOKUP_RCU, nd);
 	if (unlikely(retval == -ECHILD))
-		retval = path_lookupat(dfd, name->name, flags, nd);
+		retval = path_lookupat(dfd, name, flags, nd);
 	if (unlikely(retval == -ESTALE))
-		retval = path_lookupat(dfd, name->name,
-						flags | LOOKUP_REVAL, nd);
+		retval = path_lookupat(dfd, name, flags | LOOKUP_REVAL, nd);
 
 	if (likely(!retval))
 		audit_inode(name, nd->path.dentry, flags & LOOKUP_PARENT);
 	return retval;
 }
 
-static int do_path_lookup(int dfd, const char *name,
-				unsigned int flags, struct nameidata *nd)
-{
-	struct filename filename = { .name = name };
-
-	return filename_lookup(dfd, &filename, flags, nd);
-}
-
 /* does lookup, returns the object with parent locked */
 struct dentry *kern_path_locked(const char *name, struct path *path)
 {
+	struct filename *filename = getname_kernel(name);
 	struct nameidata nd;
 	struct dentry *d;
-	int err = do_path_lookup(AT_FDCWD, name, LOOKUP_PARENT, &nd);
-	if (err)
-		return ERR_PTR(err);
+	int err;
+
+	if (IS_ERR(filename))
+		return ERR_CAST(filename);
+
+	err = filename_lookup(AT_FDCWD, filename, LOOKUP_PARENT, &nd);
+	if (err) {
+		d = ERR_PTR(err);
+		goto out;
+	}
 	if (nd.last_type != LAST_NORM) {
 		path_put(&nd.path);
-		return ERR_PTR(-EINVAL);
+		d = ERR_PTR(-EINVAL);
+		goto out;
 	}
 	mutex_lock_nested(&nd.path.dentry->d_inode->i_mutex, I_MUTEX_PARENT);
 	d = __lookup_hash(&nd.last, nd.path.dentry, 0);
 	if (IS_ERR(d)) {
 		mutex_unlock(&nd.path.dentry->d_inode->i_mutex);
 		path_put(&nd.path);
-		return d;
+		goto out;
 	}
 	*path = nd.path;
+out:
+	putname(filename);
 	return d;
 }
 
 int kern_path(const char *name, unsigned int flags, struct path *path)
 {
 	struct nameidata nd;
-	int res = do_path_lookup(AT_FDCWD, name, flags, &nd);
-	if (!res)
-		*path = nd.path;
+	struct filename *filename = getname_kernel(name);
+	int res = PTR_ERR(filename);
+
+	if (!IS_ERR(filename)) {
+		res = filename_lookup(AT_FDCWD, filename, flags, &nd);
+		putname(filename);
+		if (!res)
+			*path = nd.path;
+	}
 	return res;
 }
 EXPORT_SYMBOL(kern_path);
@@ -2086,15 +2101,22 @@ int vfs_path_lookup(struct dentry *dentry, struct vfsmount *mnt,
 		    const char *name, unsigned int flags,
 		    struct path *path)
 {
-	struct nameidata nd;
-	int err;
-	nd.root.dentry = dentry;
-	nd.root.mnt = mnt;
+	struct filename *filename = getname_kernel(name);
+	int err = PTR_ERR(filename);
+
 	BUG_ON(flags & LOOKUP_PARENT);
-	/* the first argument of do_path_lookup() is ignored with LOOKUP_ROOT */
-	err = do_path_lookup(AT_FDCWD, name, flags | LOOKUP_ROOT, &nd);
-	if (!err)
-		*path = nd.path;
+
+	/* the first argument of filename_lookup() is ignored with LOOKUP_ROOT */
+	if (!IS_ERR(filename)) {
+		struct nameidata nd;
+		nd.root.dentry = dentry;
+		nd.root.mnt = mnt;
+		err = filename_lookup(AT_FDCWD, filename,
+				      flags | LOOKUP_ROOT, &nd);
+		if (!err)
+			*path = nd.path;
+		putname(filename);
+	}
 	return err;
 }
 EXPORT_SYMBOL(vfs_path_lookup);
@@ -2116,9 +2138,7 @@ static struct dentry *lookup_hash(struct nameidata *nd)
  * @len:	maximum length @len should be interpreted to
  *
  * Note that this routine is purely a helper for filesystem usage and should
- * not be called by generic code.  Also note that by using this function the
- * nameidata argument is passed to the filesystem methods and a filesystem
- * using this helper needs to be prepared for that.
+ * not be called by generic code.
  */
 struct dentry *lookup_one_len(const char *name, struct dentry *base, int len)
 {
@@ -2291,7 +2311,7 @@ mountpoint_last(struct nameidata *nd, struct path *path)
 	mutex_unlock(&dir->d_inode->i_mutex);
 
 done:
-	if (!dentry->d_inode || d_is_negative(dentry)) {
+	if (d_is_negative(dentry)) {
 		error = -ENOENT;
 		dput(dentry);
 		goto out;
@@ -2319,7 +2339,8 @@ out:
  * Returns 0 and "path" will be valid on success; Returns error otherwise.
  */
 static int
-path_mountpoint(int dfd, const char *name, struct path *path, unsigned int flags)
+path_mountpoint(int dfd, const struct filename *name, struct path *path,
+		unsigned int flags)
 {
 	struct nameidata nd;
 	int err;
@@ -2348,16 +2369,20 @@ out:
 }
 
 static int
-filename_mountpoint(int dfd, struct filename *s, struct path *path,
+filename_mountpoint(int dfd, struct filename *name, struct path *path,
 			unsigned int flags)
 {
-	int error = path_mountpoint(dfd, s->name, path, flags | LOOKUP_RCU);
+	int error;
+	if (IS_ERR(name))
+		return PTR_ERR(name);
+	error = path_mountpoint(dfd, name, path, flags | LOOKUP_RCU);
 	if (unlikely(error == -ECHILD))
-		error = path_mountpoint(dfd, s->name, path, flags);
+		error = path_mountpoint(dfd, name, path, flags);
 	if (unlikely(error == -ESTALE))
-		error = path_mountpoint(dfd, s->name, path, flags | LOOKUP_REVAL);
+		error = path_mountpoint(dfd, name, path, flags | LOOKUP_REVAL);
 	if (likely(!error))
-		audit_inode(s, path->dentry, 0);
+		audit_inode(name, path->dentry, 0);
+	putname(name);
 	return error;
 }
 
@@ -2379,21 +2404,14 @@ int
 user_path_mountpoint_at(int dfd, const char __user *name, unsigned int flags,
 			struct path *path)
 {
-	struct filename *s = getname(name);
-	int error;
-	if (IS_ERR(s))
-		return PTR_ERR(s);
-	error = filename_mountpoint(dfd, s, path, flags);
-	putname(s);
-	return error;
+	return filename_mountpoint(dfd, getname(name), path, flags);
 }
 
 int
 kern_path_mountpoint(int dfd, const char *name, struct path *path,
 			unsigned int flags)
 {
-	struct filename s = {.name = name};
-	return filename_mountpoint(dfd, &s, path, flags);
+	return filename_mountpoint(dfd, getname_kernel(name), path, flags);
 }
 EXPORT_SYMBOL(kern_path_mountpoint);
 
@@ -2795,7 +2813,7 @@ no_open:
 			} else if (!dentry->d_inode) {
 				goto out;
 			} else if ((open_flag & O_TRUNC) &&
-				   S_ISREG(dentry->d_inode->i_mode)) {
+				   d_is_reg(dentry)) {
 				goto out;
 			}
 			/* will fail later, go on to get the right error */
@@ -3021,14 +3039,15 @@ retry_lookup:
 finish_lookup:
 	/* we _can_ be in RCU mode here */
 	error = -ENOENT;
-	if (!inode || d_is_negative(path->dentry)) {
+	if (d_is_negative(path->dentry)) {
 		path_to_nameidata(path, nd);
 		goto out;
 	}
 
 	if (should_follow_link(path->dentry, !symlink_ok)) {
 		if (nd->flags & LOOKUP_RCU) {
-			if (unlikely(unlazy_walk(nd, path->dentry))) {
+			if (unlikely(nd->path.mnt != path->mnt ||
+				     unlazy_walk(nd, path->dentry))) {
 				error = -ECHILD;
 				goto out;
 			}
@@ -3060,7 +3079,7 @@ finish_open:
 	error = -ENOTDIR;
 	if ((nd->flags & LOOKUP_DIRECTORY) && !d_can_lookup(nd->path.dentry))
 		goto out;
-	if (!S_ISREG(nd->inode->i_mode))
+	if (!d_is_reg(nd->path.dentry))
 		will_truncate = false;
 
 	if (will_truncate) {
@@ -3137,7 +3156,7 @@ static int do_tmpfile(int dfd, struct filename *pathname,
 	static const struct qstr name = QSTR_INIT("/", 1);
 	struct dentry *dentry, *child;
 	struct inode *dir;
-	int error = path_lookupat(dfd, pathname->name,
+	int error = path_lookupat(dfd, pathname,
 				  flags | LOOKUP_DIRECTORY, nd);
 	if (unlikely(error))
 		return error;
@@ -3210,7 +3229,7 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 		goto out;
 	}
 
-	error = path_init(dfd, pathname->name, flags, nd);
+	error = path_init(dfd, pathname, flags, nd);
 	if (unlikely(error))
 		goto out;
 
@@ -3273,7 +3292,7 @@ struct file *do_file_open_root(struct dentry *dentry, struct vfsmount *mnt,
 {
 	struct nameidata nd;
 	struct file *file;
-	struct filename filename = { .name = name };
+	struct filename *filename;
 	int flags = op->lookup_flags | LOOKUP_ROOT;
 
 	nd.root.mnt = mnt;
@@ -3282,15 +3301,20 @@ struct file *do_file_open_root(struct dentry *dentry, struct vfsmount *mnt,
 	if (d_is_symlink(dentry) && op->intent & LOOKUP_OPEN)
 		return ERR_PTR(-ELOOP);
 
-	file = path_openat(-1, &filename, &nd, op, flags | LOOKUP_RCU);
+	filename = getname_kernel(name);
+	if (unlikely(IS_ERR(filename)))
+		return ERR_CAST(filename);
+
+	file = path_openat(-1, filename, &nd, op, flags | LOOKUP_RCU);
 	if (unlikely(file == ERR_PTR(-ECHILD)))
-		file = path_openat(-1, &filename, &nd, op, flags);
+		file = path_openat(-1, filename, &nd, op, flags);
 	if (unlikely(file == ERR_PTR(-ESTALE)))
-		file = path_openat(-1, &filename, &nd, op, flags | LOOKUP_REVAL);
+		file = path_openat(-1, filename, &nd, op, flags | LOOKUP_REVAL);
+	putname(filename);
 	return file;
 }
 
-struct dentry *kern_path_create(int dfd, const char *pathname,
+static struct dentry *filename_create(int dfd, struct filename *name,
 				struct path *path, unsigned int lookup_flags)
 {
 	struct dentry *dentry = ERR_PTR(-EEXIST);
@@ -3305,7 +3329,7 @@ struct dentry *kern_path_create(int dfd, const char *pathname,
 	 */
 	lookup_flags &= LOOKUP_REVAL;
 
-	error = do_path_lookup(dfd, pathname, LOOKUP_PARENT|lookup_flags, &nd);
+	error = filename_lookup(dfd, name, LOOKUP_PARENT|lookup_flags, &nd);
 	if (error)
 		return ERR_PTR(error);
 
@@ -3359,6 +3383,19 @@ out:
 	path_put(&nd.path);
 	return dentry;
 }
+
+struct dentry *kern_path_create(int dfd, const char *pathname,
+				struct path *path, unsigned int lookup_flags)
+{
+	struct filename *filename = getname_kernel(pathname);
+	struct dentry *res;
+
+	if (IS_ERR(filename))
+		return ERR_CAST(filename);
+	res = filename_create(dfd, filename, path, lookup_flags);
+	putname(filename);
+	return res;
+}
 EXPORT_SYMBOL(kern_path_create);
 
 void done_path_create(struct path *path, struct dentry *dentry)
@@ -3377,7 +3414,7 @@ struct dentry *user_path_create(int dfd, const char __user *pathname,
 	struct dentry *res;
 	if (IS_ERR(tmp))
 		return ERR_CAST(tmp);
-	res = kern_path_create(dfd, tmp->name, path, lookup_flags);
+	res = filename_create(dfd, tmp, path, lookup_flags);
 	putname(tmp);
 	return res;
 }

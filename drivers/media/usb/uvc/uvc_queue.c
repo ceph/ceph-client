@@ -143,20 +143,6 @@ static void uvc_buffer_finish(struct vb2_buffer *vb)
 		uvc_video_clock_update(stream, &vb->v4l2_buf, buf);
 }
 
-static void uvc_wait_prepare(struct vb2_queue *vq)
-{
-	struct uvc_video_queue *queue = vb2_get_drv_priv(vq);
-
-	mutex_unlock(&queue->mutex);
-}
-
-static void uvc_wait_finish(struct vb2_queue *vq)
-{
-	struct uvc_video_queue *queue = vb2_get_drv_priv(vq);
-
-	mutex_lock(&queue->mutex);
-}
-
 static int uvc_start_streaming(struct vb2_queue *vq, unsigned int count)
 {
 	struct uvc_video_queue *queue = vb2_get_drv_priv(vq);
@@ -195,8 +181,8 @@ static struct vb2_ops uvc_queue_qops = {
 	.buf_prepare = uvc_buffer_prepare,
 	.buf_queue = uvc_buffer_queue,
 	.buf_finish = uvc_buffer_finish,
-	.wait_prepare = uvc_wait_prepare,
-	.wait_finish = uvc_wait_finish,
+	.wait_prepare = vb2_ops_wait_prepare,
+	.wait_finish = vb2_ops_wait_finish,
 	.start_streaming = uvc_start_streaming,
 	.stop_streaming = uvc_stop_streaming,
 };
@@ -214,6 +200,7 @@ int uvc_queue_init(struct uvc_video_queue *queue, enum v4l2_buf_type type,
 	queue->queue.mem_ops = &vb2_vmalloc_memops;
 	queue->queue.timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC
 		| V4L2_BUF_FLAG_TSTAMP_SRC_SOE;
+	queue->queue.lock = &queue->mutex;
 	ret = vb2_queue_init(&queue->queue);
 	if (ret)
 		return ret;
@@ -319,25 +306,14 @@ int uvc_queue_streamoff(struct uvc_video_queue *queue, enum v4l2_buf_type type)
 
 int uvc_queue_mmap(struct uvc_video_queue *queue, struct vm_area_struct *vma)
 {
-	int ret;
-
-	mutex_lock(&queue->mutex);
-	ret = vb2_mmap(&queue->queue, vma);
-	mutex_unlock(&queue->mutex);
-
-	return ret;
+	return vb2_mmap(&queue->queue, vma);
 }
 
 #ifndef CONFIG_MMU
 unsigned long uvc_queue_get_unmapped_area(struct uvc_video_queue *queue,
 		unsigned long pgoff)
 {
-	unsigned long ret;
-
-	mutex_lock(&queue->mutex);
-	ret = vb2_get_unmapped_area(&queue->queue, 0, 0, pgoff, 0);
-	mutex_unlock(&queue->mutex);
-	return ret;
+	return vb2_get_unmapped_area(&queue->queue, 0, 0, pgoff, 0);
 }
 #endif
 

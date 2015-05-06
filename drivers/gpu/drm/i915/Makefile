@@ -19,6 +19,7 @@ i915-$(CONFIG_DEBUG_FS) += i915_debugfs.o
 
 # GEM code
 i915-y += i915_cmd_parser.o \
+	  i915_gem_batch_pool.o \
 	  i915_gem_context.o \
 	  i915_gem_render_state.o \
 	  i915_gem_debug.o \
@@ -27,6 +28,7 @@ i915-y += i915_cmd_parser.o \
 	  i915_gem_execbuffer.o \
 	  i915_gem_gtt.o \
 	  i915_gem.o \
+	  i915_gem_shrinker.o \
 	  i915_gem_stolen.o \
 	  i915_gem_tiling.o \
 	  i915_gem_userptr.o \
@@ -47,6 +49,7 @@ i915-y += intel_renderstate_gen6.o \
 i915-y += intel_audio.o \
 	  intel_bios.o \
 	  intel_display.o \
+	  intel_fbc.o \
 	  intel_fifo_underrun.o \
 	  intel_frontbuffer.o \
 	  intel_modes.o \
@@ -64,11 +67,12 @@ i915-y += dvo_ch7017.o \
 	  dvo_ns2501.o \
 	  dvo_sil164.o \
 	  dvo_tfp410.o \
+	  intel_atomic.o \
+	  intel_atomic_plane.o \
 	  intel_crt.o \
 	  intel_ddi.o \
 	  intel_dp.o \
 	  intel_dp_mst.o \
-	  intel_dsi_cmd.o \
 	  intel_dsi.o \
 	  intel_dsi_pll.o \
 	  intel_dsi_panel_vbt.o \
@@ -80,9 +84,11 @@ i915-y += dvo_ch7017.o \
 	  intel_sdvo.o \
 	  intel_tv.o
 
+# virtual gpu code
+i915-y += i915_vgpu.o
+
 # legacy horrors
-i915-y += i915_dma.o \
-	  i915_ums.o
+i915-y += i915_dma.o
 
 obj-$(CONFIG_DRM_I915)  += i915.o
 

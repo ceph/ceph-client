@@ -194,16 +194,10 @@ ch_do_scsi(scsi_changer *ch, unsigned char *cmd, int cmd_len,
 
  retry:
 	errno = 0;
-	if (debug) {
-		DPRINTK("command: ");
-		__scsi_print_command(cmd, cmd_len);
-	}
-
 	result = scsi_execute_req(ch->device, cmd, direction, buffer,
 				  buflength, &sshdr, timeout * HZ,
 				  MAX_RETRIES, NULL);
 
-	DPRINTK("result: 0x%x\n",result);
 	if (driver_byte(result) & DRIVER_SENSE) {
 		if (debug)
 			scsi_print_sense_hdr(ch->device, ch->name, &sshdr);
@@ -345,7 +339,7 @@ ch_readconfig(scsi_changer *ch)
 			ch->firsts[CHET_DT],
 			ch->counts[CHET_DT]);
 	} else {
-		VPRINTK(KERN_INFO, "reading element address assigment page failed!\n");
+		VPRINTK(KERN_INFO, "reading element address assignment page failed!\n");
 	}
 
 	/* vendor specific element types */

@@ -54,7 +54,7 @@
 #include "qt1010.h"
 #include "mb86a20s.h"
 #include "m88ds3103.h"
-#include "m88ts2022.h"
+#include "ts2020.h"
 #include "si2168.h"
 #include "si2157.h"
 
@@ -1380,6 +1380,7 @@ static int em28xx_dvb_init(struct em28xx *dev)
 			}
 		}
 		break;
+	case EM2884_BOARD_ELGATO_EYETV_HYBRID_2008:
 	case EM2884_BOARD_CINERGY_HTC_STICK:
 		terratec_htc_stick_init(dev);
 
@@ -1491,8 +1492,7 @@ static int em28xx_dvb_init(struct em28xx *dev)
 			struct i2c_adapter *i2c_adapter;
 			struct i2c_client *client;
 			struct i2c_board_info info;
-			struct m88ts2022_config m88ts2022_config = {
-				.clock = 27000000,
+			struct ts2020_config ts2020_config = {
 			};
 			memset(&info, 0, sizeof(struct i2c_board_info));
 
@@ -1507,11 +1507,11 @@ static int em28xx_dvb_init(struct em28xx *dev)
 			}
 
 			/* attach tuner */
-			m88ts2022_config.fe = dvb->fe[0];
-			strlcpy(info.type, "m88ts2022", I2C_NAME_SIZE);
+			ts2020_config.fe = dvb->fe[0];
+			strlcpy(info.type, "ts2022", I2C_NAME_SIZE);
 			info.addr = 0x60;
-			info.platform_data = &m88ts2022_config;
-			request_module("m88ts2022");
+			info.platform_data = &ts2020_config;
+			request_module("ts2020");
 			client = i2c_new_device(i2c_adapter, &info);
 			if (client == NULL || client->dev.driver == NULL) {
 				dvb_frontend_detach(dvb->fe[0]);
@@ -1724,7 +1724,7 @@ static int em28xx_dvb_fini(struct em28xx *dev)
 	if (!dev->dvb)
 		return 0;
 
-	em28xx_info("Closing DVB extension");
+	em28xx_info("Closing DVB extension\n");
 
 	dvb = dev->dvb;
 	client = dvb->i2c_client_tuner;
@@ -1775,17 +1775,17 @@ static int em28xx_dvb_suspend(struct em28xx *dev)
 	if (!dev->board.has_dvb)
 		return 0;
 
-	em28xx_info("Suspending DVB extension");
+	em28xx_info("Suspending DVB extension\n");
 	if (dev->dvb) {
 		struct em28xx_dvb *dvb = dev->dvb;
 
 		if (dvb->fe[0]) {
 			ret = dvb_frontend_suspend(dvb->fe[0]);
-			em28xx_info("fe0 suspend %d", ret);
+			em28xx_info("fe0 suspend %d\n", ret);
 		}
 		if (dvb->fe[1]) {
 			dvb_frontend_suspend(dvb->fe[1]);
-			em28xx_info("fe1 suspend %d", ret);
+			em28xx_info("fe1 suspend %d\n", ret);
 		}
 	}
 
@@ -1802,18 +1802,18 @@ static int em28xx_dvb_resume(struct em28xx *dev)
 	if (!dev->board.has_dvb)
 		return 0;
 
-	em28xx_info("Resuming DVB extension");
+	em28xx_info("Resuming DVB extension\n");
 	if (dev->dvb) {
 		struct em28xx_dvb *dvb = dev->dvb;
 
 		if (dvb->fe[0]) {
 			ret = dvb_frontend_resume(dvb->fe[0]);
-			em28xx_info("fe0 resume %d", ret);
+			em28xx_info("fe0 resume %d\n", ret);
 		}
 
 		if (dvb->fe[1]) {
 			ret = dvb_frontend_resume(dvb->fe[1]);
-			em28xx_info("fe1 resume %d", ret);
+			em28xx_info("fe1 resume %d\n", ret);
 		}
 	}
 

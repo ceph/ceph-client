@@ -76,12 +76,20 @@ static int dw_mci_rockchip_init(struct dw_mci *host)
 	return 0;
 }
 
+/* Common capabilities of RK3288 SoC */
+static unsigned long dw_mci_rk3288_dwmmc_caps[4] = {
+	MMC_CAP_RUNTIME_RESUME, /* emmc */
+	MMC_CAP_RUNTIME_RESUME, /* sdmmc */
+	MMC_CAP_RUNTIME_RESUME, /* sdio0 */
+	MMC_CAP_RUNTIME_RESUME, /* sdio1 */
+};
 static const struct dw_mci_drv_data rk2928_drv_data = {
 	.prepare_command        = dw_mci_rockchip_prepare_command,
 	.init			= dw_mci_rockchip_init,
 };
 
 static const struct dw_mci_drv_data rk3288_drv_data = {
+	.caps			= dw_mci_rk3288_dwmmc_caps,
 	.prepare_command        = dw_mci_rockchip_prepare_command,
 	.set_ios		= dw_mci_rk3288_set_ios,
 	.setup_clock    = dw_mci_rk3288_setup_clock,
@@ -133,7 +141,7 @@ static SIMPLE_DEV_PM_OPS(dw_mci_rockchip_pmops,
 
 static struct platform_driver dw_mci_rockchip_pltfm_driver = {
 	.probe		= dw_mci_rockchip_probe,
-	.remove		= __exit_p(dw_mci_pltfm_remove),
+	.remove		= dw_mci_pltfm_remove,
 	.driver		= {
 		.name		= "dwmmc_rockchip",
 		.of_match_table	= dw_mci_rockchip_match,

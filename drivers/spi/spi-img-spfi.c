@@ -12,6 +12,7 @@
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/dmaengine.h>
+#include <linux/gpio.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/irq.h>
@@ -122,36 +123,31 @@ static inline void spfi_start(struct img_spfi *spfi)
 	spfi_writel(spfi, val, SPFI_CONTROL);
 }
 
-static inline void spfi_stop(struct img_spfi *spfi)
-{
-	u32 val;
-
-	val = spfi_readl(spfi, SPFI_CONTROL);
-	val &= ~SPFI_CONTROL_SPFI_EN;
-	spfi_writel(spfi, val, SPFI_CONTROL);
-}
-
 static inline void spfi_reset(struct img_spfi *spfi)
 {
 	spfi_writel(spfi, SPFI_CONTROL_SOFT_RESET, SPFI_CONTROL);
-	udelay(1);
 	spfi_writel(spfi, 0, SPFI_CONTROL);
 }
 
-static void spfi_flush_tx_fifo(struct img_spfi *spfi)
+static int spfi_wait_all_done(struct img_spfi *spfi)
 {
-	unsigned long timeout = jiffies + msecs_to_jiffies(10);
+	unsigned long timeout = jiffies + msecs_to_jiffies(50);
 
-	spfi_writel(spfi, SPFI_INTERRUPT_SDE, SPFI_INTERRUPT_CLEAR);
 	while (time_before(jiffies, timeout)) {
-		if (spfi_readl(spfi, SPFI_INTERRUPT_STATUS) &
-		    SPFI_INTERRUPT_SDE)
-			return;
+		u32 status = spfi_readl(spfi, SPFI_INTERRUPT_STATUS);
+
+		if (status & SPFI_INTERRUPT_ALLDONETRIG) {
+			spfi_writel(spfi, SPFI_INTERRUPT_ALLDONETRIG,
+				    SPFI_INTERRUPT_CLEAR);
+			return 0;
+		}
 		cpu_relax();
 	}
 
-	dev_err(spfi->dev, "Timed out waiting for FIFO to drain\n");
+	dev_err(spfi->dev, "Timed out waiting for transaction to complete\n");
 	spfi_reset(spfi);
+
+	return -ETIMEDOUT;
 }
 
 static unsigned int spfi_pio_write32(struct img_spfi *spfi, const u32 *buf,
@@ -160,16 +156,16 @@ static unsigned int spfi_pio_write32(struct img_spfi *spfi, const u32 *buf,
 	unsigned int count = 0;
 	u32 status;
 
-	while (count < max) {
+	while (count < max / 4) {
 		spfi_writel(spfi, SPFI_INTERRUPT_SDFUL, SPFI_INTERRUPT_CLEAR);
 		status = spfi_readl(spfi, SPFI_INTERRUPT_STATUS);
 		if (status & SPFI_INTERRUPT_SDFUL)
 			break;
-		spfi_writel(spfi, buf[count / 4], SPFI_TX_32BIT_VALID_DATA);
-		count += 4;
+		spfi_writel(spfi, buf[count], SPFI_TX_32BIT_VALID_DATA);
+		count++;
 	}
 
-	return count;
+	return count * 4;
 }
 
 static unsigned int spfi_pio_write8(struct img_spfi *spfi, const u8 *buf,
@@ -196,17 +192,17 @@ static unsigned int spfi_pio_read32(struct img_spfi *spfi, u32 *buf,
 	unsigned int count = 0;
 	u32 status;
 
-	while (count < max) {
+	while (count < max / 4) {
 		spfi_writel(spfi, SPFI_INTERRUPT_GDEX32BIT,
 			    SPFI_INTERRUPT_CLEAR);
 		status = spfi_readl(spfi, SPFI_INTERRUPT_STATUS);
 		if (!(status & SPFI_INTERRUPT_GDEX32BIT))
 			break;
-		buf[count / 4] = spfi_readl(spfi, SPFI_RX_32BIT_VALID_DATA);
-		count += 4;
+		buf[count] = spfi_readl(spfi, SPFI_RX_32BIT_VALID_DATA);
+		count++;
 	}
 
-	return count;
+	return count * 4;
 }
 
 static unsigned int spfi_pio_read8(struct img_spfi *spfi, u8 *buf,
@@ -237,6 +233,7 @@ static int img_spfi_start_pio(struct spi_master *master,
 	const void *tx_buf = xfer->tx_buf;
 	void *rx_buf = xfer->rx_buf;
 	unsigned long timeout;
+	int ret;
 
 	if (tx_buf)
 		tx_bytes = xfer->len;
@@ -251,17 +248,15 @@ static int img_spfi_start_pio(struct spi_master *master,
 	       time_before(jiffies, timeout)) {
 		unsigned int tx_count, rx_count;
 
-		switch (xfer->bits_per_word) {
-		case 32:
+		if (tx_bytes >= 4)
 			tx_count = spfi_pio_write32(spfi, tx_buf, tx_bytes);
-			rx_count = spfi_pio_read32(spfi, rx_buf, rx_bytes);
-			break;
-		case 8:
-		default:
+		else
 			tx_count = spfi_pio_write8(spfi, tx_buf, tx_bytes);
+
+		if (rx_bytes >= 4)
+			rx_count = spfi_pio_read32(spfi, rx_buf, rx_bytes);
+		else
 			rx_count = spfi_pio_read8(spfi, rx_buf, rx_bytes);
-			break;
-		}
 
 		tx_buf += tx_count;
 		rx_buf += rx_count;
@@ -271,15 +266,14 @@ static int img_spfi_start_pio(struct spi_master *master,
 		cpu_relax();
 	}
 
+	ret = spfi_wait_all_done(spfi);
+	if (ret < 0)
+		return ret;
+
 	if (rx_bytes > 0 || tx_bytes > 0) {
 		dev_err(spfi->dev, "PIO transfer timed out\n");
-		spfi_reset(spfi);
 		return -ETIMEDOUT;
 	}
-
-	if (tx_buf)
-		spfi_flush_tx_fifo(spfi);
-	spfi_stop(spfi);
 
 	return 0;
 }
@@ -289,14 +283,12 @@ static void img_spfi_dma_rx_cb(void *data)
 	struct img_spfi *spfi = data;
 	unsigned long flags;
 
+	spfi_wait_all_done(spfi);
+
 	spin_lock_irqsave(&spfi->lock, flags);
-
 	spfi->rx_dma_busy = false;
-	if (!spfi->tx_dma_busy) {
-		spfi_stop(spfi);
+	if (!spfi->tx_dma_busy)
 		spi_finalize_current_transfer(spfi->master);
-	}
-
 	spin_unlock_irqrestore(&spfi->lock, flags);
 }
 
@@ -305,16 +297,12 @@ static void img_spfi_dma_tx_cb(void *data)
 	struct img_spfi *spfi = data;
 	unsigned long flags;
 
-	spfi_flush_tx_fifo(spfi);
+	spfi_wait_all_done(spfi);
 
 	spin_lock_irqsave(&spfi->lock, flags);
-
 	spfi->tx_dma_busy = false;
-	if (!spfi->rx_dma_busy) {
-		spfi_stop(spfi);
+	if (!spfi->rx_dma_busy)
 		spi_finalize_current_transfer(spfi->master);
-	}
-
 	spin_unlock_irqrestore(&spfi->lock, flags);
 }
 
@@ -331,14 +319,11 @@ static int img_spfi_start_dma(struct spi_master *master,
 
 	if (xfer->rx_buf) {
 		rxconf.direction = DMA_DEV_TO_MEM;
-		switch (xfer->bits_per_word) {
-		case 32:
+		if (xfer->len % 4 == 0) {
 			rxconf.src_addr = spfi->phys + SPFI_RX_32BIT_VALID_DATA;
 			rxconf.src_addr_width = 4;
 			rxconf.src_maxburst = 4;
-			break;
-		case 8:
-		default:
+		} else {
 			rxconf.src_addr = spfi->phys + SPFI_RX_8BIT_VALID_DATA;
 			rxconf.src_addr_width = 1;
 			rxconf.src_maxburst = 4;
@@ -358,18 +343,14 @@ static int img_spfi_start_dma(struct spi_master *master,
 
 	if (xfer->tx_buf) {
 		txconf.direction = DMA_MEM_TO_DEV;
-		switch (xfer->bits_per_word) {
-		case 32:
+		if (xfer->len % 4 == 0) {
 			txconf.dst_addr = spfi->phys + SPFI_TX_32BIT_VALID_DATA;
 			txconf.dst_addr_width = 4;
 			txconf.dst_maxburst = 4;
-			break;
-		case 8:
-		default:
+		} else {
 			txconf.dst_addr = spfi->phys + SPFI_TX_8BIT_VALID_DATA;
 			txconf.dst_addr_width = 1;
 			txconf.dst_maxburst = 4;
-			break;
 		}
 		dmaengine_slave_config(spfi->tx_ch, &txconf);
 
@@ -406,6 +387,75 @@ stop_dma:
 	return -EIO;
 }
 
+static void img_spfi_handle_err(struct spi_master *master,
+				struct spi_message *msg)
+{
+	struct img_spfi *spfi = spi_master_get_devdata(master);
+	unsigned long flags;
+
+	/*
+	 * Stop all DMA and reset the controller if the previous transaction
+	 * timed-out and never completed it's DMA.
+	 */
+	spin_lock_irqsave(&spfi->lock, flags);
+	if (spfi->tx_dma_busy || spfi->rx_dma_busy) {
+		spfi->tx_dma_busy = false;
+		spfi->rx_dma_busy = false;
+
+		dmaengine_terminate_all(spfi->tx_ch);
+		dmaengine_terminate_all(spfi->rx_ch);
+	}
+	spin_unlock_irqrestore(&spfi->lock, flags);
+}
+
+static int img_spfi_prepare(struct spi_master *master, struct spi_message *msg)
+{
+	struct img_spfi *spfi = spi_master_get_devdata(master);
+	u32 val;
+
+	val = spfi_readl(spfi, SPFI_PORT_STATE);
+	if (msg->spi->mode & SPI_CPHA)
+		val |= SPFI_PORT_STATE_CK_PHASE(msg->spi->chip_select);
+	else
+		val &= ~SPFI_PORT_STATE_CK_PHASE(msg->spi->chip_select);
+	if (msg->spi->mode & SPI_CPOL)
+		val |= SPFI_PORT_STATE_CK_POL(msg->spi->chip_select);
+	else
+		val &= ~SPFI_PORT_STATE_CK_POL(msg->spi->chip_select);
+	spfi_writel(spfi, val, SPFI_PORT_STATE);
+
+	return 0;
+}
+
+static int img_spfi_unprepare(struct spi_master *master,
+			      struct spi_message *msg)
+{
+	struct img_spfi *spfi = spi_master_get_devdata(master);
+
+	spfi_reset(spfi);
+
+	return 0;
+}
+
+static int img_spfi_setup(struct spi_device *spi)
+{
+	int ret;
+
+	ret = gpio_request_one(spi->cs_gpio, (spi->mode & SPI_CS_HIGH) ?
+			       GPIOF_OUT_INIT_LOW : GPIOF_OUT_INIT_HIGH,
+			       dev_name(&spi->dev));
+	if (ret)
+		dev_err(&spi->dev, "can't request chipselect gpio %d\n",
+				spi->cs_gpio);
+
+	return ret;
+}
+
+static void img_spfi_cleanup(struct spi_device *spi)
+{
+	gpio_free(spi->cs_gpio);
+}
+
 static void img_spfi_config(struct spi_master *master, struct spi_device *spi,
 			    struct spi_transfer *xfer)
 {
@@ -414,16 +464,19 @@ static void img_spfi_config(struct spi_master *master, struct spi_device *spi,
 
 	/*
 	 * output = spfi_clk * (BITCLK / 512), where BITCLK must be a
-	 * power of 2 up to 256 (where 255 == 256 since BITCLK is 8 bits)
+	 * power of 2 up to 128
 	 */
-	div = DIV_ROUND_UP(master->max_speed_hz, xfer->speed_hz);
-	div = clamp(512 / (1 << get_count_order(div)), 1, 255);
+	div = DIV_ROUND_UP(clk_get_rate(spfi->spfi_clk), xfer->speed_hz);
+	div = clamp(512 / (1 << get_count_order(div)), 1, 128);
 
 	val = spfi_readl(spfi, SPFI_DEVICE_PARAMETER(spi->chip_select));
 	val &= ~(SPFI_DEVICE_PARAMETER_BITCLK_MASK <<
 		 SPFI_DEVICE_PARAMETER_BITCLK_SHIFT);
 	val |= div << SPFI_DEVICE_PARAMETER_BITCLK_SHIFT;
 	spfi_writel(spfi, val, SPFI_DEVICE_PARAMETER(spi->chip_select));
+
+	spfi_writel(spfi, xfer->len << SPFI_TRANSACTION_TSIZE_SHIFT,
+		    SPFI_TRANSACTION);
 
 	val = spfi_readl(spfi, SPFI_CONTROL);
 	val &= ~(SPFI_CONTROL_SEND_DMA | SPFI_CONTROL_GET_DMA);
@@ -438,25 +491,7 @@ static void img_spfi_config(struct spi_master *master, struct spi_device *spi,
 	else if (xfer->tx_nbits == SPI_NBITS_QUAD &&
 		 xfer->rx_nbits == SPI_NBITS_QUAD)
 		val |= SPFI_CONTROL_TMODE_QUAD << SPFI_CONTROL_TMODE_SHIFT;
-	val &= ~SPFI_CONTROL_CONTINUE;
-	if (!xfer->cs_change && !list_is_last(&xfer->transfer_list,
-					      &master->cur_msg->transfers))
-		val |= SPFI_CONTROL_CONTINUE;
 	spfi_writel(spfi, val, SPFI_CONTROL);
-
-	val = spfi_readl(spfi, SPFI_PORT_STATE);
-	if (spi->mode & SPI_CPHA)
-		val |= SPFI_PORT_STATE_CK_PHASE(spi->chip_select);
-	else
-		val &= ~SPFI_PORT_STATE_CK_PHASE(spi->chip_select);
-	if (spi->mode & SPI_CPOL)
-		val |= SPFI_PORT_STATE_CK_POL(spi->chip_select);
-	else
-		val &= ~SPFI_PORT_STATE_CK_POL(spi->chip_select);
-	spfi_writel(spfi, val, SPFI_PORT_STATE);
-
-	spfi_writel(spfi, xfer->len << SPFI_TRANSACTION_TSIZE_SHIFT,
-		    SPFI_TRANSACTION);
 }
 
 static int img_spfi_transfer_one(struct spi_master *master,
@@ -464,25 +499,13 @@ static int img_spfi_transfer_one(struct spi_master *master,
 				 struct spi_transfer *xfer)
 {
 	struct img_spfi *spfi = spi_master_get_devdata(spi->master);
-	bool dma_reset = false;
-	unsigned long flags;
 	int ret;
 
-	/*
-	 * Stop all DMA and reset the controller if the previous transaction
-	 * timed-out and never completed it's DMA.
-	 */
-	spin_lock_irqsave(&spfi->lock, flags);
-	if (spfi->tx_dma_busy || spfi->rx_dma_busy) {
-		dev_err(spfi->dev, "SPI DMA still busy\n");
-		dma_reset = true;
-	}
-	spin_unlock_irqrestore(&spfi->lock, flags);
-
-	if (dma_reset) {
-		dmaengine_terminate_all(spfi->tx_ch);
-		dmaengine_terminate_all(spfi->rx_ch);
-		spfi_reset(spfi);
+	if (xfer->len > SPFI_TRANSACTION_TSIZE_MASK) {
+		dev_err(spfi->dev,
+			"Transfer length (%d) is greater than the max supported (%d)",
+			xfer->len, SPFI_TRANSACTION_TSIZE_MASK);
+		return -EINVAL;
 	}
 
 	img_spfi_config(master, spi, xfer);
@@ -494,23 +517,10 @@ static int img_spfi_transfer_one(struct spi_master *master,
 	return ret;
 }
 
-static void img_spfi_set_cs(struct spi_device *spi, bool enable)
-{
-	struct img_spfi *spfi = spi_master_get_devdata(spi->master);
-	u32 val;
-
-	val = spfi_readl(spfi, SPFI_PORT_STATE);
-	val &= ~(SPFI_PORT_STATE_DEV_SEL_MASK << SPFI_PORT_STATE_DEV_SEL_SHIFT);
-	val |= spi->chip_select << SPFI_PORT_STATE_DEV_SEL_SHIFT;
-	spfi_writel(spfi, val, SPFI_PORT_STATE);
-}
-
 static bool img_spfi_can_dma(struct spi_master *master, struct spi_device *spi,
 			     struct spi_transfer *xfer)
 {
-	if (xfer->bits_per_word == 8 && xfer->len > SPFI_8BIT_FIFO_SIZE)
-		return true;
-	if (xfer->bits_per_word == 32 && xfer->len > SPFI_32BIT_FIFO_SIZE)
+	if (xfer->len > SPFI_32BIT_FIFO_SIZE)
 		return true;
 	return false;
 }
@@ -595,14 +605,17 @@ static int img_spfi_probe(struct platform_device *pdev)
 	master->mode_bits = SPI_CPOL | SPI_CPHA | SPI_TX_DUAL | SPI_RX_DUAL;
 	if (of_property_read_bool(spfi->dev->of_node, "img,supports-quad-mode"))
 		master->mode_bits |= SPI_TX_QUAD | SPI_RX_QUAD;
-	master->num_chipselect = 5;
 	master->dev.of_node = pdev->dev.of_node;
 	master->bits_per_word_mask = SPI_BPW_MASK(32) | SPI_BPW_MASK(8);
-	master->max_speed_hz = clk_get_rate(spfi->spfi_clk);
-	master->min_speed_hz = master->max_speed_hz / 512;
+	master->max_speed_hz = clk_get_rate(spfi->spfi_clk) / 4;
+	master->min_speed_hz = clk_get_rate(spfi->spfi_clk) / 512;
 
-	master->set_cs = img_spfi_set_cs;
+	master->setup = img_spfi_setup;
+	master->cleanup = img_spfi_cleanup;
 	master->transfer_one = img_spfi_transfer_one;
+	master->prepare_message = img_spfi_prepare;
+	master->unprepare_message = img_spfi_unprepare;
+	master->handle_err = img_spfi_handle_err;
 
 	spfi->tx_ch = dma_request_slave_channel(spfi->dev, "tx");
 	spfi->rx_ch = dma_request_slave_channel(spfi->dev, "rx");

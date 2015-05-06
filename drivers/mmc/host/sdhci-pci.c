@@ -650,6 +650,7 @@ static int rtsx_probe_slot(struct sdhci_pci_slot *slot)
 
 static const struct sdhci_pci_fixes sdhci_rtsx = {
 	.quirks2	= SDHCI_QUIRK2_PRESET_VALUE_BROKEN |
+			SDHCI_QUIRK2_BROKEN_64_BIT_DMA |
 			SDHCI_QUIRK2_BROKEN_DDR50,
 	.probe_slot	= rtsx_probe_slot,
 };
@@ -1367,11 +1368,6 @@ static int sdhci_pci_runtime_resume(struct device *dev)
 	return 0;
 }
 
-static int sdhci_pci_runtime_idle(struct device *dev)
-{
-	return 0;
-}
-
 #else /* CONFIG_PM */
 
 #define sdhci_pci_suspend NULL
@@ -1383,7 +1379,7 @@ static const struct dev_pm_ops sdhci_pci_pm_ops = {
 	.suspend = sdhci_pci_suspend,
 	.resume = sdhci_pci_resume,
 	SET_RUNTIME_PM_OPS(sdhci_pci_runtime_suspend,
-			sdhci_pci_runtime_resume, sdhci_pci_runtime_idle)
+			sdhci_pci_runtime_resume, NULL)
 };
 
 /*****************************************************************************\

@@ -45,13 +45,13 @@
 		power0 {
 			label = "bcm53xx:green:power";
 			gpios = <&chipcommon 2 GPIO_ACTIVE_LOW>;
-			linux,default-trigger = "default-off";
+			linux,default-trigger = "default-on";
 		};
 
 		power1 {
 			label = "bcm53xx:amber:power";
 			gpios = <&chipcommon 3 GPIO_ACTIVE_LOW>;
-			linux,default-trigger = "default-on";
+			linux,default-trigger = "default-off";
 		};
 
 		usb {
@@ -71,7 +71,6 @@
 		compatible = "gpio-keys";
 		#address-cells = <1>;
 		#size-cells = <0>;
-		poll-interval = <200>;
 
 		wps {
 			label = "WPS";

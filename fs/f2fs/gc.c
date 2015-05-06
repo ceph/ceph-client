@@ -24,8 +24,6 @@
 #include "gc.h"
 #include <trace/events/f2fs.h>
 
-static struct kmem_cache *winode_slab;
-
 static int gc_thread_func(void *data)
 {
 	struct f2fs_sb_info *sbi = data;
@@ -46,7 +44,7 @@ static int gc_thread_func(void *data)
 			break;
 
 		if (sbi->sb->s_writers.frozen >= SB_FREEZE_WRITE) {
-			wait_ms = increase_sleep_time(gc_th, wait_ms);
+			increase_sleep_time(gc_th, &wait_ms);
 			continue;
 		}
 
@@ -67,15 +65,15 @@ static int gc_thread_func(void *data)
 			continue;
 
 		if (!is_idle(sbi)) {
-			wait_ms = increase_sleep_time(gc_th, wait_ms);
+			increase_sleep_time(gc_th, &wait_ms);
 			mutex_unlock(&sbi->gc_mutex);
 			continue;
 		}
 
 		if (has_enough_invalid_blocks(sbi))
-			wait_ms = decrease_sleep_time(gc_th, wait_ms);
+			decrease_sleep_time(gc_th, &wait_ms);
 		else
-			wait_ms = increase_sleep_time(gc_th, wait_ms);
+			increase_sleep_time(gc_th, &wait_ms);
 
 		stat_inc_bggc_count(sbi);
 
@@ -356,13 +354,10 @@ static void add_gc_inode(struct gc_inode_list *gc_list, struct inode *inode)
 		iput(inode);
 		return;
 	}
-	new_ie = f2fs_kmem_cache_alloc(winode_slab, GFP_NOFS);
+	new_ie = f2fs_kmem_cache_alloc(inode_entry_slab, GFP_NOFS);
 	new_ie->inode = inode;
-retry:
-	if (radix_tree_insert(&gc_list->iroot, inode->i_ino, new_ie)) {
-		cond_resched();
-		goto retry;
-	}
+
+	f2fs_radix_tree_insert(&gc_list->iroot, inode->i_ino, new_ie);
 	list_add_tail(&new_ie->list, &gc_list->ilist);
 }
 
@@ -373,7 +368,7 @@ static void put_gc_inode(struct gc_inode_list *gc_list)
 		radix_tree_delete(&gc_list->iroot, ie->inode->i_ino);
 		iput(ie->inode);
 		list_del(&ie->list);
-		kmem_cache_free(winode_slab, ie);
+		kmem_cache_free(inode_entry_slab, ie);
 	}
 }
 
@@ -440,7 +435,7 @@ next_step:
 				set_page_dirty(node_page);
 		}
 		f2fs_put_page(node_page, 1);
-		stat_inc_node_blk_count(sbi, 1);
+		stat_inc_node_blk_count(sbi, 1, gc_type);
 	}
 
 	if (initial) {
@@ -627,7 +622,7 @@ next_step:
 			if (IS_ERR(data_page))
 				continue;
 			move_data_page(inode, data_page, gc_type);
-			stat_inc_data_blk_count(sbi, 1);
+			stat_inc_data_blk_count(sbi, 1, gc_type);
 		}
 	}
 
@@ -685,7 +680,7 @@ static void do_garbage_collect(struct f2fs_sb_info *sbi, unsigned int segno,
 	}
 	blk_finish_plug(&plug);
 
-	stat_inc_seg_count(sbi, GET_SUM_TYPE((&sum->footer)));
+	stat_inc_seg_count(sbi, GET_SUM_TYPE((&sum->footer)), gc_type);
 	stat_inc_call_count(sbi->stat_info);
 
 	f2fs_put_page(sum_page, 1);
@@ -703,8 +698,7 @@ int f2fs_gc(struct f2fs_sb_info *sbi)
 		.iroot = RADIX_TREE_INIT(GFP_NOFS),
 	};
 
-	cpc.reason = test_opt(sbi, FASTBOOT) ? CP_UMOUNT : CP_SYNC;
-
+	cpc.reason = __get_cp_reason(sbi);
 gc_more:
 	if (unlikely(!(sbi->sb->s_flags & MS_ACTIVE)))
 		goto stop;
@@ -749,18 +743,4 @@ stop:
 void build_gc_manager(struct f2fs_sb_info *sbi)
 {
 	DIRTY_I(sbi)->v_ops = &default_v_ops;
-}
-
-int __init create_gc_caches(void)
-{
-	winode_slab = f2fs_kmem_cache_create("f2fs_gc_inodes",
-			sizeof(struct inode_entry));
-	if (!winode_slab)
-		return -ENOMEM;
-	return 0;
-}
-
-void destroy_gc_caches(void)
-{
-	kmem_cache_destroy(winode_slab);
 }

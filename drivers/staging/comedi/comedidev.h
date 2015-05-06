@@ -256,6 +256,7 @@ struct comedi_driver {
 struct comedi_device {
 	int use_count;
 	struct comedi_driver *driver;
+	struct comedi_8254 *pacer;
 	void *private;
 
 	struct device *class_dev;
@@ -299,34 +300,25 @@ struct comedi_device {
 
 void comedi_event(struct comedi_device *dev, struct comedi_subdevice *s);
 
-/* we can expand the number of bits used to encode devices/subdevices into
- the minor number soon, after more distros support > 8 bit minor numbers
- (like after Debian Etch gets released) */
-enum comedi_minor_bits {
-	COMEDI_DEVICE_MINOR_MASK = 0xf,
-	COMEDI_SUBDEVICE_MINOR_MASK = 0xf0
-};
-
-static const unsigned COMEDI_SUBDEVICE_MINOR_SHIFT = 4;
-static const unsigned COMEDI_SUBDEVICE_MINOR_OFFSET = 1;
-
 struct comedi_device *comedi_dev_get_from_minor(unsigned minor);
 int comedi_dev_put(struct comedi_device *dev);
 
-void init_polling(void);
-void cleanup_polling(void);
-void start_polling(struct comedi_device *);
-void stop_polling(struct comedi_device *);
+/**
+ * comedi_subdevice "runflags"
+ * @COMEDI_SRF_RT:		DEPRECATED: command is running real-time
+ * @COMEDI_SRF_ERROR:		indicates an COMEDI_CB_ERROR event has occurred
+ *				since the last command was started
+ * @COMEDI_SRF_RUNNING:		command is running
+ * @COMEDI_SRF_FREE_SPRIV:	free s->private on detach
+ *
+ * @COMEDI_SRF_BUSY_MASK:	runflags that indicate the subdevice is "busy"
+ */
+#define COMEDI_SRF_RT		BIT(1)
+#define COMEDI_SRF_ERROR	BIT(2)
+#define COMEDI_SRF_RUNNING	BIT(27)
+#define COMEDI_SRF_FREE_SPRIV	BIT(31)
 
-/* subdevice runflags */
-enum subdevice_runflags {
-	SRF_RT = 0x00000002,
-	/* indicates an COMEDI_CB_ERROR event has occurred since the last
-	 * command was started */
-	SRF_ERROR = 0x00000004,
-	SRF_RUNNING = 0x08000000,
-	SRF_FREE_SPRIV = 0x80000000,	/* free s->private on detach */
-};
+#define COMEDI_SRF_BUSY_MASK	(COMEDI_SRF_ERROR | COMEDI_SRF_RUNNING)
 
 bool comedi_is_subdevice_running(struct comedi_subdevice *s);
 
@@ -472,6 +464,84 @@ static inline unsigned int comedi_samples_to_bytes(struct comedi_subdevice *s,
 	return nsamples << comedi_sample_shift(s);
 }
 
+/**
+ * comedi_check_trigger_src() - trivially validate a comedi_cmd trigger source
+ * @src: pointer to the trigger source to validate
+ * @flags: bitmask of valid TRIG_* for the trigger
+ *
+ * This is used in "step 1" of the do_cmdtest functions of comedi drivers
+ * to vaildate the comedi_cmd triggers. The mask of the @src against the
+ * @flags allows the userspace comedilib to pass all the comedi_cmd
+ * triggers as TRIG_ANY and get back a bitmask of the valid trigger sources.
+ */
+static inline int comedi_check_trigger_src(unsigned int *src,
+					   unsigned int flags)
+{
+	unsigned int orig_src = *src;
+
+	*src = orig_src & flags;
+	if (*src == TRIG_INVALID || *src != orig_src)
+		return -EINVAL;
+	return 0;
+}
+
+/**
+ * comedi_check_trigger_is_unique() - make sure a trigger source is unique
+ * @src: the trigger source to check
+ */
+static inline int comedi_check_trigger_is_unique(unsigned int src)
+{
+	/* this test is true if more than one _src bit is set */
+	if ((src & (src - 1)) != 0)
+		return -EINVAL;
+	return 0;
+}
+
+/**
+ * comedi_check_trigger_arg_is() - trivially validate a trigger argument
+ * @arg: pointer to the trigger arg to validate
+ * @val: the value the argument should be
+ */
+static inline int comedi_check_trigger_arg_is(unsigned int *arg,
+					      unsigned int val)
+{
+	if (*arg != val) {
+		*arg = val;
+		return -EINVAL;
+	}
+	return 0;
+}
+
+/**
+ * comedi_check_trigger_arg_min() - trivially validate a trigger argument
+ * @arg: pointer to the trigger arg to validate
+ * @val: the minimum value the argument should be
+ */
+static inline int comedi_check_trigger_arg_min(unsigned int *arg,
+					       unsigned int val)
+{
+	if (*arg < val) {
+		*arg = val;
+		return -EINVAL;
+	}
+	return 0;
+}
+
+/**
+ * comedi_check_trigger_arg_max() - trivially validate a trigger argument
+ * @arg: pointer to the trigger arg to validate
+ * @val: the maximum value the argument should be
+ */
+static inline int comedi_check_trigger_arg_max(unsigned int *arg,
+					       unsigned int val)
+{
+	if (*arg > val) {
+		*arg = val;
+		return -EINVAL;
+	}
+	return 0;
+}
+
 /*
  * Must set dev->hw_dev if you wish to dma directly into comedi's buffer.
  * Also useful for retrieving a previously configured hardware device of
@@ -561,110 +631,5 @@ void comedi_driver_unregister(struct comedi_driver *);
 #define module_comedi_driver(__comedi_driver) \
 	module_driver(__comedi_driver, comedi_driver_register, \
 			comedi_driver_unregister)
-
-/* comedi_pci.c - comedi PCI driver specific functions */
-
-/*
- * PCI Vendor IDs not in <linux/pci_ids.h>
- */
-#define PCI_VENDOR_ID_KOLTER		0x1001
-#define PCI_VENDOR_ID_ICP		0x104c
-#define PCI_VENDOR_ID_DT		0x1116
-#define PCI_VENDOR_ID_IOTECH		0x1616
-#define PCI_VENDOR_ID_CONTEC		0x1221
-#define PCI_VENDOR_ID_RTD		0x1435
-#define PCI_VENDOR_ID_HUMUSOFT		0x186c
-
-struct pci_dev;
-struct pci_driver;
-
-struct pci_dev *comedi_to_pci_dev(struct comedi_device *);
-
-int comedi_pci_enable(struct comedi_device *);
-void comedi_pci_disable(struct comedi_device *);
-void comedi_pci_detach(struct comedi_device *);
-
-int comedi_pci_auto_config(struct pci_dev *, struct comedi_driver *,
-			   unsigned long context);
-void comedi_pci_auto_unconfig(struct pci_dev *);
-
-int comedi_pci_driver_register(struct comedi_driver *, struct pci_driver *);
-void comedi_pci_driver_unregister(struct comedi_driver *, struct pci_driver *);
-
-/**
- * module_comedi_pci_driver() - Helper macro for registering a comedi PCI driver
- * @__comedi_driver: comedi_driver struct
- * @__pci_driver: pci_driver struct
- *
- * Helper macro for comedi PCI drivers which do not do anything special
- * in module init/exit. This eliminates a lot of boilerplate. Each
- * module may only use this macro once, and calling it replaces
- * module_init() and module_exit()
- */
-#define module_comedi_pci_driver(__comedi_driver, __pci_driver) \
-	module_driver(__comedi_driver, comedi_pci_driver_register, \
-			comedi_pci_driver_unregister, &(__pci_driver))
-
-/* comedi_pcmcia.c - comedi PCMCIA driver specific functions */
-
-struct pcmcia_driver;
-struct pcmcia_device;
-
-struct pcmcia_device *comedi_to_pcmcia_dev(struct comedi_device *);
-
-int comedi_pcmcia_enable(struct comedi_device *,
-			 int (*conf_check)(struct pcmcia_device *, void *));
-void comedi_pcmcia_disable(struct comedi_device *);
-
-int comedi_pcmcia_auto_config(struct pcmcia_device *, struct comedi_driver *);
-void comedi_pcmcia_auto_unconfig(struct pcmcia_device *);
-
-int comedi_pcmcia_driver_register(struct comedi_driver *,
-				  struct pcmcia_driver *);
-void comedi_pcmcia_driver_unregister(struct comedi_driver *,
-				     struct pcmcia_driver *);
-
-/**
- * module_comedi_pcmcia_driver() - Helper macro for registering a comedi PCMCIA driver
- * @__comedi_driver: comedi_driver struct
- * @__pcmcia_driver: pcmcia_driver struct
- *
- * Helper macro for comedi PCMCIA drivers which do not do anything special
- * in module init/exit. This eliminates a lot of boilerplate. Each
- * module may only use this macro once, and calling it replaces
- * module_init() and module_exit()
- */
-#define module_comedi_pcmcia_driver(__comedi_driver, __pcmcia_driver) \
-	module_driver(__comedi_driver, comedi_pcmcia_driver_register, \
-			comedi_pcmcia_driver_unregister, &(__pcmcia_driver))
-
-/* comedi_usb.c - comedi USB driver specific functions */
-
-struct usb_driver;
-struct usb_interface;
-
-struct usb_interface *comedi_to_usb_interface(struct comedi_device *);
-struct usb_device *comedi_to_usb_dev(struct comedi_device *);
-
-int comedi_usb_auto_config(struct usb_interface *, struct comedi_driver *,
-			   unsigned long context);
-void comedi_usb_auto_unconfig(struct usb_interface *);
-
-int comedi_usb_driver_register(struct comedi_driver *, struct usb_driver *);
-void comedi_usb_driver_unregister(struct comedi_driver *, struct usb_driver *);
-
-/**
- * module_comedi_usb_driver() - Helper macro for registering a comedi USB driver
- * @__comedi_driver: comedi_driver struct
- * @__usb_driver: usb_driver struct
- *
- * Helper macro for comedi USB drivers which do not do anything special
- * in module init/exit. This eliminates a lot of boilerplate. Each
- * module may only use this macro once, and calling it replaces
- * module_init() and module_exit()
- */
-#define module_comedi_usb_driver(__comedi_driver, __usb_driver) \
-	module_driver(__comedi_driver, comedi_usb_driver_register, \
-			comedi_usb_driver_unregister, &(__usb_driver))
 
 #endif /* _COMEDIDEV_H */

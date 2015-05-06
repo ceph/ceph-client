@@ -152,6 +152,7 @@ static const struct drm_i915_cmd_descriptor render_cmds[] = {
 	CMD(  MI_PREDICATE,                     SMI,    F,  1,      S  ),
 	CMD(  MI_TOPOLOGY_FILTER,               SMI,    F,  1,      S  ),
 	CMD(  MI_DISPLAY_FLIP,                  SMI,   !F,  0xFF,   R  ),
+	CMD(  MI_SET_APPID,                     SMI,    F,  1,      S  ),
 	CMD(  MI_SET_CONTEXT,                   SMI,   !F,  0xFF,   R  ),
 	CMD(  MI_URB_CLEAR,                     SMI,   !F,  0xFF,   S  ),
 	CMD(  MI_STORE_DWORD_IMM,               SMI,   !F,  0x3F,   B,
@@ -210,6 +211,7 @@ static const struct drm_i915_cmd_descriptor hsw_render_cmds[] = {
 	CMD(  MI_SET_PREDICATE,                 SMI,    F,  1,      S  ),
 	CMD(  MI_RS_CONTROL,                    SMI,    F,  1,      S  ),
 	CMD(  MI_URB_ATOMIC_ALLOC,              SMI,    F,  1,      S  ),
+	CMD(  MI_SET_APPID,                     SMI,    F,  1,      S  ),
 	CMD(  MI_RS_CONTEXT,                    SMI,    F,  1,      S  ),
 	CMD(  MI_LOAD_SCAN_LINES_INCL,          SMI,   !F,  0x3F,   M  ),
 	CMD(  MI_LOAD_SCAN_LINES_EXCL,          SMI,   !F,  0x3F,   R  ),
@@ -229,6 +231,7 @@ static const struct drm_i915_cmd_descriptor hsw_render_cmds[] = {
 
 static const struct drm_i915_cmd_descriptor video_cmds[] = {
 	CMD(  MI_ARB_ON_OFF,                    SMI,    F,  1,      R  ),
+	CMD(  MI_SET_APPID,                     SMI,    F,  1,      S  ),
 	CMD(  MI_STORE_DWORD_IMM,               SMI,   !F,  0xFF,   B,
 	      .bits = {{
 			.offset = 0,
@@ -272,6 +275,7 @@ static const struct drm_i915_cmd_descriptor video_cmds[] = {
 
 static const struct drm_i915_cmd_descriptor vecs_cmds[] = {
 	CMD(  MI_ARB_ON_OFF,                    SMI,    F,  1,      R  ),
+	CMD(  MI_SET_APPID,                     SMI,    F,  1,      S  ),
 	CMD(  MI_STORE_DWORD_IMM,               SMI,   !F,  0xFF,   B,
 	      .bits = {{
 			.offset = 0,
@@ -401,6 +405,7 @@ static const struct drm_i915_cmd_table hsw_blt_ring_cmds[] = {
 #define REG64(addr) (addr), (addr + sizeof(u32))
 
 static const u32 gen7_render_regs[] = {
+	REG64(GPGPU_THREADS_DISPATCHED),
 	REG64(HS_INVOCATION_COUNT),
 	REG64(DS_INVOCATION_COUNT),
 	REG64(IA_VERTICES_COUNT),
@@ -481,13 +486,17 @@ static u32 gen7_bsd_get_cmd_length_mask(u32 cmd_header)
 	u32 client = (cmd_header & INSTR_CLIENT_MASK) >> INSTR_CLIENT_SHIFT;
 	u32 subclient =
 		(cmd_header & INSTR_SUBCLIENT_MASK) >> INSTR_SUBCLIENT_SHIFT;
+	u32 op = (cmd_header & INSTR_26_TO_24_MASK) >> INSTR_26_TO_24_SHIFT;
 
 	if (client == INSTR_MI_CLIENT)
 		return 0x3F;
 	else if (client == INSTR_RC_CLIENT) {
-		if (subclient == INSTR_MEDIA_SUBCLIENT)
-			return 0xFFF;
-		else
+		if (subclient == INSTR_MEDIA_SUBCLIENT) {
+			if (op == 6)
+				return 0xFFFF;
+			else
+				return 0xFFF;
+		} else
 			return 0xFF;
 	}
 
@@ -716,13 +725,13 @@ int i915_cmd_parser_init_ring(struct intel_engine_cs *ring)
 	BUG_ON(!validate_cmds_sorted(ring, cmd_tables, cmd_table_count));
 	BUG_ON(!validate_regs_sorted(ring));
 
-	if (hash_empty(ring->cmd_hash)) {
-		ret = init_hash_table(ring, cmd_tables, cmd_table_count);
-		if (ret) {
-			DRM_ERROR("CMD: cmd_parser_init failed!\n");
-			fini_hash_table(ring);
-			return ret;
-		}
+	WARN_ON(!hash_empty(ring->cmd_hash));
+
+	ret = init_hash_table(ring, cmd_tables, cmd_table_count);
+	if (ret) {
+		DRM_ERROR("CMD: cmd_parser_init failed!\n");
+		fini_hash_table(ring);
+		return ret;
 	}
 
 	ring->needs_cmd_parser = true;
@@ -809,23 +818,28 @@ static bool valid_reg(const u32 *table, int count, u32 addr)
 	return false;
 }
 
-static u32 *vmap_batch(struct drm_i915_gem_object *obj)
+static u32 *vmap_batch(struct drm_i915_gem_object *obj,
+		       unsigned start, unsigned len)
 {
 	int i;
 	void *addr = NULL;
 	struct sg_page_iter sg_iter;
+	int first_page = start >> PAGE_SHIFT;
+	int last_page = (len + start + 4095) >> PAGE_SHIFT;
+	int npages = last_page - first_page;
 	struct page **pages;
 
-	pages = drm_malloc_ab(obj->base.size >> PAGE_SHIFT, sizeof(*pages));
+	pages = drm_malloc_ab(npages, sizeof(*pages));
 	if (pages == NULL) {
 		DRM_DEBUG_DRIVER("Failed to get space for pages\n");
 		goto finish;
 	}
 
 	i = 0;
-	for_each_sg_page(obj->pages->sgl, &sg_iter, obj->pages->nents, 0) {
-		pages[i] = sg_page_iter_page(&sg_iter);
-		i++;
+	for_each_sg_page(obj->pages->sgl, &sg_iter, obj->pages->nents, first_page) {
+		pages[i++] = sg_page_iter_page(&sg_iter);
+		if (i == npages)
+			break;
 	}
 
 	addr = vmap(pages, i, 0, PAGE_KERNEL);
@@ -838,6 +852,69 @@ finish:
 	if (pages)
 		drm_free_large(pages);
 	return (u32*)addr;
+}
+
+/* Returns a vmap'd pointer to dest_obj, which the caller must unmap */
+static u32 *copy_batch(struct drm_i915_gem_object *dest_obj,
+		       struct drm_i915_gem_object *src_obj,
+		       u32 batch_start_offset,
+		       u32 batch_len)
+{
+	int needs_clflush = 0;
+	void *src_base, *src;
+	void *dst = NULL;
+	int ret;
+
+	if (batch_len > dest_obj->base.size ||
+	    batch_len + batch_start_offset > src_obj->base.size)
+		return ERR_PTR(-E2BIG);
+
+	ret = i915_gem_obj_prepare_shmem_read(src_obj, &needs_clflush);
+	if (ret) {
+		DRM_DEBUG_DRIVER("CMD: failed to prepare shadow batch\n");
+		return ERR_PTR(ret);
+	}
+
+	src_base = vmap_batch(src_obj, batch_start_offset, batch_len);
+	if (!src_base) {
+		DRM_DEBUG_DRIVER("CMD: Failed to vmap batch\n");
+		ret = -ENOMEM;
+		goto unpin_src;
+	}
+
+	ret = i915_gem_object_get_pages(dest_obj);
+	if (ret) {
+		DRM_DEBUG_DRIVER("CMD: Failed to get pages for shadow batch\n");
+		goto unmap_src;
+	}
+	i915_gem_object_pin_pages(dest_obj);
+
+	ret = i915_gem_object_set_to_cpu_domain(dest_obj, true);
+	if (ret) {
+		DRM_DEBUG_DRIVER("CMD: Failed to set shadow batch to CPU\n");
+		goto unmap_src;
+	}
+
+	dst = vmap_batch(dest_obj, 0, batch_len);
+	if (!dst) {
+		DRM_DEBUG_DRIVER("CMD: Failed to vmap shadow batch\n");
+		i915_gem_object_unpin_pages(dest_obj);
+		ret = -ENOMEM;
+		goto unmap_src;
+	}
+
+	src = src_base + offset_in_page(batch_start_offset);
+	if (needs_clflush)
+		drm_clflush_virt_range(src, batch_len);
+
+	memcpy(dst, src, batch_len);
+
+unmap_src:
+	vunmap(src_base);
+unpin_src:
+	i915_gem_object_unpin_pages(src_obj);
+
+	return ret ? ERR_PTR(ret) : dst;
 }
 
 /**
@@ -956,7 +1033,9 @@ static bool check_cmd(const struct intel_engine_cs *ring,
  * i915_parse_cmds() - parse a submitted batch buffer for privilege violations
  * @ring: the ring on which the batch is to execute
  * @batch_obj: the batch buffer in question
+ * @shadow_batch_obj: copy of the batch buffer in question
  * @batch_start_offset: byte offset in the batch at which execution starts
+ * @batch_len: length of the commands in batch_obj
  * @is_master: is the submitting process the drm master?
  *
  * Parses the specified batch buffer looking for privilege violations as
@@ -967,34 +1046,31 @@ static bool check_cmd(const struct intel_engine_cs *ring,
  */
 int i915_parse_cmds(struct intel_engine_cs *ring,
 		    struct drm_i915_gem_object *batch_obj,
+		    struct drm_i915_gem_object *shadow_batch_obj,
 		    u32 batch_start_offset,
+		    u32 batch_len,
 		    bool is_master)
 {
-	int ret = 0;
 	u32 *cmd, *batch_base, *batch_end;
 	struct drm_i915_cmd_descriptor default_desc = { 0 };
-	int needs_clflush = 0;
 	bool oacontrol_set = false; /* OACONTROL tracking. See check_cmd() */
+	int ret = 0;
 
-	ret = i915_gem_obj_prepare_shmem_read(batch_obj, &needs_clflush);
-	if (ret) {
-		DRM_DEBUG_DRIVER("CMD: failed to prep read\n");
-		return ret;
+	batch_base = copy_batch(shadow_batch_obj, batch_obj,
+				batch_start_offset, batch_len);
+	if (IS_ERR(batch_base)) {
+		DRM_DEBUG_DRIVER("CMD: Failed to copy batch\n");
+		return PTR_ERR(batch_base);
 	}
 
-	batch_base = vmap_batch(batch_obj);
-	if (!batch_base) {
-		DRM_DEBUG_DRIVER("CMD: Failed to vmap batch\n");
-		i915_gem_object_unpin_pages(batch_obj);
-		return -ENOMEM;
-	}
+	/*
+	 * We use the batch length as size because the shadow object is as
+	 * large or larger and copy_batch() will write MI_NOPs to the extra
+	 * space. Parsing should be faster in some cases this way.
+	 */
+	batch_end = batch_base + (batch_len / sizeof(*batch_end));
 
-	if (needs_clflush)
-		drm_clflush_virt_range((char *)batch_base, batch_obj->base.size);
-
-	cmd = batch_base + (batch_start_offset / sizeof(*cmd));
-	batch_end = cmd + (batch_obj->base.size / sizeof(*batch_end));
-
+	cmd = batch_base;
 	while (cmd < batch_end) {
 		const struct drm_i915_cmd_descriptor *desc;
 		u32 length;
@@ -1053,8 +1129,7 @@ int i915_parse_cmds(struct intel_engine_cs *ring,
 	}
 
 	vunmap(batch_base);
-
-	i915_gem_object_unpin_pages(batch_obj);
+	i915_gem_object_unpin_pages(shadow_batch_obj);
 
 	return ret;
 }
@@ -1076,6 +1151,7 @@ int i915_cmd_parser_get_version(void)
 	 *    hardware parsing enabled (so does not allow new use cases).
 	 * 2. Allow access to the MI_PREDICATE_SRC0 and
 	 *    MI_PREDICATE_SRC1 registers.
+	 * 3. Allow access to the GPGPU_THREADS_DISPATCHED register.
 	 */
-	return 2;
+	return 3;
 }

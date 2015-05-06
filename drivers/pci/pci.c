@@ -10,6 +10,8 @@
 #include <linux/kernel.h>
 #include <linux/delay.h>
 #include <linux/init.h>
+#include <linux/of.h>
+#include <linux/of_pci.h>
 #include <linux/pci.h>
 #include <linux/pm.h>
 #include <linux/slab.h>
@@ -124,15 +126,16 @@ EXPORT_SYMBOL_GPL(pci_bus_max_busnr);
 #ifdef CONFIG_HAS_IOMEM
 void __iomem *pci_ioremap_bar(struct pci_dev *pdev, int bar)
 {
+	struct resource *res = &pdev->resource[bar];
+
 	/*
 	 * Make sure the BAR is actually a memory resource, not an IO resource
 	 */
-	if (!(pci_resource_flags(pdev, bar) & IORESOURCE_MEM)) {
-		WARN_ON(1);
+	if (res->flags & IORESOURCE_UNSET || !(res->flags & IORESOURCE_MEM)) {
+		dev_warn(&pdev->dev, "can't ioremap BAR %d: %pR\n", bar, res);
 		return NULL;
 	}
-	return ioremap_nocache(pci_resource_start(pdev, bar),
-				     pci_resource_len(pdev, bar));
+	return ioremap_nocache(res->start, resource_size(res));
 }
 EXPORT_SYMBOL_GPL(pci_ioremap_bar);
 #endif
@@ -143,19 +146,22 @@ static int __pci_find_next_cap_ttl(struct pci_bus *bus, unsigned int devfn,
 				   u8 pos, int cap, int *ttl)
 {
 	u8 id;
+	u16 ent;
+
+	pci_bus_read_config_byte(bus, devfn, pos, &pos);
 
 	while ((*ttl)--) {
-		pci_bus_read_config_byte(bus, devfn, pos, &pos);
 		if (pos < 0x40)
 			break;
 		pos &= ~3;
-		pci_bus_read_config_byte(bus, devfn, pos + PCI_CAP_LIST_ID,
-					 &id);
+		pci_bus_read_config_word(bus, devfn, pos, &ent);
+
+		id = ent & 0xff;
 		if (id == 0xff)
 			break;
 		if (id == cap)
 			return pos;
-		pos += PCI_CAP_LIST_NEXT;
+		pos = (ent >> 8);
 	}
 	return 0;
 }
@@ -519,6 +525,11 @@ static inline int platform_pci_run_wake(struct pci_dev *dev, bool enable)
 {
 	return pci_platform_pm ?
 			pci_platform_pm->run_wake(dev, enable) : -ENODEV;
+}
+
+static inline bool platform_pci_need_resume(struct pci_dev *dev)
+{
+	return pci_platform_pm ? pci_platform_pm->need_resume(dev) : false;
 }
 
 /**
@@ -1999,6 +2010,27 @@ bool pci_dev_run_wake(struct pci_dev *dev)
 }
 EXPORT_SYMBOL_GPL(pci_dev_run_wake);
 
+/**
+ * pci_dev_keep_suspended - Check if the device can stay in the suspended state.
+ * @pci_dev: Device to check.
+ *
+ * Return 'true' if the device is runtime-suspended, it doesn't have to be
+ * reconfigured due to wakeup settings difference between system and runtime
+ * suspend and the current power state of it is suitable for the upcoming
+ * (system) transition.
+ */
+bool pci_dev_keep_suspended(struct pci_dev *pci_dev)
+{
+	struct device *dev = &pci_dev->dev;
+
+	if (!pm_runtime_suspended(dev)
+	    || (device_can_wakeup(dev) && !device_may_wakeup(dev))
+	    || platform_pci_need_resume(pci_dev))
+		return false;
+
+	return pci_target_state(pci_dev) == pci_dev->current_state;
+}
+
 void pci_config_pm_runtime_get(struct pci_dev *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -2464,6 +2496,7 @@ u8 pci_common_swizzle(struct pci_dev *dev, u8 *pinp)
 	*pinp = pin;
 	return PCI_SLOT(dev->devfn);
 }
+EXPORT_SYMBOL_GPL(pci_common_swizzle);
 
 /**
  *	pci_release_region - Release a PCI bar
@@ -3197,7 +3230,7 @@ static int pci_pm_reset(struct pci_dev *dev, int probe)
 {
 	u16 csr;
 
-	if (!dev->pm_cap)
+	if (!dev->pm_cap || dev->dev_flags & PCI_DEV_FLAGS_NO_PM_RESET)
 		return -ENOTTY;
 
 	pci_read_config_word(dev, dev->pm_cap + PCI_PM_CTRL, &csr);
@@ -4471,6 +4504,53 @@ int pci_get_new_domain_nr(void)
 {
 	return atomic_inc_return(&__domain_nr);
 }
+
+#ifdef CONFIG_PCI_DOMAINS_GENERIC
+void pci_bus_assign_domain_nr(struct pci_bus *bus, struct device *parent)
+{
+	static int use_dt_domains = -1;
+	int domain = of_get_pci_domain_nr(parent->of_node);
+
+	/*
+	 * Check DT domain and use_dt_domains values.
+	 *
+	 * If DT domain property is valid (domain >= 0) and
+	 * use_dt_domains != 0, the DT assignment is valid since this means
+	 * we have not previously allocated a domain number by using
+	 * pci_get_new_domain_nr(); we should also update use_dt_domains to
+	 * 1, to indicate that we have just assigned a domain number from
+	 * DT.
+	 *
+	 * If DT domain property value is not valid (ie domain < 0), and we
+	 * have not previously assigned a domain number from DT
+	 * (use_dt_domains != 1) we should assign a domain number by
+	 * using the:
+	 *
+	 * pci_get_new_domain_nr()
+	 *
+	 * API and update the use_dt_domains value to keep track of method we
+	 * are using to assign domain numbers (use_dt_domains = 0).
+	 *
+	 * All other combinations imply we have a platform that is trying
+	 * to mix domain numbers obtained from DT and pci_get_new_domain_nr(),
+	 * which is a recipe for domain mishandling and it is prevented by
+	 * invalidating the domain value (domain = -1) and printing a
+	 * corresponding error.
+	 */
+	if (domain >= 0 && use_dt_domains) {
+		use_dt_domains = 1;
+	} else if (domain < 0 && use_dt_domains != 1) {
+		use_dt_domains = 0;
+		domain = pci_get_new_domain_nr();
+	} else {
+		dev_err(parent, "Node %s has inconsistent \"linux,pci-domain\" property in DT\n",
+			parent->of_node->full_name);
+		domain = -1;
+	}
+
+	bus->domain_nr = domain;
+}
+#endif
 #endif
 
 /**

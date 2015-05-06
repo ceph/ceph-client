@@ -244,16 +244,16 @@ static int vf610_gpio_probe(struct platform_device *pdev)
 	gc = &port->gc;
 	gc->of_node = np;
 	gc->dev = dev;
-	gc->label = "vf610-gpio",
-	gc->ngpio = VF610_GPIO_PER_PORT,
+	gc->label = "vf610-gpio";
+	gc->ngpio = VF610_GPIO_PER_PORT;
 	gc->base = of_alias_get_id(np, "gpio") * VF610_GPIO_PER_PORT;
 
-	gc->request = vf610_gpio_request,
-	gc->free = vf610_gpio_free,
-	gc->direction_input = vf610_gpio_direction_input,
-	gc->get = vf610_gpio_get,
-	gc->direction_output = vf610_gpio_direction_output,
-	gc->set = vf610_gpio_set,
+	gc->request = vf610_gpio_request;
+	gc->free = vf610_gpio_free;
+	gc->direction_input = vf610_gpio_direction_input;
+	gc->get = vf610_gpio_get;
+	gc->direction_output = vf610_gpio_direction_output;
+	gc->set = vf610_gpio_set;
 
 	ret = gpiochip_add(gc);
 	if (ret < 0)
@@ -278,7 +278,6 @@ static int vf610_gpio_probe(struct platform_device *pdev)
 static struct platform_driver vf610_gpio_driver = {
 	.driver		= {
 		.name	= "gpio-vf610",
-		.owner	= THIS_MODULE,
 		.of_match_table = vf610_gpio_dt_ids,
 	},
 	.probe		= vf610_gpio_probe,

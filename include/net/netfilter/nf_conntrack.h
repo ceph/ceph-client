@@ -95,9 +95,8 @@ struct nf_conn {
 	/* Timer function; drops refcnt when it goes off. */
 	struct timer_list timeout;
 
-#ifdef CONFIG_NET_NS
-	struct net *ct_net;
-#endif
+	possible_net_t ct_net;
+
 	/* all members below initialized via memset */
 	u8 __nfct_init_offset[0];
 
@@ -190,8 +189,6 @@ __nf_conntrack_find(struct net *net, u16 zone,
 
 int nf_conntrack_hash_check_insert(struct nf_conn *ct);
 bool nf_ct_delete(struct nf_conn *ct, u32 pid, int report);
-
-void nf_conntrack_flush_report(struct net *net, u32 portid, int report);
 
 bool nf_ct_get_tuplepr(const struct sk_buff *skb, unsigned int nhoff,
 		       u_int16_t l3num, struct nf_conntrack_tuple *tuple);

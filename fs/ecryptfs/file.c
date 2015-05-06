@@ -31,7 +31,6 @@
 #include <linux/security.h>
 #include <linux/compat.h>
 #include <linux/fs_stack.h>
-#include <linux/aio.h>
 #include "ecryptfs_kernel.h"
 
 /**
@@ -52,12 +51,6 @@ static ssize_t ecryptfs_read_update_atime(struct kiocb *iocb,
 	struct file *file = iocb->ki_filp;
 
 	rc = generic_file_read_iter(iocb, to);
-	/*
-	 * Even though this is a async interface, we need to wait
-	 * for IO to finish to update atime
-	 */
-	if (-EIOCBQUEUED == rc)
-		rc = wait_on_sync_kiocb(iocb);
 	if (rc >= 0) {
 		path = ecryptfs_dentry_to_lower_path(file->f_path.dentry);
 		touch_atime(path);
@@ -137,7 +130,7 @@ struct kmem_cache *ecryptfs_file_info_cache;
 
 static int read_or_initialize_metadata(struct dentry *dentry)
 {
-	struct inode *inode = dentry->d_inode;
+	struct inode *inode = d_inode(dentry);
 	struct ecryptfs_mount_crypt_stat *mount_crypt_stat;
 	struct ecryptfs_crypt_stat *crypt_stat;
 	int rc;
@@ -230,7 +223,7 @@ static int ecryptfs_open(struct inode *inode, struct file *file)
 	}
 	ecryptfs_set_file_lower(
 		file, ecryptfs_inode_to_private(inode)->lower_file);
-	if (S_ISDIR(ecryptfs_dentry->d_inode->i_mode)) {
+	if (d_is_dir(ecryptfs_dentry)) {
 		ecryptfs_printk(KERN_DEBUG, "This is a directory\n");
 		mutex_lock(&crypt_stat->cs_mutex);
 		crypt_stat->flags &= ~(ECRYPTFS_ENCRYPTED);
@@ -303,9 +296,22 @@ ecryptfs_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	struct file *lower_file = ecryptfs_file_to_lower(file);
 	long rc = -ENOTTY;
 
-	if (lower_file->f_op->unlocked_ioctl)
+	if (!lower_file->f_op->unlocked_ioctl)
+		return rc;
+
+	switch (cmd) {
+	case FITRIM:
+	case FS_IOC_GETFLAGS:
+	case FS_IOC_SETFLAGS:
+	case FS_IOC_GETVERSION:
+	case FS_IOC_SETVERSION:
 		rc = lower_file->f_op->unlocked_ioctl(lower_file, cmd, arg);
-	return rc;
+		fsstack_copy_attr_all(file_inode(file), file_inode(lower_file));
+
+		return rc;
+	default:
+		return rc;
+	}
 }
 
 #ifdef CONFIG_COMPAT
@@ -315,9 +321,22 @@ ecryptfs_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	struct file *lower_file = ecryptfs_file_to_lower(file);
 	long rc = -ENOIOCTLCMD;
 
-	if (lower_file->f_op->compat_ioctl)
+	if (!lower_file->f_op->compat_ioctl)
+		return rc;
+
+	switch (cmd) {
+	case FITRIM:
+	case FS_IOC32_GETFLAGS:
+	case FS_IOC32_SETFLAGS:
+	case FS_IOC32_GETVERSION:
+	case FS_IOC32_SETVERSION:
 		rc = lower_file->f_op->compat_ioctl(lower_file, cmd, arg);
-	return rc;
+		fsstack_copy_attr_all(file_inode(file), file_inode(lower_file));
+
+		return rc;
+	default:
+		return rc;
+	}
 }
 #endif
 
@@ -339,9 +358,7 @@ const struct file_operations ecryptfs_dir_fops = {
 
 const struct file_operations ecryptfs_main_fops = {
 	.llseek = generic_file_llseek,
-	.read = new_sync_read,
 	.read_iter = ecryptfs_read_update_atime,
-	.write = new_sync_write,
 	.write_iter = generic_file_write_iter,
 	.iterate = ecryptfs_readdir,
 	.unlocked_ioctl = ecryptfs_unlocked_ioctl,

@@ -285,6 +285,8 @@ struct ixgbe_thermal_sensor_data {
 #define IXGBE_VLVF(_i)  (0x0F100 + ((_i) * 4))  /* 64 of these (0-63) */
 #define IXGBE_VLVFB(_i) (0x0F200 + ((_i) * 4))  /* 128 of these (0-127) */
 #define IXGBE_VMVIR(_i) (0x08000 + ((_i) * 4))  /* 64 of these (0-63) */
+#define IXGBE_PFFLPL	0x050B0
+#define IXGBE_PFFLPH	0x050B4
 #define IXGBE_VT_CTL         0x051B0
 #define IXGBE_PFMAILBOX(_i)  (0x04B00 + (4 * (_i))) /* 64 total */
 #define IXGBE_PFMBMEM(_i)    (0x13000 + (64 * (_i))) /* 64 Mailboxes, 16 DW each */
@@ -378,6 +380,8 @@ struct ixgbe_thermal_sensor_data {
 #define IXGBE_SPOOF_MACAS_MASK          0xFF
 #define IXGBE_SPOOF_VLANAS_MASK         0xFF00
 #define IXGBE_SPOOF_VLANAS_SHIFT        8
+#define IXGBE_SPOOF_ETHERTYPEAS		0xFF000000
+#define IXGBE_SPOOF_ETHERTYPEAS_SHIFT	16
 #define IXGBE_PFVFSPOOF_REG_COUNT       8
 
 #define IXGBE_DCA_TXCTRL(_i)    (0x07200 + ((_i) * 4)) /* 16 of these (0-15) */
@@ -399,6 +403,7 @@ struct ixgbe_thermal_sensor_data {
 
 #define IXGBE_WUPL      0x05900
 #define IXGBE_WUPM      0x05A00 /* wake up pkt memory 0x5A00-0x5A7C */
+#define IXGBE_VXLANCTRL	0x0000507C /* Rx filter VXLAN UDPPORT Register */
 #define IXGBE_FHFT(_n)	(0x09000 + ((_n) * 0x100)) /* Flex host filter table */
 #define IXGBE_FHFT_EXT(_n)	(0x09800 + ((_n) * 0x100)) /* Ext Flexible Host
 							    * Filter Table */
@@ -605,6 +610,8 @@ struct ixgbe_thermal_sensor_data {
 #define IXGBE_RTTBCNRM    0x04980
 #define IXGBE_RTTQCNRM    0x04980
 
+/* FCoE Direct DMA Context */
+#define IXGBE_FCDDC(_i, _j)	(0x20000 + ((_i) * 0x4) + ((_j) * 0x10))
 /* FCoE DMA Context Registers */
 #define IXGBE_FCPTRL    0x02410 /* FC User Desc. PTR Low */
 #define IXGBE_FCPTRH    0x02414 /* FC USer Desc. PTR High */
@@ -631,6 +638,9 @@ struct ixgbe_thermal_sensor_data {
 #define IXGBE_TSOFF     0x04A98 /* Tx FC SOF */
 #define IXGBE_REOFF     0x05158 /* Rx FC EOF */
 #define IXGBE_RSOFF     0x051F8 /* Rx FC SOF */
+/* FCoE Direct Filter Context */
+#define IXGBE_FCDFC(_i, _j)	(0x28000 + ((_i) * 0x4) + ((_j) * 0x10))
+#define IXGBE_FCDFCD(_i)	(0x30000 + ((_i) * 0x4))
 /* FCoE Filter Context Registers */
 #define IXGBE_FCFLT     0x05108 /* FC FLT Context */
 #define IXGBE_FCFLTRW   0x05110 /* FC Filter RW Control */
@@ -661,6 +671,10 @@ struct ixgbe_thermal_sensor_data {
 #define IXGBE_FCRECTL_ENA       0x1        /* FCoE Redir Table Enable */
 #define IXGBE_FCRETA_SIZE       8          /* Max entries in FCRETA */
 #define IXGBE_FCRETA_ENTRY_MASK 0x0000007f /* 7 bits for the queue index */
+#define IXGBE_FCRETA_SIZE_X550	32 /* Max entries in FCRETA */
+/* Higher 7 bits for the queue index */
+#define IXGBE_FCRETA_ENTRY_HIGH_MASK	0x007F0000
+#define IXGBE_FCRETA_ENTRY_HIGH_SHIFT	16
 
 /* Stats registers */
 #define IXGBE_CRCERRS   0x04000
@@ -1540,6 +1554,7 @@ enum {
 #define IXGBE_MAX_ETQF_FILTERS  8
 #define IXGBE_ETQF_FCOE         0x08000000 /* bit 27 */
 #define IXGBE_ETQF_BCN          0x10000000 /* bit 28 */
+#define IXGBE_ETQF_TX_ANTISPOOF	0x20000000 /* bit 29 */
 #define IXGBE_ETQF_1588         0x40000000 /* bit 30 */
 #define IXGBE_ETQF_FILTER_EN    0x80000000 /* bit 31 */
 #define IXGBE_ETQF_POOL_ENABLE   (1 << 26) /* bit 26 */
@@ -1565,6 +1580,9 @@ enum {
 #define IXGBE_ETQF_FILTER_FCOE           2
 #define IXGBE_ETQF_FILTER_1588           3
 #define IXGBE_ETQF_FILTER_FIP            4
+#define IXGBE_ETQF_FILTER_LLDP		 5
+#define IXGBE_ETQF_FILTER_LACP		 6
+
 /* VLAN Control Bit Masks */
 #define IXGBE_VLNCTRL_VET       0x0000FFFF  /* bits 0-15 */
 #define IXGBE_VLNCTRL_CFI       0x10000000  /* bit 28 */
@@ -1683,7 +1701,7 @@ enum {
 #define IXGBE_MACC_FS        0x00040000
 #define IXGBE_MAC_RX2TX_LPBK 0x00000002
 
-/* Veto Bit definiton */
+/* Veto Bit definition */
 #define IXGBE_MMNGC_MNG_VETO  0x00000001
 
 /* LINKS Bit Masks */
@@ -2122,6 +2140,7 @@ enum {
 #define IXGBE_RXD_STAT_IPCS     0x40    /* IP xsum calculated */
 #define IXGBE_RXD_STAT_PIF      0x80    /* passed in-exact filter */
 #define IXGBE_RXD_STAT_CRCV     0x100   /* Speculative CRC Valid */
+#define IXGBE_RXD_STAT_OUTERIPCS  0x100 /* Cloud IP xsum calculated */
 #define IXGBE_RXD_STAT_VEXT     0x200   /* 1st VLAN found */
 #define IXGBE_RXD_STAT_UDPV     0x400   /* Valid UDP checksum */
 #define IXGBE_RXD_STAT_DYNINT   0x800   /* Pkt caused INT via DYNINT */
@@ -2139,6 +2158,7 @@ enum {
 #define IXGBE_RXD_ERR_IPE       0x80    /* IP Checksum Error */
 #define IXGBE_RXDADV_ERR_MASK           0xfff00000 /* RDESC.ERRORS mask */
 #define IXGBE_RXDADV_ERR_SHIFT          20         /* RDESC.ERRORS shift */
+#define IXGBE_RXDADV_ERR_OUTERIPER	0x04000000 /* CRC IP Header error */
 #define IXGBE_RXDADV_ERR_FCEOFE         0x80000000 /* FCoEFe/IPE */
 #define IXGBE_RXDADV_ERR_FCERR          0x00700000 /* FCERR/FDIRERR */
 #define IXGBE_RXDADV_ERR_FDIR_LEN       0x00100000 /* FDIR Length error */
@@ -2227,6 +2247,8 @@ enum {
 #define IXGBE_RXDADV_PKTTYPE_UDP        0x00000200 /* UDP hdr present */
 #define IXGBE_RXDADV_PKTTYPE_SCTP       0x00000400 /* SCTP hdr present */
 #define IXGBE_RXDADV_PKTTYPE_NFS        0x00000800 /* NFS hdr present */
+#define IXGBE_RXDADV_PKTTYPE_VXLAN	0x00000800 /* VXLAN hdr present */
+#define IXGBE_RXDADV_PKTTYPE_TUNNEL	0x00010000 /* Tunnel type */
 #define IXGBE_RXDADV_PKTTYPE_IPSEC_ESP  0x00001000 /* IPSec ESP */
 #define IXGBE_RXDADV_PKTTYPE_IPSEC_AH   0x00002000 /* IPSec AH */
 #define IXGBE_RXDADV_PKTTYPE_LINKSEC    0x00004000 /* LinkSec Encap */
@@ -2451,8 +2473,8 @@ struct ixgbe_hic_read_shadow_ram {
 
 struct ixgbe_hic_write_shadow_ram {
 	union ixgbe_hic_hdr2 hdr;
-	u32 address;
-	u16 length;
+	__be32 address;
+	__be16 length;
 	u16 pad2;
 	u16 data;
 	u16 pad3;
@@ -3056,6 +3078,11 @@ struct ixgbe_mac_operations {
 	s32 (*set_fw_drv_ver)(struct ixgbe_hw *, u8, u8, u8, u8);
 	s32 (*get_thermal_sensor_data)(struct ixgbe_hw *);
 	s32 (*init_thermal_sensor_thresh)(struct ixgbe_hw *hw);
+	void (*disable_rx)(struct ixgbe_hw *hw);
+	void (*enable_rx)(struct ixgbe_hw *hw);
+	void (*set_source_address_pruning)(struct ixgbe_hw *, bool,
+					   unsigned int);
+	void (*set_ethertype_anti_spoofing)(struct ixgbe_hw *, bool, int);
 
 	/* DMA Coalescing */
 	s32 (*dmac_config)(struct ixgbe_hw *hw);
@@ -3125,6 +3152,7 @@ struct ixgbe_mac_info {
 	u8                              flags;
 	u8				san_mac_rar_index;
 	struct ixgbe_thermal_sensor_data  thermal_sensor_data;
+	bool				set_lben;
 };
 
 struct ixgbe_phy_info {

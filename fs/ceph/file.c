@@ -7,7 +7,6 @@
 #include <linux/mount.h>
 #include <linux/namei.h>
 #include <linux/writeback.h>
-#include <linux/aio.h>
 #include <linux/falloc.h>
 
 #include "super.h"
@@ -292,14 +291,14 @@ int ceph_atomic_open(struct inode *dir, struct dentry *dentry,
 	}
 	if (err)
 		goto out_req;
-	if (dn || dentry->d_inode == NULL || S_ISLNK(dentry->d_inode->i_mode)) {
+	if (dn || d_really_is_negative(dentry) || d_is_symlink(dentry)) {
 		/* make vfs retry on splice, ENOENT, or symlink */
 		dout("atomic_open finish_no_open on dn %p\n", dn);
 		err = finish_no_open(file, dn);
 	} else {
 		dout("atomic_open finish_open on dn %p\n", dn);
 		if (req->r_op == CEPH_MDS_OP_CREATE && req->r_reply_info.has_create_ino) {
-			ceph_init_inode_acls(dentry->d_inode, &acls);
+			ceph_init_inode_acls(d_inode(dentry), &acls);
 			*opened |= FILE_CREATED;
 		}
 		err = finish_open(file, dentry, ceph_open, opened);
@@ -458,7 +457,7 @@ static ssize_t ceph_sync_read(struct kiocb *iocb, struct iov_iter *i,
 	if (ret < 0)
 		return ret;
 
-	if (file->f_flags & O_DIRECT) {
+	if (iocb->ki_flags & IOCB_DIRECT) {
 		while (iov_iter_count(i)) {
 			size_t start;
 			ssize_t n;
@@ -558,13 +557,13 @@ static void ceph_sync_write_unsafe(struct ceph_osd_request *req, bool unsafe)
  * objects, rollback on failure, etc.)
  */
 static ssize_t
-ceph_sync_direct_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos)
+ceph_sync_direct_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos,
+		       struct ceph_snap_context *snapc)
 {
 	struct file *file = iocb->ki_filp;
 	struct inode *inode = file_inode(file);
 	struct ceph_inode_info *ci = ceph_inode(inode);
 	struct ceph_fs_client *fsc = ceph_inode_to_client(inode);
-	struct ceph_snap_context *snapc;
 	struct ceph_vino vino;
 	struct ceph_osd_request *req;
 	struct page **pages;
@@ -601,7 +600,6 @@ ceph_sync_direct_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos)
 		size_t start;
 		ssize_t n;
 
-		snapc = ci->i_snap_realm->cached_context;
 		vino = ceph_vino(inode);
 		req = ceph_osdc_new_request(&fsc->client->osdc, &ci->i_layout,
 					    vino, pos, &len, 0,
@@ -615,7 +613,7 @@ ceph_sync_direct_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos)
 			break;
 		}
 
-		osd_req_op_init(req, 1, CEPH_OSD_OP_STARTSYNC);
+		osd_req_op_init(req, 1, CEPH_OSD_OP_STARTSYNC, 0);
 
 		n = iov_iter_get_pages_alloc(from, &pages, len, &start);
 		if (unlikely(n < 0)) {
@@ -675,13 +673,13 @@ ceph_sync_direct_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos)
  * objects, rollback on failure, etc.)
  */
 static ssize_t
-ceph_sync_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos)
+ceph_sync_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos,
+		struct ceph_snap_context *snapc)
 {
 	struct file *file = iocb->ki_filp;
 	struct inode *inode = file_inode(file);
 	struct ceph_inode_info *ci = ceph_inode(inode);
 	struct ceph_fs_client *fsc = ceph_inode_to_client(inode);
-	struct ceph_snap_context *snapc;
 	struct ceph_vino vino;
 	struct ceph_osd_request *req;
 	struct page **pages;
@@ -718,7 +716,6 @@ ceph_sync_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos)
 		size_t left;
 		int n;
 
-		snapc = ci->i_snap_realm->cached_context;
 		vino = ceph_vino(inode);
 		req = ceph_osdc_new_request(&fsc->client->osdc, &ci->i_layout,
 					    vino, pos, &len, 0, 1,
@@ -808,7 +805,7 @@ static ssize_t ceph_read_iter(struct kiocb *iocb, struct iov_iter *to)
 {
 	struct file *filp = iocb->ki_filp;
 	struct ceph_file_info *fi = filp->private_data;
-	size_t len = iocb->ki_nbytes;
+	size_t len = iov_iter_count(to);
 	struct inode *inode = file_inode(filp);
 	struct ceph_inode_info *ci = ceph_inode(inode);
 	struct page *pinned_page = NULL;
@@ -829,7 +826,7 @@ again:
 		return ret;
 
 	if ((got & (CEPH_CAP_FILE_CACHE|CEPH_CAP_FILE_LAZYIO)) == 0 ||
-	    (iocb->ki_filp->f_flags & O_DIRECT) ||
+	    (iocb->ki_flags & IOCB_DIRECT) ||
 	    (fi->flags & CEPH_F_SYNC)) {
 
 		dout("aio_sync_read %p %llx.%llx %llu~%u got cap refs on %s\n",
@@ -942,9 +939,9 @@ static ssize_t ceph_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	struct ceph_inode_info *ci = ceph_inode(inode);
 	struct ceph_osd_client *osdc =
 		&ceph_sb_to_client(inode->i_sb)->client->osdc;
-	ssize_t count = iov_iter_count(from), written = 0;
+	ssize_t count, written = 0;
 	int err, want, got;
-	loff_t pos = iocb->ki_pos;
+	loff_t pos;
 
 	if (ceph_snap(inode) != CEPH_NOSNAP)
 		return -EROFS;
@@ -952,16 +949,14 @@ static ssize_t ceph_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	mutex_lock(&inode->i_mutex);
 
 	/* We can write back this queue in page reclaim */
-	current->backing_dev_info = file->f_mapping->backing_dev_info;
+	current->backing_dev_info = inode_to_bdi(inode);
 
-	err = generic_write_checks(file, &pos, &count, S_ISBLK(inode->i_mode));
-	if (err)
+	err = generic_write_checks(iocb, from);
+	if (err <= 0)
 		goto out;
 
-	if (count == 0)
-		goto out;
-	iov_iter_truncate(from, count);
-
+	pos = iocb->ki_pos;
+	count = iov_iter_count(from);
 	err = file_remove_suid(file);
 	if (err)
 		goto out;
@@ -998,15 +993,31 @@ retry_snap:
 	     inode, ceph_vinop(inode), pos, count, ceph_cap_string(got));
 
 	if ((got & (CEPH_CAP_FILE_BUFFER|CEPH_CAP_FILE_LAZYIO)) == 0 ||
-	    (file->f_flags & O_DIRECT) || (fi->flags & CEPH_F_SYNC)) {
+	    (iocb->ki_flags & IOCB_DIRECT) || (fi->flags & CEPH_F_SYNC)) {
+		struct ceph_snap_context *snapc;
 		struct iov_iter data;
 		mutex_unlock(&inode->i_mutex);
+
+		spin_lock(&ci->i_ceph_lock);
+		if (__ceph_have_pending_cap_snap(ci)) {
+			struct ceph_cap_snap *capsnap =
+					list_last_entry(&ci->i_cap_snaps,
+							struct ceph_cap_snap,
+							ci_item);
+			snapc = ceph_get_snap_context(capsnap->context);
+		} else {
+			BUG_ON(!ci->i_head_snapc);
+			snapc = ceph_get_snap_context(ci->i_head_snapc);
+		}
+		spin_unlock(&ci->i_ceph_lock);
+
 		/* we might need to revert back to that point */
 		data = *from;
-		if (file->f_flags & O_DIRECT)
-			written = ceph_sync_direct_write(iocb, &data, pos);
+		if (iocb->ki_flags & IOCB_DIRECT)
+			written = ceph_sync_direct_write(iocb, &data, pos,
+							 snapc);
 		else
-			written = ceph_sync_write(iocb, &data, pos);
+			written = ceph_sync_write(iocb, &data, pos, snapc);
 		if (written == -EOLDSNAPC) {
 			dout("aio_write %p %llx.%llx %llu~%u"
 				"got EOLDSNAPC, retrying\n",
@@ -1017,6 +1028,7 @@ retry_snap:
 		}
 		if (written > 0)
 			iov_iter_advance(from, written);
+		ceph_put_snap_context(snapc);
 	} else {
 		loff_t old_size = inode->i_size;
 		/*
@@ -1332,8 +1344,6 @@ const struct file_operations ceph_file_fops = {
 	.open = ceph_open,
 	.release = ceph_release,
 	.llseek = ceph_llseek,
-	.read = new_sync_read,
-	.write = new_sync_write,
 	.read_iter = ceph_read_iter,
 	.write_iter = ceph_write_iter,
 	.mmap = ceph_mmap,

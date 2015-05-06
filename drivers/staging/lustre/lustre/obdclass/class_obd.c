@@ -61,7 +61,7 @@ __u64 obd_alloc;
 EXPORT_SYMBOL(obd_alloc);
 __u64 obd_pages;
 EXPORT_SYMBOL(obd_pages);
-DEFINE_SPINLOCK(obd_updatemax_lock);
+static DEFINE_SPINLOCK(obd_updatemax_lock);
 
 /* The following are visible and mutable through /proc/sys/lustre/. */
 unsigned int obd_alloc_fail_rate = 0;
@@ -437,8 +437,6 @@ int class_handle_ioctl(unsigned int cmd, unsigned long arg)
 	return err;
 } /* class_handle_ioctl */
 
-extern struct miscdevice obd_psdev;
-
 #define OBD_INIT_CHECK
 int obd_init_checks(void)
 {
@@ -508,7 +506,6 @@ int obd_init_checks(void)
 	return ret;
 }
 
-extern spinlock_t obd_types_lock;
 #if defined (CONFIG_PROC_FS)
 extern int class_procfs_init(void);
 extern int class_procfs_clean(void);

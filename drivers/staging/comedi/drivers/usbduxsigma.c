@@ -16,7 +16,7 @@
 /*
  * Driver: usbduxsigma
  * Description: University of Stirling USB DAQ & INCITE Technology Limited
- * Devices: (ITL) USB-DUX [usbduxsigma]
+ * Devices: [ITL] USB-DUX-SIGMA (usbduxsigma)
  * Author: Bernd Porr <mail@berndporr.me.uk>
  * Updated: 10 Oct 2014
  * Status: stable
@@ -45,13 +45,11 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/input.h>
-#include <linux/usb.h>
 #include <linux/fcntl.h>
 #include <linux/compiler.h>
 #include <asm/unaligned.h>
 
-#include "comedi_fc.h"
-#include "../comedidev.h"
+#include "../comedi_usb.h"
 
 /* timeout for the USB-transfer in ms*/
 #define BULK_TIMEOUT 1000
@@ -215,7 +213,6 @@ static void usbduxsigma_ai_handle_urb(struct comedi_device *dev,
 	struct usbduxsigma_private *devpriv = dev->private;
 	struct comedi_async *async = s->async;
 	struct comedi_cmd *cmd = &async->cmd;
-	unsigned int dio_state;
 	uint32_t val;
 	int ret;
 	int i;
@@ -223,9 +220,6 @@ static void usbduxsigma_ai_handle_urb(struct comedi_device *dev,
 	devpriv->ai_counter--;
 	if (devpriv->ai_counter == 0) {
 		devpriv->ai_counter = devpriv->ai_timer;
-
-		/* get the state of the dio pins to allow external trigger */
-		dio_state = be32_to_cpu(devpriv->in_buf[0]);
 
 		/* get the data from the USB bus and hand it over to comedi */
 		for (i = 0; i < cmd->chanlist_len; i++) {
@@ -248,9 +242,8 @@ static void usbduxsigma_ai_handle_urb(struct comedi_device *dev,
 		urb->dev = comedi_to_usb_dev(dev);
 		ret = usb_submit_urb(urb, GFP_ATOMIC);
 		if (ret < 0) {
-			dev_err(dev->class_dev,
-				"%s: urb resubmit failed (%d)\n",
-				__func__, ret);
+			dev_err(dev->class_dev, "urb resubmit failed (%d)\n",
+				ret);
 			if (ret == -EL2NSYNC)
 				dev_err(dev->class_dev,
 					"buggy USB host controller or bug in IRQ handler\n");
@@ -297,8 +290,8 @@ static void usbduxsigma_ai_urb_complete(struct urb *urb)
 
 	default:
 		/* a real error */
-		dev_err(dev->class_dev, "%s: non-zero urb status (%d)\n",
-			__func__, urb->status);
+		dev_err(dev->class_dev, "non-zero urb status (%d)\n",
+			urb->status);
 		async->events |= COMEDI_CB_ERROR;
 		break;
 	}
@@ -391,9 +384,8 @@ static void usbduxsigma_ao_handle_urb(struct comedi_device *dev,
 		urb->iso_frame_desc[0].status = 0;
 		ret = usb_submit_urb(urb, GFP_ATOMIC);
 		if (ret < 0) {
-			dev_err(dev->class_dev,
-				"%s: urb resubmit failed (%d)\n",
-				__func__, ret);
+			dev_err(dev->class_dev, "urb resubmit failed (%d)\n",
+				ret);
 			if (ret == -EL2NSYNC)
 				dev_err(dev->class_dev,
 					"buggy USB host controller or bug in IRQ handler\n");
@@ -428,8 +420,8 @@ static void usbduxsigma_ao_urb_complete(struct urb *urb)
 
 	default:
 		/* a real error */
-		dev_err(dev->class_dev, "%s: non-zero urb status (%d)\n",
-			__func__, urb->status);
+		dev_err(dev->class_dev, "non-zero urb status (%d)\n",
+			urb->status);
 		async->events |= COMEDI_CB_ERROR;
 		break;
 	}
@@ -493,19 +485,19 @@ static int usbduxsigma_ai_cmdtest(struct comedi_device *dev,
 
 	/* Step 1 : check if triggers are trivially valid */
 
-	err |= cfc_check_trigger_src(&cmd->start_src, TRIG_NOW | TRIG_INT);
-	err |= cfc_check_trigger_src(&cmd->scan_begin_src, TRIG_TIMER);
-	err |= cfc_check_trigger_src(&cmd->convert_src, TRIG_NOW);
-	err |= cfc_check_trigger_src(&cmd->scan_end_src, TRIG_COUNT);
-	err |= cfc_check_trigger_src(&cmd->stop_src, TRIG_COUNT | TRIG_NONE);
+	err |= comedi_check_trigger_src(&cmd->start_src, TRIG_NOW | TRIG_INT);
+	err |= comedi_check_trigger_src(&cmd->scan_begin_src, TRIG_TIMER);
+	err |= comedi_check_trigger_src(&cmd->convert_src, TRIG_NOW);
+	err |= comedi_check_trigger_src(&cmd->scan_end_src, TRIG_COUNT);
+	err |= comedi_check_trigger_src(&cmd->stop_src, TRIG_COUNT | TRIG_NONE);
 
 	if (err)
 		return 1;
 
 	/* Step 2a : make sure trigger sources are unique */
 
-	err |= cfc_check_trigger_is_unique(cmd->start_src);
-	err |= cfc_check_trigger_is_unique(cmd->stop_src);
+	err |= comedi_check_trigger_is_unique(cmd->start_src);
+	err |= comedi_check_trigger_is_unique(cmd->stop_src);
 
 	/* Step 2b : and mutually compatible */
 
@@ -514,10 +506,10 @@ static int usbduxsigma_ai_cmdtest(struct comedi_device *dev,
 
 	/* Step 3: check if arguments are trivially valid */
 
-	err |= cfc_check_trigger_arg_is(&cmd->start_arg, 0);
+	err |= comedi_check_trigger_arg_is(&cmd->start_arg, 0);
 
 	if (cmd->scan_begin_src == TRIG_FOLLOW)	/* internal trigger */
-		err |= cfc_check_trigger_arg_is(&cmd->scan_begin_arg, 0);
+		err |= comedi_check_trigger_arg_is(&cmd->scan_begin_arg, 0);
 
 	if (cmd->scan_begin_src == TRIG_TIMER) {
 		unsigned int tmp;
@@ -529,27 +521,31 @@ static int usbduxsigma_ai_cmdtest(struct comedi_device *dev,
 			 * sample two channels. Thus, the more channels
 			 * are in the channel list the more time we need.
 			 */
-			err |= cfc_check_trigger_arg_min(&cmd->scan_begin_arg,
-						(1000000 / 8 * interval));
+			err |= comedi_check_trigger_arg_min(&cmd->
+							    scan_begin_arg,
+							    (1000000 / 8 *
+							     interval));
 
 			tmp = (cmd->scan_begin_arg / 125000) * 125000;
 		} else {
 			/* full speed */
 			/* 1kHz scans every USB frame */
-			err |= cfc_check_trigger_arg_min(&cmd->scan_begin_arg,
-							 1000000);
+			err |= comedi_check_trigger_arg_min(&cmd->
+							    scan_begin_arg,
+							    1000000);
 
 			tmp = (cmd->scan_begin_arg / 1000000) * 1000000;
 		}
-		err |= cfc_check_trigger_arg_is(&cmd->scan_begin_arg, tmp);
+		err |= comedi_check_trigger_arg_is(&cmd->scan_begin_arg, tmp);
 	}
 
-	err |= cfc_check_trigger_arg_is(&cmd->scan_end_arg, cmd->chanlist_len);
+	err |= comedi_check_trigger_arg_is(&cmd->scan_end_arg,
+					   cmd->chanlist_len);
 
 	if (cmd->stop_src == TRIG_COUNT)
-		err |= cfc_check_trigger_arg_min(&cmd->stop_arg, 1);
+		err |= comedi_check_trigger_arg_min(&cmd->stop_arg, 1);
 	else	/* TRIG_NONE */
-		err |= cfc_check_trigger_arg_is(&cmd->stop_arg, 0);
+		err |= comedi_check_trigger_arg_is(&cmd->stop_arg, 0);
 
 	if (err)
 		return 3;
@@ -861,7 +857,7 @@ static int usbduxsigma_ao_cmdtest(struct comedi_device *dev,
 
 	/* Step 1 : check if triggers are trivially valid */
 
-	err |= cfc_check_trigger_src(&cmd->start_src, TRIG_NOW | TRIG_INT);
+	err |= comedi_check_trigger_src(&cmd->start_src, TRIG_NOW | TRIG_INT);
 
 	if (high_speed) {
 		/*
@@ -873,11 +869,11 @@ static int usbduxsigma_ao_cmdtest(struct comedi_device *dev,
 		/* start a new scan (output at once) with a timer */
 		flags = TRIG_TIMER;
 	}
-	err |= cfc_check_trigger_src(&cmd->scan_begin_src, flags);
+	err |= comedi_check_trigger_src(&cmd->scan_begin_src, flags);
 
-	err |= cfc_check_trigger_src(&cmd->convert_src, TRIG_NOW);
-	err |= cfc_check_trigger_src(&cmd->scan_end_src, TRIG_COUNT);
-	err |= cfc_check_trigger_src(&cmd->stop_src, TRIG_COUNT | TRIG_NONE);
+	err |= comedi_check_trigger_src(&cmd->convert_src, TRIG_NOW);
+	err |= comedi_check_trigger_src(&cmd->scan_end_src, TRIG_COUNT);
+	err |= comedi_check_trigger_src(&cmd->stop_src, TRIG_COUNT | TRIG_NONE);
 
 	if (err) {
 		up(&devpriv->sem);
@@ -886,8 +882,8 @@ static int usbduxsigma_ao_cmdtest(struct comedi_device *dev,
 
 	/* Step 2a : make sure trigger sources are unique */
 
-	err |= cfc_check_trigger_is_unique(cmd->start_src);
-	err |= cfc_check_trigger_is_unique(cmd->stop_src);
+	err |= comedi_check_trigger_is_unique(cmd->start_src);
+	err |= comedi_check_trigger_is_unique(cmd->stop_src);
 
 	/* Step 2b : and mutually compatible */
 
@@ -896,25 +892,27 @@ static int usbduxsigma_ao_cmdtest(struct comedi_device *dev,
 
 	/* Step 3: check if arguments are trivially valid */
 
-	err |= cfc_check_trigger_arg_is(&cmd->start_arg, 0);
+	err |= comedi_check_trigger_arg_is(&cmd->start_arg, 0);
 
 	if (cmd->scan_begin_src == TRIG_FOLLOW)	/* internal trigger */
-		err |= cfc_check_trigger_arg_is(&cmd->scan_begin_arg, 0);
+		err |= comedi_check_trigger_arg_is(&cmd->scan_begin_arg, 0);
 
-	if (cmd->scan_begin_src == TRIG_TIMER)
-		err |= cfc_check_trigger_arg_min(&cmd->scan_begin_arg,
-						 1000000);
+	if (cmd->scan_begin_src == TRIG_TIMER) {
+		err |= comedi_check_trigger_arg_min(&cmd->scan_begin_arg,
+						    1000000);
+	}
 
 	/* not used now, is for later use */
 	if (cmd->convert_src == TRIG_TIMER)
-		err |= cfc_check_trigger_arg_min(&cmd->convert_arg, 125000);
+		err |= comedi_check_trigger_arg_min(&cmd->convert_arg, 125000);
 
-	err |= cfc_check_trigger_arg_is(&cmd->scan_end_arg, cmd->chanlist_len);
+	err |= comedi_check_trigger_arg_is(&cmd->scan_end_arg,
+					   cmd->chanlist_len);
 
 	if (cmd->stop_src == TRIG_COUNT)
-		err |= cfc_check_trigger_arg_min(&cmd->stop_arg, 1);
+		err |= comedi_check_trigger_arg_min(&cmd->stop_arg, 1);
 	else	/* TRIG_NONE */
-		err |= cfc_check_trigger_arg_is(&cmd->stop_arg, 0);
+		err |= comedi_check_trigger_arg_is(&cmd->stop_arg, 0);
 
 	if (err)
 		return 3;
@@ -1076,9 +1074,8 @@ static void usbduxsigma_pwm_urb_complete(struct urb *urb)
 	default:
 		/* a real error */
 		if (devpriv->pwm_cmd_running) {
-			dev_err(dev->class_dev,
-				"%s: non-zero urb status (%d)\n",
-				__func__, urb->status);
+			dev_err(dev->class_dev, "non-zero urb status (%d)\n",
+				urb->status);
 			usbduxsigma_pwm_stop(dev, 0);	/* w/o unlink */
 		}
 		return;
@@ -1092,8 +1089,7 @@ static void usbduxsigma_pwm_urb_complete(struct urb *urb)
 	urb->status = 0;
 	ret = usb_submit_urb(urb, GFP_ATOMIC);
 	if (ret < 0) {
-		dev_err(dev->class_dev, "%s: urb resubmit failed (%d)\n",
-			__func__, ret);
+		dev_err(dev->class_dev, "urb resubmit failed (%d)\n", ret);
 		if (ret == -EL2NSYNC)
 			dev_err(dev->class_dev,
 				"buggy USB host controller or bug in IRQ handler\n");

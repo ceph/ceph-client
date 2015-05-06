@@ -102,7 +102,7 @@ static void wil6210_mask_irq_pseudo(struct wil6210_priv *wil)
 	iowrite32(WIL6210_IRQ_DISABLE, wil->csr +
 		  HOSTADDR(RGF_DMA_PSEUDO_CAUSE_MASK_SW));
 
-	clear_bit(wil_status_irqen, &wil->status);
+	clear_bit(wil_status_irqen, wil->status);
 }
 
 void wil6210_unmask_irq_tx(struct wil6210_priv *wil)
@@ -130,7 +130,7 @@ static void wil6210_unmask_irq_pseudo(struct wil6210_priv *wil)
 {
 	wil_dbg_irq(wil, "%s()\n", __func__);
 
-	set_bit(wil_status_irqen, &wil->status);
+	set_bit(wil_status_irqen, wil->status);
 
 	iowrite32(WIL6210_IRQ_PSEUDO_MASK, wil->csr +
 		  HOSTADDR(RGF_DMA_PSEUDO_CAUSE_MASK_SW));
@@ -157,14 +157,63 @@ void wil_unmask_irq(struct wil6210_priv *wil)
 	iowrite32(WIL_ICR_ICC_VALUE, wil->csr + HOSTADDR(RGF_DMA_EP_MISC_ICR) +
 		  offsetof(struct RGF_ICR, ICC));
 
-	/* interrupt moderation parameters */
-	wil_set_itr_trsh(wil);
-
 	wil6210_unmask_irq_pseudo(wil);
 	wil6210_unmask_irq_tx(wil);
 	wil6210_unmask_irq_rx(wil);
 	wil6210_unmask_irq_misc(wil);
 }
+
+/* target write operation */
+#define W(a, v) do { iowrite32(v, wil->csr + HOSTADDR(a)); wmb(); } while (0)
+
+void wil_configure_interrupt_moderation(struct wil6210_priv *wil)
+{
+	wil_dbg_irq(wil, "%s()\n", __func__);
+
+	/* disable interrupt moderation for monitor
+	 * to get better timestamp precision
+	 */
+	if (wil->wdev->iftype == NL80211_IFTYPE_MONITOR)
+		return;
+
+	/* Disable and clear tx counter before (re)configuration */
+	W(RGF_DMA_ITR_TX_CNT_CTL, BIT_DMA_ITR_TX_CNT_CTL_CLR);
+	W(RGF_DMA_ITR_TX_CNT_TRSH, wil->tx_max_burst_duration);
+	wil_info(wil, "set ITR_TX_CNT_TRSH = %d usec\n",
+		 wil->tx_max_burst_duration);
+	/* Configure TX max burst duration timer to use usec units */
+	W(RGF_DMA_ITR_TX_CNT_CTL,
+	  BIT_DMA_ITR_TX_CNT_CTL_EN | BIT_DMA_ITR_TX_CNT_CTL_EXT_TIC_SEL);
+
+	/* Disable and clear tx idle counter before (re)configuration */
+	W(RGF_DMA_ITR_TX_IDL_CNT_CTL, BIT_DMA_ITR_TX_IDL_CNT_CTL_CLR);
+	W(RGF_DMA_ITR_TX_IDL_CNT_TRSH, wil->tx_interframe_timeout);
+	wil_info(wil, "set ITR_TX_IDL_CNT_TRSH = %d usec\n",
+		 wil->tx_interframe_timeout);
+	/* Configure TX max burst duration timer to use usec units */
+	W(RGF_DMA_ITR_TX_IDL_CNT_CTL, BIT_DMA_ITR_TX_IDL_CNT_CTL_EN |
+				      BIT_DMA_ITR_TX_IDL_CNT_CTL_EXT_TIC_SEL);
+
+	/* Disable and clear rx counter before (re)configuration */
+	W(RGF_DMA_ITR_RX_CNT_CTL, BIT_DMA_ITR_RX_CNT_CTL_CLR);
+	W(RGF_DMA_ITR_RX_CNT_TRSH, wil->rx_max_burst_duration);
+	wil_info(wil, "set ITR_RX_CNT_TRSH = %d usec\n",
+		 wil->rx_max_burst_duration);
+	/* Configure TX max burst duration timer to use usec units */
+	W(RGF_DMA_ITR_RX_CNT_CTL,
+	  BIT_DMA_ITR_RX_CNT_CTL_EN | BIT_DMA_ITR_RX_CNT_CTL_EXT_TIC_SEL);
+
+	/* Disable and clear rx idle counter before (re)configuration */
+	W(RGF_DMA_ITR_RX_IDL_CNT_CTL, BIT_DMA_ITR_RX_IDL_CNT_CTL_CLR);
+	W(RGF_DMA_ITR_RX_IDL_CNT_TRSH, wil->rx_interframe_timeout);
+	wil_info(wil, "set ITR_RX_IDL_CNT_TRSH = %d usec\n",
+		 wil->rx_interframe_timeout);
+	/* Configure TX max burst duration timer to use usec units */
+	W(RGF_DMA_ITR_RX_IDL_CNT_CTL, BIT_DMA_ITR_RX_IDL_CNT_CTL_EN |
+				      BIT_DMA_ITR_RX_IDL_CNT_CTL_EXT_TIC_SEL);
+}
+
+#undef W
 
 static irqreturn_t wil6210_irq_rx(int irq, void *cookie)
 {
@@ -177,7 +226,7 @@ static irqreturn_t wil6210_irq_rx(int irq, void *cookie)
 	trace_wil6210_irq_rx(isr);
 	wil_dbg_irq(wil, "ISR RX 0x%08x\n", isr);
 
-	if (!isr) {
+	if (unlikely(!isr)) {
 		wil_err(wil, "spurious IRQ: RX\n");
 		return IRQ_NONE;
 	}
@@ -190,29 +239,31 @@ static irqreturn_t wil6210_irq_rx(int irq, void *cookie)
 	 * action is always the same - should empty the accumulated
 	 * packets from the RX ring.
 	 */
-	if (isr & (BIT_DMA_EP_RX_ICR_RX_DONE | BIT_DMA_EP_RX_ICR_RX_HTRSH)) {
+	if (likely(isr & (BIT_DMA_EP_RX_ICR_RX_DONE |
+			  BIT_DMA_EP_RX_ICR_RX_HTRSH))) {
 		wil_dbg_irq(wil, "RX done\n");
 
-		if (isr & BIT_DMA_EP_RX_ICR_RX_HTRSH)
-			wil_err_ratelimited(wil, "Received \"Rx buffer is in risk "
-				"of overflow\" interrupt\n");
+		if (unlikely(isr & BIT_DMA_EP_RX_ICR_RX_HTRSH))
+			wil_err_ratelimited(wil,
+					    "Received \"Rx buffer is in risk of overflow\" interrupt\n");
 
-		isr &= ~(BIT_DMA_EP_RX_ICR_RX_DONE | BIT_DMA_EP_RX_ICR_RX_HTRSH);
-		if (test_bit(wil_status_reset_done, &wil->status)) {
-			if (test_bit(wil_status_napi_en, &wil->status)) {
+		isr &= ~(BIT_DMA_EP_RX_ICR_RX_DONE |
+			 BIT_DMA_EP_RX_ICR_RX_HTRSH);
+		if (likely(test_bit(wil_status_reset_done, wil->status))) {
+			if (likely(test_bit(wil_status_napi_en, wil->status))) {
 				wil_dbg_txrx(wil, "NAPI(Rx) schedule\n");
 				need_unmask = false;
 				napi_schedule(&wil->napi_rx);
 			} else {
-				wil_err(wil, "Got Rx interrupt while "
-					"stopping interface\n");
+				wil_err(wil,
+					"Got Rx interrupt while stopping interface\n");
 			}
 		} else {
 			wil_err(wil, "Got Rx interrupt while in reset\n");
 		}
 	}
 
-	if (isr)
+	if (unlikely(isr))
 		wil_err(wil, "un-handled RX ISR bits 0x%08x\n", isr);
 
 	/* Rx IRQ will be enabled when NAPI processing finished */
@@ -236,19 +287,19 @@ static irqreturn_t wil6210_irq_tx(int irq, void *cookie)
 	trace_wil6210_irq_tx(isr);
 	wil_dbg_irq(wil, "ISR TX 0x%08x\n", isr);
 
-	if (!isr) {
+	if (unlikely(!isr)) {
 		wil_err(wil, "spurious IRQ: TX\n");
 		return IRQ_NONE;
 	}
 
 	wil6210_mask_irq_tx(wil);
 
-	if (isr & BIT_DMA_EP_TX_ICR_TX_DONE) {
+	if (likely(isr & BIT_DMA_EP_TX_ICR_TX_DONE)) {
 		wil_dbg_irq(wil, "TX done\n");
 		isr &= ~BIT_DMA_EP_TX_ICR_TX_DONE;
 		/* clear also all VRING interrupts */
 		isr &= ~(BIT(25) - 1UL);
-		if (test_bit(wil_status_reset_done, &wil->status)) {
+		if (likely(test_bit(wil_status_reset_done, wil->status))) {
 			wil_dbg_txrx(wil, "NAPI(Tx) schedule\n");
 			need_unmask = false;
 			napi_schedule(&wil->napi_tx);
@@ -257,7 +308,7 @@ static irqreturn_t wil6210_irq_tx(int irq, void *cookie)
 		}
 	}
 
-	if (isr)
+	if (unlikely(isr))
 		wil_err(wil, "un-handled TX ISR bits 0x%08x\n", isr);
 
 	/* Tx IRQ will be enabled when NAPI processing finished */
@@ -310,7 +361,7 @@ static irqreturn_t wil6210_irq_misc(int irq, void *cookie)
 
 	if (isr & ISR_MISC_FW_ERROR) {
 		wil_err(wil, "Firmware error detected\n");
-		clear_bit(wil_status_fwready, &wil->status);
+		clear_bit(wil_status_fwready, wil->status);
 		/*
 		 * do not clear @isr here - we do 2-nd part in thread
 		 * there, user space get notified, and it should be done
@@ -321,7 +372,7 @@ static irqreturn_t wil6210_irq_misc(int irq, void *cookie)
 	if (isr & ISR_MISC_FW_READY) {
 		wil_dbg_irq(wil, "IRQ: FW ready\n");
 		wil_cache_mbox_regs(wil);
-		set_bit(wil_status_reset_done, &wil->status);
+		set_bit(wil_status_reset_done, wil->status);
 		/**
 		 * Actual FW ready indicated by the
 		 * WMI_FW_READY_EVENTID
@@ -394,7 +445,7 @@ static irqreturn_t wil6210_thread_irq(int irq, void *cookie)
  */
 static int wil6210_debug_irq_mask(struct wil6210_priv *wil, u32 pseudo_cause)
 {
-	if (!test_bit(wil_status_irqen, &wil->status)) {
+	if (!test_bit(wil_status_irqen, wil->status)) {
 		u32 icm_rx = wil_ioread32_and_clear(wil->csr +
 				HOSTADDR(RGF_DMA_EP_RX_ICR) +
 				offsetof(struct RGF_ICR, ICM));
@@ -446,11 +497,11 @@ static irqreturn_t wil6210_hardirq(int irq, void *cookie)
 	/**
 	 * pseudo_cause is Clear-On-Read, no need to ACK
 	 */
-	if ((pseudo_cause == 0) || ((pseudo_cause & 0xff) == 0xff))
+	if (unlikely((pseudo_cause == 0) || ((pseudo_cause & 0xff) == 0xff)))
 		return IRQ_NONE;
 
 	/* FIXME: IRQ mask debug */
-	if (wil6210_debug_irq_mask(wil, pseudo_cause))
+	if (unlikely(wil6210_debug_irq_mask(wil, pseudo_cause)))
 		return IRQ_NONE;
 
 	trace_wil6210_irq_pseudo(pseudo_cause);

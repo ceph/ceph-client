@@ -394,6 +394,7 @@ endchoice
 
 config BSD_PROCESS_ACCT
 	bool "BSD Process Accounting"
+	depends on MULTIUSER
 	help
 	  If you say Y here, a user level program will be able to instruct the
 	  kernel (via a special system call) to write process accounting
@@ -420,6 +421,7 @@ config BSD_PROCESS_ACCT_V3
 config TASKSTATS
 	bool "Export task/process statistics through netlink"
 	depends on NET
+	depends on MULTIUSER
 	default n
 	help
 	  Export selected statistics for tasks/processes through the
@@ -470,7 +472,6 @@ choice
 config TREE_RCU
 	bool "Tree-based hierarchical RCU"
 	depends on !PREEMPT && SMP
-	select IRQ_WORK
 	help
 	  This option selects the RCU implementation that is
 	  designed for very large SMP system with hundreds or
@@ -480,7 +481,6 @@ config TREE_RCU
 config PREEMPT_RCU
 	bool "Preemptible tree-based hierarchical RCU"
 	depends on PREEMPT
-	select IRQ_WORK
 	help
 	  This option selects the RCU implementation that is
 	  designed for very large SMP systems with hundreds or
@@ -501,9 +501,17 @@ config TINY_RCU
 
 endchoice
 
+config SRCU
+	bool
+	help
+	  This option selects the sleepable version of RCU. This version
+	  permits arbitrary sleeping or blocking within RCU read-side critical
+	  sections.
+
 config TASKS_RCU
 	bool "Task_based RCU implementation using voluntary context switch"
 	default n
+	select SRCU
 	help
 	  This option enables a task-based RCU implementation that uses
 	  only voluntary context switch (not preemption!), idle, and
@@ -668,9 +676,10 @@ config RCU_BOOST
 
 config RCU_KTHREAD_PRIO
 	int "Real-time priority to use for RCU worker threads"
-	range 1 99
-	depends on RCU_BOOST
-	default 1
+	range 1 99 if RCU_BOOST
+	range 0 99 if !RCU_BOOST
+	default 1 if RCU_BOOST
+	default 0 if !RCU_BOOST
 	help
 	  This option specifies the SCHED_FIFO priority value that will be
 	  assigned to the rcuc/n and rcub/n threads and is also the value
@@ -783,6 +792,19 @@ config RCU_NOCB_CPU_ALL
 	  or energy-efficiency reasons.
 
 endchoice
+
+config RCU_EXPEDITE_BOOT
+	bool
+	default n
+	help
+	  This option enables expedited grace periods at boot time,
+	  as if rcu_expedite_gp() had been invoked early in boot.
+	  The corresponding rcu_unexpedite_gp() is invoked from
+	  rcu_end_inkernel_boot(), which is intended to be invoked
+	  at the end of the kernel-only boot sequence, just before
+	  init is exec'ed.
+
+	  Accept the default if unsure.
 
 endmenu # "RCU Subsystem"
 
@@ -914,7 +936,7 @@ config NUMA_BALANCING_DEFAULT_ENABLED
 	  machine.
 
 menuconfig CGROUPS
-	boolean "Control Group support"
+	bool "Control Group support"
 	select KERNFS
 	help
 	  This option adds support for grouping sets of processes together, for
@@ -1025,12 +1047,6 @@ config MEMCG_KMEM
 	  the kmem extension can use it to guarantee that no group of processes
 	  will ever exhaust kernel resources alone.
 
-	  WARNING: Current implementation lacks reclaim support. That means
-	  allocation attempts will fail when close to the limit even if there
-	  are plenty of kmem available for reclaim. That makes this option
-	  unusable in real life so DO NOT SELECT IT unless for development
-	  purposes.
-
 config CGROUP_HUGETLB
 	bool "HugeTLB Resource Controller for Control Groups"
 	depends on HUGETLB_PAGE
@@ -1140,6 +1156,7 @@ config CHECKPOINT_RESTORE
 
 menuconfig NAMESPACES
 	bool "Namespaces support" if EXPERT
+	depends on MULTIUSER
 	default !EXPERT
 	help
 	  Provides the way to make tasks work with different objects using
@@ -1280,27 +1297,11 @@ source "usr/Kconfig"
 
 endif
 
-config INIT_FALLBACK
-	bool "Fall back to defaults if init= parameter is bad"
-	default y
-	help
-	  If enabled, the kernel will try the default init binaries if an
-	  explicit request from the init= parameter fails.
-
-	  This can have unexpected effects.  For example, booting
-	  with init=/sbin/kiosk_app will run /sbin/init or even /bin/sh
-	  if /sbin/kiosk_app cannot be executed.
-
-	  The default value of Y is consistent with historical behavior.
-	  Selecting N is likely to be more appropriate for most uses,
-	  especially on kiosks and on kernels that are intended to be
-	  run under the control of a script.
-
 config CC_OPTIMIZE_FOR_SIZE
 	bool "Optimize for size"
 	help
-	  Enabling this option will pass "-Os" instead of "-O2" to gcc
-	  resulting in a smaller kernel.
+	  Enabling this option will pass "-Os" instead of "-O2" to
+	  your compiler resulting in a smaller kernel.
 
 	  If unsure, say N.
 
@@ -1352,10 +1353,24 @@ menuconfig EXPERT
 
 config UID16
 	bool "Enable 16-bit UID system calls" if EXPERT
-	depends on HAVE_UID16
+	depends on HAVE_UID16 && MULTIUSER
 	default y
 	help
 	  This enables the legacy 16-bit UID syscall wrappers.
+
+config MULTIUSER
+	bool "Multiple users, groups and capabilities support" if EXPERT
+	default y
+	help
+	  This option enables support for non-root users, groups and
+	  capabilities.
+
+	  If you say N here, all processes will run with UID 0, GID 0, and all
+	  possible capabilities.  Saying N here also compiles out support for
+	  system calls related to UIDs, GIDs, and capabilities, such as setuid,
+	  setgid, and capset.
+
+	  If unsure, say Y here.
 
 config SGETMASK_SYSCALL
 	bool "sgetmask/ssetmask syscalls support" if EXPERT
@@ -1522,7 +1537,7 @@ config EVENTFD
 
 # syscall, maps, verifier
 config BPF_SYSCALL
-	bool "Enable bpf() system call" if EXPERT
+	bool "Enable bpf() system call"
 	select ANON_INODES
 	select BPF
 	default n
@@ -1595,6 +1610,7 @@ config PERF_EVENTS
 	depends on HAVE_PERF_EVENTS
 	select ANON_INODES
 	select IRQ_WORK
+	select SRCU
 	help
 	  Enable kernel support for various performance events provided
 	  by software and hardware.
@@ -1770,7 +1786,7 @@ config SLABINFO
 	default y
 
 config RT_MUTEXES
-	boolean
+	bool
 
 config BASE_SMALL
 	int

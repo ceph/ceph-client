@@ -78,9 +78,9 @@ static inline bool is_vlan_dev(struct net_device *dev)
         return dev->priv_flags & IFF_802_1Q_VLAN;
 }
 
-#define vlan_tx_tag_present(__skb)	((__skb)->vlan_tci & VLAN_TAG_PRESENT)
-#define vlan_tx_tag_get(__skb)		((__skb)->vlan_tci & ~VLAN_TAG_PRESENT)
-#define vlan_tx_tag_get_id(__skb)	((__skb)->vlan_tci & VLAN_VID_MASK)
+#define skb_vlan_tag_present(__skb)	((__skb)->vlan_tci & VLAN_TAG_PRESENT)
+#define skb_vlan_tag_get(__skb)		((__skb)->vlan_tci & ~VLAN_TAG_PRESENT)
+#define skb_vlan_tag_get_id(__skb)	((__skb)->vlan_tci & VLAN_VID_MASK)
 
 /**
  *	struct vlan_pcpu_stats - VLAN percpu rx/tx stats
@@ -376,7 +376,7 @@ static inline struct sk_buff *vlan_insert_tag_set_proto(struct sk_buff *skb,
 static inline struct sk_buff *__vlan_hwaccel_push_inside(struct sk_buff *skb)
 {
 	skb = vlan_insert_tag_set_proto(skb, skb->vlan_proto,
-					vlan_tx_tag_get(skb));
+					skb_vlan_tag_get(skb));
 	if (likely(skb))
 		skb->vlan_tci = 0;
 	return skb;
@@ -393,7 +393,7 @@ static inline struct sk_buff *__vlan_hwaccel_push_inside(struct sk_buff *skb)
  */
 static inline struct sk_buff *vlan_hwaccel_push_inside(struct sk_buff *skb)
 {
-	if (vlan_tx_tag_present(skb))
+	if (skb_vlan_tag_present(skb))
 		skb = __vlan_hwaccel_push_inside(skb);
 	return skb;
 }
@@ -442,8 +442,8 @@ static inline int __vlan_get_tag(const struct sk_buff *skb, u16 *vlan_tci)
 static inline int __vlan_hwaccel_get_tag(const struct sk_buff *skb,
 					 u16 *vlan_tci)
 {
-	if (vlan_tx_tag_present(skb)) {
-		*vlan_tci = vlan_tx_tag_get(skb);
+	if (skb_vlan_tag_present(skb)) {
+		*vlan_tci = skb_vlan_tag_get(skb);
 		return 0;
 	} else {
 		*vlan_tci = 0;
@@ -559,6 +559,73 @@ static inline void vlan_set_encap_proto(struct sk_buff *skb,
 		 * Real 802.2 LLC
 		 */
 		skb->protocol = htons(ETH_P_802_2);
+}
+
+/**
+ * skb_vlan_tagged - check if skb is vlan tagged.
+ * @skb: skbuff to query
+ *
+ * Returns true if the skb is tagged, regardless of whether it is hardware
+ * accelerated or not.
+ */
+static inline bool skb_vlan_tagged(const struct sk_buff *skb)
+{
+	if (!skb_vlan_tag_present(skb) &&
+	    likely(skb->protocol != htons(ETH_P_8021Q) &&
+		   skb->protocol != htons(ETH_P_8021AD)))
+		return false;
+
+	return true;
+}
+
+/**
+ * skb_vlan_tagged_multi - check if skb is vlan tagged with multiple headers.
+ * @skb: skbuff to query
+ *
+ * Returns true if the skb is tagged with multiple vlan headers, regardless
+ * of whether it is hardware accelerated or not.
+ */
+static inline bool skb_vlan_tagged_multi(const struct sk_buff *skb)
+{
+	__be16 protocol = skb->protocol;
+
+	if (!skb_vlan_tag_present(skb)) {
+		struct vlan_ethhdr *veh;
+
+		if (likely(protocol != htons(ETH_P_8021Q) &&
+			   protocol != htons(ETH_P_8021AD)))
+			return false;
+
+		veh = (struct vlan_ethhdr *)skb->data;
+		protocol = veh->h_vlan_encapsulated_proto;
+	}
+
+	if (protocol != htons(ETH_P_8021Q) && protocol != htons(ETH_P_8021AD))
+		return false;
+
+	return true;
+}
+
+/**
+ * vlan_features_check - drop unsafe features for skb with multiple tags.
+ * @skb: skbuff to query
+ * @features: features to be checked
+ *
+ * Returns features without unsafe ones if the skb has multiple tags.
+ */
+static inline netdev_features_t vlan_features_check(const struct sk_buff *skb,
+						    netdev_features_t features)
+{
+	if (skb_vlan_tagged_multi(skb))
+		features = netdev_intersect_features(features,
+						     NETIF_F_SG |
+						     NETIF_F_HIGHDMA |
+						     NETIF_F_FRAGLIST |
+						     NETIF_F_GEN_CSUM |
+						     NETIF_F_HW_VLAN_CTAG_TX |
+						     NETIF_F_HW_VLAN_STAG_TX);
+
+	return features;
 }
 
 #endif /* !(_LINUX_IF_VLAN_H_) */

@@ -81,6 +81,7 @@ static struct mtd_dev_param __initdata mtd_dev_param[UBI_MAX_DEVICES];
 #ifdef CONFIG_MTD_UBI_FASTMAP
 /* UBI module parameter to enable fastmap automatically on non-fastmap images */
 static bool fm_autoconvert;
+static bool fm_debug;
 #endif
 /* Root UBI "class" object (corresponds to '/<sysfs>/class/ubi/') */
 struct class *ubi_class;
@@ -154,23 +155,22 @@ static struct device_attribute dev_mtd_num =
  */
 int ubi_volume_notify(struct ubi_device *ubi, struct ubi_volume *vol, int ntype)
 {
+	int ret;
 	struct ubi_notification nt;
 
 	ubi_do_get_device_info(ubi, &nt.di);
 	ubi_do_get_volume_info(ubi, vol, &nt.vi);
 
-#ifdef CONFIG_MTD_UBI_FASTMAP
 	switch (ntype) {
 	case UBI_VOLUME_ADDED:
 	case UBI_VOLUME_REMOVED:
 	case UBI_VOLUME_RESIZED:
 	case UBI_VOLUME_RENAMED:
-		if (ubi_update_fastmap(ubi)) {
-			ubi_err(ubi, "Unable to update fastmap!");
-			ubi_ro_mode(ubi);
-		}
+		ret = ubi_update_fastmap(ubi);
+		if (ret)
+			ubi_msg(ubi, "Unable to write a new fastmap: %i", ret);
 	}
-#endif
+
 	return blocking_notifier_call_chain(&ubi_notifiers, ntype, &nt);
 }
 
@@ -923,7 +923,7 @@ int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num,
 
 		/* Make sure ubi_num is not busy */
 		if (ubi_devices[ubi_num]) {
-			ubi_err(ubi, "ubi%d already exists", ubi_num);
+			ubi_err(ubi, "already exists");
 			return -EEXIST;
 		}
 	}
@@ -950,8 +950,10 @@ int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num,
 	if (ubi->fm_pool.max_size < UBI_FM_MIN_POOL_SIZE)
 		ubi->fm_pool.max_size = UBI_FM_MIN_POOL_SIZE;
 
-	ubi->fm_wl_pool.max_size = UBI_FM_WL_POOL_SIZE;
+	ubi->fm_wl_pool.max_size = ubi->fm_pool.max_size / 2;
 	ubi->fm_disabled = !fm_autoconvert;
+	if (fm_debug)
+		ubi_enable_dbg_chk_fastmap(ubi);
 
 	if (!ubi->fm_disabled && (int)mtd_div_by_eb(ubi->mtd->size, ubi->mtd)
 	    <= UBI_FM_MAX_START) {
@@ -970,10 +972,10 @@ int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num,
 	mutex_init(&ubi->ckvol_mutex);
 	mutex_init(&ubi->device_mutex);
 	spin_lock_init(&ubi->volumes_lock);
-	mutex_init(&ubi->fm_mutex);
-	init_rwsem(&ubi->fm_sem);
+	init_rwsem(&ubi->fm_protect);
+	init_rwsem(&ubi->fm_eba_sem);
 
-	ubi_msg(ubi, "attaching mtd%d to ubi%d", mtd->index, ubi_num);
+	ubi_msg(ubi, "attaching mtd%d", mtd->index);
 
 	err = io_init(ubi, max_beb_per1024);
 	if (err)
@@ -1115,8 +1117,11 @@ int ubi_detach_mtd_dev(int ubi_num, int anyway)
 	ubi_msg(ubi, "detaching mtd%d", ubi->mtd->index);
 #ifdef CONFIG_MTD_UBI_FASTMAP
 	/* If we don't write a new fastmap at detach time we lose all
-	 * EC updates that have been made since the last written fastmap. */
-	ubi_update_fastmap(ubi);
+	 * EC updates that have been made since the last written fastmap.
+	 * In case of fastmap debugging we omit the update to simulate an
+	 * unclean shutdown. */
+	if (!ubi_dbg_chk_fastmap(ubi))
+		ubi_update_fastmap(ubi);
 #endif
 	/*
 	 * Before freeing anything, we have to stop the background thread to
@@ -1164,9 +1169,9 @@ static struct mtd_info * __init open_mtd_by_chdev(const char *mtd_dev)
 		return ERR_PTR(err);
 
 	/* MTD device number is defined by the major / minor numbers */
-	major = imajor(path.dentry->d_inode);
-	minor = iminor(path.dentry->d_inode);
-	mode = path.dentry->d_inode->i_mode;
+	major = imajor(d_backing_inode(path.dentry));
+	minor = iminor(d_backing_inode(path.dentry));
+	mode = d_backing_inode(path.dentry)->i_mode;
 	path_put(&path);
 	if (major != MTD_CHAR_MAJOR || !S_ISCHR(mode))
 		return ERR_PTR(-EINVAL);
@@ -1428,7 +1433,7 @@ static int __init ubi_mtd_param_parse(const char *val, struct kernel_param *kp)
 	}
 
 	if (len == 0) {
-		pr_err("UBI warning: empty 'mtd=' parameter - ignored\n");
+		pr_warn("UBI warning: empty 'mtd=' parameter - ignored\n");
 		return 0;
 	}
 
@@ -1501,6 +1506,8 @@ MODULE_PARM_DESC(mtd, "MTD devices to attach. Parameter format: mtd=<name|num|pa
 #ifdef CONFIG_MTD_UBI_FASTMAP
 module_param(fm_autoconvert, bool, 0644);
 MODULE_PARM_DESC(fm_autoconvert, "Set this parameter to enable fastmap automatically on images without a fastmap.");
+module_param(fm_debug, bool, 0);
+MODULE_PARM_DESC(fm_debug, "Set this parameter to enable fastmap debugging by default. Warning, this will make fastmap slow!");
 #endif
 MODULE_VERSION(__stringify(UBI_VERSION));
 MODULE_DESCRIPTION("UBI - Unsorted Block Images");

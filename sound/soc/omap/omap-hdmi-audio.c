@@ -142,8 +142,6 @@ static int hdmi_dai_hw_params(struct snd_pcm_substream *substream,
 
 	iec->status[0] |= IEC958_AES0_CON_EMPHASIS_NONE;
 
-	iec->status[0] |= IEC958_AES1_PRO_MODE_NOTID;
-
 	iec->status[1] = IEC958_AES1_CON_GENERAL;
 
 	iec->status[2] |= IEC958_AES2_CON_SOURCE_UNSPEC;
@@ -352,6 +350,9 @@ static int omap_hdmi_audio_probe(struct platform_device *pdev)
 		return ret;
 
 	card = devm_kzalloc(dev, sizeof(*card), GFP_KERNEL);
+	if (!card)
+		return -ENOMEM;
+
 	card->name = devm_kasprintf(dev, GFP_KERNEL,
 				    "HDMI %s", dev_name(ad->dssdev));
 	card->owner = THIS_MODULE;
@@ -393,7 +394,6 @@ static int omap_hdmi_audio_remove(struct platform_device *pdev)
 static struct platform_driver hdmi_audio_driver = {
 	.driver = {
 		.name = DRV_NAME,
-		.owner = THIS_MODULE,
 	},
 	.probe = omap_hdmi_audio_probe,
 	.remove = omap_hdmi_audio_remove,

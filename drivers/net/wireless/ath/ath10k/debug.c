@@ -23,6 +23,7 @@
 #include "core.h"
 #include "debug.h"
 #include "hif.h"
+#include "wmi-ops.h"
 
 /* ms */
 #define ATH10K_DEBUG_HTT_STATS_INTERVAL 1000
@@ -123,7 +124,7 @@ EXPORT_SYMBOL(ath10k_info);
 
 void ath10k_print_driver_info(struct ath10k *ar)
 {
-	ath10k_info(ar, "%s (0x%08x, 0x%08x) fw %s api %d htt %d.%d wmi %d.%d.%d.%d cal %s max_sta %d\n",
+	ath10k_info(ar, "%s (0x%08x, 0x%08x) fw %s api %d htt %d.%d wmi %d cal %s max_sta %d\n",
 		    ar->hw_params.name,
 		    ar->target_version,
 		    ar->chip_id,
@@ -131,10 +132,7 @@ void ath10k_print_driver_info(struct ath10k *ar)
 		    ar->fw_api,
 		    ar->htt.target_version_major,
 		    ar->htt.target_version_minor,
-		    ar->fw_version_major,
-		    ar->fw_version_minor,
-		    ar->fw_version_release,
-		    ar->fw_version_build,
+		    ar->wmi.op_version,
 		    ath10k_cal_mode_str(ar->cal_mode),
 		    ar->max_num_stations);
 	ath10k_info(ar, "debug %d debugfs %d tracing %d dfs %d testmode %d\n",
@@ -245,6 +243,16 @@ static void ath10k_debug_fw_stats_pdevs_free(struct list_head *head)
 	}
 }
 
+static void ath10k_debug_fw_stats_vdevs_free(struct list_head *head)
+{
+	struct ath10k_fw_stats_vdev *i, *tmp;
+
+	list_for_each_entry_safe(i, tmp, head, list) {
+		list_del(&i->list);
+		kfree(i);
+	}
+}
+
 static void ath10k_debug_fw_stats_peers_free(struct list_head *head)
 {
 	struct ath10k_fw_stats_peer *i, *tmp;
@@ -260,6 +268,7 @@ static void ath10k_debug_fw_stats_reset(struct ath10k *ar)
 	spin_lock_bh(&ar->data_lock);
 	ar->debug.fw_stats_done = false;
 	ath10k_debug_fw_stats_pdevs_free(&ar->debug.fw_stats.pdevs);
+	ath10k_debug_fw_stats_vdevs_free(&ar->debug.fw_stats.vdevs);
 	ath10k_debug_fw_stats_peers_free(&ar->debug.fw_stats.peers);
 	spin_unlock_bh(&ar->data_lock);
 }
@@ -275,14 +284,27 @@ static size_t ath10k_debug_fw_stats_num_peers(struct list_head *head)
 	return num;
 }
 
+static size_t ath10k_debug_fw_stats_num_vdevs(struct list_head *head)
+{
+	struct ath10k_fw_stats_vdev *i;
+	size_t num = 0;
+
+	list_for_each_entry(i, head, list)
+		++num;
+
+	return num;
+}
+
 void ath10k_debug_fw_stats_process(struct ath10k *ar, struct sk_buff *skb)
 {
 	struct ath10k_fw_stats stats = {};
 	bool is_start, is_started, is_end;
 	size_t num_peers;
+	size_t num_vdevs;
 	int ret;
 
 	INIT_LIST_HEAD(&stats.pdevs);
+	INIT_LIST_HEAD(&stats.vdevs);
 	INIT_LIST_HEAD(&stats.peers);
 
 	spin_lock_bh(&ar->data_lock);
@@ -310,6 +332,7 @@ void ath10k_debug_fw_stats_process(struct ath10k *ar, struct sk_buff *skb)
 	}
 
 	num_peers = ath10k_debug_fw_stats_num_peers(&ar->debug.fw_stats.peers);
+	num_vdevs = ath10k_debug_fw_stats_num_vdevs(&ar->debug.fw_stats.vdevs);
 	is_start = (list_empty(&ar->debug.fw_stats.pdevs) &&
 		    !list_empty(&stats.pdevs));
 	is_end = (!list_empty(&ar->debug.fw_stats.pdevs) &&
@@ -332,7 +355,13 @@ void ath10k_debug_fw_stats_process(struct ath10k *ar, struct sk_buff *skb)
 			goto free;
 		}
 
+		if (num_vdevs >= BITS_PER_LONG) {
+			ath10k_warn(ar, "dropping fw vdev stats\n");
+			goto free;
+		}
+
 		list_splice_tail_init(&stats.peers, &ar->debug.fw_stats.peers);
+		list_splice_tail_init(&stats.vdevs, &ar->debug.fw_stats.vdevs);
 	}
 
 	complete(&ar->debug.fw_stats_complete);
@@ -342,6 +371,7 @@ free:
 	 * resources if that is not the case.
 	 */
 	ath10k_debug_fw_stats_pdevs_free(&stats.pdevs);
+	ath10k_debug_fw_stats_vdevs_free(&stats.vdevs);
 	ath10k_debug_fw_stats_peers_free(&stats.peers);
 
 unlock:
@@ -365,7 +395,10 @@ static int ath10k_debug_fw_stats_request(struct ath10k *ar)
 
 		reinit_completion(&ar->debug.fw_stats_complete);
 
-		ret = ath10k_wmi_request_stats(ar, WMI_REQUEST_PEER_STAT);
+		ret = ath10k_wmi_request_stats(ar,
+					       WMI_STAT_PDEV |
+					       WMI_STAT_VDEV |
+					       WMI_STAT_PEER);
 		if (ret) {
 			ath10k_warn(ar, "could not request stats (%d)\n", ret);
 			return ret;
@@ -373,7 +406,7 @@ static int ath10k_debug_fw_stats_request(struct ath10k *ar)
 
 		ret = wait_for_completion_timeout(&ar->debug.fw_stats_complete,
 						  1*HZ);
-		if (ret <= 0)
+		if (ret == 0)
 			return -ETIMEDOUT;
 
 		spin_lock_bh(&ar->data_lock);
@@ -397,8 +430,11 @@ static void ath10k_fw_stats_fill(struct ath10k *ar,
 	unsigned int len = 0;
 	unsigned int buf_len = ATH10K_FW_STATS_BUF_SIZE;
 	const struct ath10k_fw_stats_pdev *pdev;
+	const struct ath10k_fw_stats_vdev *vdev;
 	const struct ath10k_fw_stats_peer *peer;
 	size_t num_peers;
+	size_t num_vdevs;
+	int i;
 
 	spin_lock_bh(&ar->data_lock);
 
@@ -410,6 +446,7 @@ static void ath10k_fw_stats_fill(struct ath10k *ar,
 	}
 
 	num_peers = ath10k_debug_fw_stats_num_peers(&fw_stats->peers);
+	num_vdevs = ath10k_debug_fw_stats_num_vdevs(&fw_stats->vdevs);
 
 	len += scnprintf(buf + len, buf_len - len, "\n");
 	len += scnprintf(buf + len, buf_len - len, "%30s\n",
@@ -530,6 +567,65 @@ static void ath10k_fw_stats_fill(struct ath10k *ar,
 			 "PHY errors drops", pdev->phy_err_drop);
 	len += scnprintf(buf + len, buf_len - len, "%30s %10d\n",
 			 "MPDU errors (FCS, MIC, ENC)", pdev->mpdu_errs);
+
+	len += scnprintf(buf + len, buf_len - len, "\n");
+	len += scnprintf(buf + len, buf_len - len, "%30s (%zu)\n",
+			 "ath10k VDEV stats", num_vdevs);
+	len += scnprintf(buf + len, buf_len - len, "%30s\n\n",
+				 "=================");
+
+	list_for_each_entry(vdev, &fw_stats->vdevs, list) {
+		len += scnprintf(buf + len, buf_len - len, "%30s %u\n",
+				 "vdev id", vdev->vdev_id);
+		len += scnprintf(buf + len, buf_len - len, "%30s %u\n",
+				 "beacon snr", vdev->beacon_snr);
+		len += scnprintf(buf + len, buf_len - len, "%30s %u\n",
+				 "data snr", vdev->data_snr);
+		len += scnprintf(buf + len, buf_len - len, "%30s %u\n",
+				 "num rx frames", vdev->num_rx_frames);
+		len += scnprintf(buf + len, buf_len - len, "%30s %u\n",
+				 "num rts fail", vdev->num_rts_fail);
+		len += scnprintf(buf + len, buf_len - len, "%30s %u\n",
+				 "num rts success", vdev->num_rts_success);
+		len += scnprintf(buf + len, buf_len - len, "%30s %u\n",
+				 "num rx err", vdev->num_rx_err);
+		len += scnprintf(buf + len, buf_len - len, "%30s %u\n",
+				 "num rx discard", vdev->num_rx_discard);
+		len += scnprintf(buf + len, buf_len - len, "%30s %u\n",
+				 "num tx not acked", vdev->num_tx_not_acked);
+
+		for (i = 0 ; i < ARRAY_SIZE(vdev->num_tx_frames); i++)
+			len += scnprintf(buf + len, buf_len - len,
+					"%25s [%02d] %u\n",
+					 "num tx frames", i,
+					 vdev->num_tx_frames[i]);
+
+		for (i = 0 ; i < ARRAY_SIZE(vdev->num_tx_frames_retries); i++)
+			len += scnprintf(buf + len, buf_len - len,
+					"%25s [%02d] %u\n",
+					 "num tx frames retries", i,
+					 vdev->num_tx_frames_retries[i]);
+
+		for (i = 0 ; i < ARRAY_SIZE(vdev->num_tx_frames_failures); i++)
+			len += scnprintf(buf + len, buf_len - len,
+					"%25s [%02d] %u\n",
+					 "num tx frames failures", i,
+					 vdev->num_tx_frames_failures[i]);
+
+		for (i = 0 ; i < ARRAY_SIZE(vdev->tx_rate_history); i++)
+			len += scnprintf(buf + len, buf_len - len,
+					"%25s [%02d] 0x%08x\n",
+					 "tx rate history", i,
+					 vdev->tx_rate_history[i]);
+
+		for (i = 0 ; i < ARRAY_SIZE(vdev->beacon_rssi_history); i++)
+			len += scnprintf(buf + len, buf_len - len,
+					"%25s [%02d] %u\n",
+					 "beacon rssi history", i,
+					 vdev->beacon_rssi_history[i]);
+
+		len += scnprintf(buf + len, buf_len - len, "\n");
+	}
 
 	len += scnprintf(buf + len, buf_len - len, "\n");
 	len += scnprintf(buf + len, buf_len - len, "%30s (%zu)\n",
@@ -1320,10 +1416,10 @@ static ssize_t ath10k_read_fw_dbglog(struct file *file,
 {
 	struct ath10k *ar = file->private_data;
 	unsigned int len;
-	char buf[32];
+	char buf[64];
 
-	len = scnprintf(buf, sizeof(buf), "0x%08x\n",
-			ar->debug.fw_dbglog_mask);
+	len = scnprintf(buf, sizeof(buf), "0x%08x %u\n",
+			ar->debug.fw_dbglog_mask, ar->debug.fw_dbglog_level);
 
 	return simple_read_from_buffer(user_buf, count, ppos, buf, len);
 }
@@ -1333,19 +1429,32 @@ static ssize_t ath10k_write_fw_dbglog(struct file *file,
 				      size_t count, loff_t *ppos)
 {
 	struct ath10k *ar = file->private_data;
-	unsigned long mask;
 	int ret;
+	char buf[64];
+	unsigned int log_level, mask;
 
-	ret = kstrtoul_from_user(user_buf, count, 0, &mask);
-	if (ret)
-		return ret;
+	simple_write_to_buffer(buf, sizeof(buf) - 1, ppos, user_buf, count);
+
+	/* make sure that buf is null terminated */
+	buf[sizeof(buf) - 1] = 0;
+
+	ret = sscanf(buf, "%x %u", &mask, &log_level);
+
+	if (!ret)
+		return -EINVAL;
+
+	if (ret == 1)
+		/* default if user did not specify */
+		log_level = ATH10K_DBGLOG_LEVEL_WARN;
 
 	mutex_lock(&ar->conf_mutex);
 
 	ar->debug.fw_dbglog_mask = mask;
+	ar->debug.fw_dbglog_level = log_level;
 
 	if (ar->state == ATH10K_STATE_ON) {
-		ret = ath10k_wmi_dbglog_cfg(ar, ar->debug.fw_dbglog_mask);
+		ret = ath10k_wmi_dbglog_cfg(ar, ar->debug.fw_dbglog_mask,
+					    ar->debug.fw_dbglog_level);
 		if (ret) {
 			ath10k_warn(ar, "dbglog cfg failed from debugfs: %d\n",
 				    ret);
@@ -1607,6 +1716,73 @@ static const struct file_operations fops_cal_data = {
 	.llseek = default_llseek,
 };
 
+static ssize_t ath10k_read_nf_cal_period(struct file *file,
+					 char __user *user_buf,
+					 size_t count, loff_t *ppos)
+{
+	struct ath10k *ar = file->private_data;
+	unsigned int len;
+	char buf[32];
+
+	len = scnprintf(buf, sizeof(buf), "%d\n",
+			ar->debug.nf_cal_period);
+
+	return simple_read_from_buffer(user_buf, count, ppos, buf, len);
+}
+
+static ssize_t ath10k_write_nf_cal_period(struct file *file,
+					  const char __user *user_buf,
+					  size_t count, loff_t *ppos)
+{
+	struct ath10k *ar = file->private_data;
+	unsigned long period;
+	int ret;
+
+	ret = kstrtoul_from_user(user_buf, count, 0, &period);
+	if (ret)
+		return ret;
+
+	if (period > WMI_PDEV_PARAM_CAL_PERIOD_MAX)
+		return -EINVAL;
+
+	/* there's no way to switch back to the firmware default */
+	if (period == 0)
+		return -EINVAL;
+
+	mutex_lock(&ar->conf_mutex);
+
+	ar->debug.nf_cal_period = period;
+
+	if (ar->state != ATH10K_STATE_ON) {
+		/* firmware is not running, nothing else to do */
+		ret = count;
+		goto exit;
+	}
+
+	ret = ath10k_wmi_pdev_set_param(ar, ar->wmi.pdev_param->cal_period,
+					ar->debug.nf_cal_period);
+	if (ret) {
+		ath10k_warn(ar, "cal period cfg failed from debugfs: %d\n",
+			    ret);
+		goto exit;
+	}
+
+	ret = count;
+
+exit:
+	mutex_unlock(&ar->conf_mutex);
+
+	return ret;
+}
+
+static const struct file_operations fops_nf_cal_period = {
+	.read = ath10k_read_nf_cal_period,
+	.write = ath10k_write_nf_cal_period,
+	.open = simple_open,
+	.owner = THIS_MODULE,
+	.llseek = default_llseek,
+};
+
 int ath10k_debug_start(struct ath10k *ar)
 {
 	int ret;
@@ -1620,7 +1796,8 @@ int ath10k_debug_start(struct ath10k *ar)
 			    ret);
 
 	if (ar->debug.fw_dbglog_mask) {
-		ret = ath10k_wmi_dbglog_cfg(ar, ar->debug.fw_dbglog_mask);
+		ret = ath10k_wmi_dbglog_cfg(ar, ar->debug.fw_dbglog_mask,
+					    ATH10K_DBGLOG_LEVEL_WARN);
 		if (ret)
 			/* not serious */
 			ath10k_warn(ar, "failed to enable dbglog during start: %d",
@@ -1640,6 +1817,16 @@ int ath10k_debug_start(struct ath10k *ar)
 		if (ret)
 			/* not serious */
 			ath10k_warn(ar, "failed to disable pktlog: %d\n", ret);
+	}
+
+	if (ar->debug.nf_cal_period) {
+		ret = ath10k_wmi_pdev_set_param(ar,
+						ar->wmi.pdev_param->cal_period,
+						ar->debug.nf_cal_period);
+		if (ret)
+			/* not serious */
+			ath10k_warn(ar, "cal period cfg failed from debug start: %d\n",
+				    ret);
 	}
 
 	return ret;
@@ -1811,6 +1998,7 @@ int ath10k_debug_create(struct ath10k *ar)
 		return -ENOMEM;
 
 	INIT_LIST_HEAD(&ar->debug.fw_stats.pdevs);
+	INIT_LIST_HEAD(&ar->debug.fw_stats.vdevs);
 	INIT_LIST_HEAD(&ar->debug.fw_stats.peers);
 
 	return 0;
@@ -1879,6 +2067,9 @@ int ath10k_debug_register(struct ath10k *ar)
 
 	debugfs_create_file("cal_data", S_IRUSR, ar->debug.debugfs_phy,
 			    ar, &fops_cal_data);
+
+	debugfs_create_file("nf_cal_period", S_IRUSR | S_IWUSR,
+			    ar->debug.debugfs_phy, ar, &fops_nf_cal_period);
 
 	if (config_enabled(CONFIG_ATH10K_DFS_CERTIFIED)) {
 		debugfs_create_file("dfs_simulate_radar", S_IWUSR,

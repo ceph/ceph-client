@@ -44,29 +44,12 @@ struct br_ip_list {
 #define BR_PROMISC		BIT(7)
 #define BR_PROXYARP		BIT(8)
 #define BR_LEARNING_SYNC	BIT(9)
+#define BR_PROXYARP_WIFI	BIT(10)
 
 extern void brioctl_set(int (*ioctl_hook)(struct net *, unsigned int, void __user *));
 
 typedef int br_should_route_hook_t(struct sk_buff *skb);
 extern br_should_route_hook_t __rcu *br_should_route_hook;
-
-#if IS_ENABLED(CONFIG_BRIDGE)
-int br_fdb_external_learn_add(struct net_device *dev,
-			      const unsigned char *addr, u16 vid);
-int br_fdb_external_learn_del(struct net_device *dev,
-			      const unsigned char *addr, u16 vid);
-#else
-static inline int br_fdb_external_learn_add(struct net_device *dev,
-					    const unsigned char *addr, u16 vid)
-{
-	return 0;
-}
-static inline int br_fdb_external_learn_del(struct net_device *dev,
-					    const unsigned char *addr, u16 vid)
-{
-	return 0;
-}
-#endif
 
 #if IS_ENABLED(CONFIG_BRIDGE) && IS_ENABLED(CONFIG_BRIDGE_IGMP_SNOOPING)
 int br_multicast_list_adjacent(struct net_device *dev,

@@ -50,6 +50,7 @@
 #include <linux/mlx4/driver.h>
 #include <linux/mlx4/doorbell.h>
 #include <linux/mlx4/cmd.h>
+#include "fw_qos.h"
 
 #define DRV_NAME	"mlx4_core"
 #define PFX		DRV_NAME ": "
@@ -64,28 +65,15 @@
 
 #define INIT_HCA_TPT_MW_ENABLE          (1 << 7)
 
-struct mlx4_set_port_prio2tc_context {
-	u8 prio2tc[4];
-};
-
-struct mlx4_port_scheduler_tc_cfg_be {
-	__be16 pg;
-	__be16 bw_precentage;
-	__be16 max_bw_units; /* 3-100Mbps, 4-1Gbps, other values - reserved */
-	__be16 max_bw_value;
-};
-
-struct mlx4_set_port_scheduler_context {
-	struct mlx4_port_scheduler_tc_cfg_be tc[MLX4_NUM_TC];
-};
-
 enum {
 	MLX4_HCR_BASE		= 0x80680,
 	MLX4_HCR_SIZE		= 0x0001c,
 	MLX4_CLR_INT_SIZE	= 0x00008,
 	MLX4_SLAVE_COMM_BASE	= 0x0,
 	MLX4_COMM_PAGESIZE	= 0x1000,
-	MLX4_CLOCK_SIZE		= 0x00008
+	MLX4_CLOCK_SIZE		= 0x00008,
+	MLX4_COMM_CHAN_CAPS	= 0x8,
+	MLX4_COMM_CHAN_FLAGS	= 0xc
 };
 
 enum {
@@ -120,6 +108,10 @@ enum mlx4_mpt_state {
 };
 
 #define MLX4_COMM_TIME		10000
+#define MLX4_COMM_OFFLINE_TIME_OUT 30000
+#define MLX4_COMM_CMD_NA_OP    0x0
+
+
 enum {
 	MLX4_COMM_CMD_RESET,
 	MLX4_COMM_CMD_VHCR0,
@@ -169,7 +161,7 @@ enum mlx4_res_tracker_free_type {
 
 /*
  *Virtual HCR structures.
- * mlx4_vhcr is the sw representation, in machine endianess
+ * mlx4_vhcr is the sw representation, in machine endianness
  *
  * mlx4_vhcr_cmd is the formalized structure, the one that is passed
  * to FW to go through communication channel.
@@ -190,6 +182,7 @@ struct mlx4_vhcr {
 struct mlx4_vhcr_cmd {
 	__be64 in_param;
 	__be32 in_modifier;
+	u32 reserved1;
 	__be64 out_param;
 	__be16 token;
 	u16 reserved;
@@ -221,19 +214,21 @@ extern int mlx4_debug_level;
 #define mlx4_dbg(mdev, format, ...)					\
 do {									\
 	if (mlx4_debug_level)						\
-		dev_printk(KERN_DEBUG, &(mdev)->pdev->dev, format,	\
+		dev_printk(KERN_DEBUG,					\
+			   &(mdev)->persist->pdev->dev, format,		\
 			   ##__VA_ARGS__);				\
 } while (0)
 
 #define mlx4_err(mdev, format, ...)					\
-	dev_err(&(mdev)->pdev->dev, format, ##__VA_ARGS__)
+	dev_err(&(mdev)->persist->pdev->dev, format, ##__VA_ARGS__)
 #define mlx4_info(mdev, format, ...)					\
-	dev_info(&(mdev)->pdev->dev, format, ##__VA_ARGS__)
+	dev_info(&(mdev)->persist->pdev->dev, format, ##__VA_ARGS__)
 #define mlx4_warn(mdev, format, ...)					\
-	dev_warn(&(mdev)->pdev->dev, format, ##__VA_ARGS__)
+	dev_warn(&(mdev)->persist->pdev->dev, format, ##__VA_ARGS__)
 
 extern int mlx4_log_num_mgm_entry_size;
 extern int log_mtts_per_seg;
+extern int mlx4_internal_err_reset;
 
 #define MLX4_MAX_NUM_SLAVES	(min(MLX4_MAX_NUM_PF + MLX4_MAX_NUM_VF, \
 				     MLX4_MFUNC_MAX))
@@ -503,6 +498,8 @@ struct mlx4_vport_state {
 	u32 tx_rate;
 	bool spoofchk;
 	u32 link_state;
+	u8 qos_vport;
+	__be64 guid;
 };
 
 struct mlx4_vf_admin_state {
@@ -559,6 +556,11 @@ struct mlx4_slave_event_eq {
 	struct mlx4_eqe event_eqe[SLAVE_EVENT_EQ_SIZE];
 };
 
+struct mlx4_qos_manager {
+	int num_of_qos_vfs;
+	DECLARE_BITMAP(priority_bm, MLX4_NUM_UP);
+};
+
 struct mlx4_master_qp0_state {
 	int proxy_qp0_active;
 	int qp0_active;
@@ -583,6 +585,7 @@ struct mlx4_mfunc_master_ctx {
 	struct mlx4_eqe		cmd_eqe;
 	struct mlx4_slave_event_eq slave_eq;
 	struct mutex		gen_eqe_mutex[MLX4_MFUNC_MAX];
+	struct mlx4_qos_manager qos_ctl[MLX4_MAX_PORTS + 1];
 };
 
 struct mlx4_mfunc {
@@ -607,7 +610,6 @@ struct mlx4_mgm {
 struct mlx4_cmd {
 	struct pci_pool	       *pool;
 	void __iomem	       *hcr;
-	struct mutex		hcr_mutex;
 	struct mutex		slave_cmd_mutex;
 	struct semaphore	poll_sem;
 	struct semaphore	event_sem;
@@ -636,6 +638,7 @@ struct mlx4_vf_immed_vlan_work {
 	int			orig_vlan_ix;
 	u8			port;
 	u8			qos;
+	u8                      qos_vport;
 	u16			vlan_id;
 	u16			orig_vlan_id;
 };
@@ -761,9 +764,11 @@ enum {
 
 
 struct mlx4_set_port_general_context {
-	u8 reserved[3];
+	u16 reserved1;
+	u8 v_ignore_fcs;
 	u8 flags;
-	u16 reserved2;
+	u8 ignore_fcs;
+	u8 reserved2;
 	__be16 mtu;
 	u8 pptx;
 	u8 pfctx;
@@ -878,6 +883,8 @@ struct mlx4_priv {
 	int			reserved_mtts;
 	int			fs_hash_mode;
 	u8 virt2phys_pkey[MLX4_MFUNC_MAX][MLX4_MAX_PORTS][MLX4_MAX_PORT_PKEYS];
+	struct mlx4_port_map	v2p; /* cached port mapping configuration */
+	struct mutex		bond_mutex; /* for bond mode */
 	__be64			slave_node_guids[MLX4_MFUNC_MAX];
 
 	atomic_t		opreq_count;
@@ -995,7 +1002,8 @@ void __mlx4_xrcd_free(struct mlx4_dev *dev, u32 xrcdn);
 
 void mlx4_start_catas_poll(struct mlx4_dev *dev);
 void mlx4_stop_catas_poll(struct mlx4_dev *dev);
-void mlx4_catas_init(void);
+int mlx4_catas_init(struct mlx4_dev *dev);
+void mlx4_catas_end(struct mlx4_dev *dev);
 int mlx4_restart_one(struct pci_dev *pdev);
 int mlx4_register_device(struct mlx4_dev *dev);
 void mlx4_unregister_device(struct mlx4_dev *dev);
@@ -1161,13 +1169,14 @@ enum {
 int mlx4_cmd_init(struct mlx4_dev *dev);
 void mlx4_cmd_cleanup(struct mlx4_dev *dev, int cleanup_mask);
 int mlx4_multi_func_init(struct mlx4_dev *dev);
+int mlx4_ARM_COMM_CHANNEL(struct mlx4_dev *dev);
 void mlx4_multi_func_cleanup(struct mlx4_dev *dev);
 void mlx4_cmd_event(struct mlx4_dev *dev, u16 token, u8 status, u64 out_param);
 int mlx4_cmd_use_events(struct mlx4_dev *dev);
 void mlx4_cmd_use_polling(struct mlx4_dev *dev);
 
 int mlx4_comm_cmd(struct mlx4_dev *dev, u8 cmd, u16 param,
-		  unsigned long timeout);
+		  u16 op, unsigned long timeout);
 
 void mlx4_cq_tasklet_cb(unsigned long data);
 void mlx4_cq_completion(struct mlx4_dev *dev, u32 cqn);
@@ -1177,7 +1186,7 @@ void mlx4_qp_event(struct mlx4_dev *dev, u32 qpn, int event_type);
 
 void mlx4_srq_event(struct mlx4_dev *dev, u32 srqn, int event_type);
 
-void mlx4_handle_catas_err(struct mlx4_dev *dev);
+void mlx4_enter_error_state(struct mlx4_dev_persistent *persist);
 
 int mlx4_SENSE_PORT(struct mlx4_dev *dev, int port,
 		    enum mlx4_port_type *type);
@@ -1355,6 +1364,7 @@ int mlx4_get_slave_num_gids(struct mlx4_dev *dev, int slave, int port);
 /* Returns the VF index of slave */
 int mlx4_get_vf_indx(struct mlx4_dev *dev, int slave);
 int mlx4_config_mad_demux(struct mlx4_dev *dev);
+int mlx4_do_bond(struct mlx4_dev *dev, bool enable);
 
 enum mlx4_zone_flags {
 	MLX4_ZONE_ALLOW_ALLOC_FROM_LOWER_PRIO	= 1UL << 0,

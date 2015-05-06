@@ -130,6 +130,30 @@
 #define LCD_FLAG_N		0x0040	/* 2-rows mode */
 #define LCD_FLAG_L		0x0080	/* backlight enabled */
 
+/* LCD commands */
+#define LCD_CMD_DISPLAY_CLEAR	0x01	/* Clear entire display */
+
+#define LCD_CMD_ENTRY_MODE	0x04	/* Set entry mode */
+#define LCD_CMD_CURSOR_INC	0x02	/* Increment cursor */
+
+#define LCD_CMD_DISPLAY_CTRL	0x08	/* Display control */
+#define LCD_CMD_DISPLAY_ON	0x04	/* Set display on */
+#define LCD_CMD_CURSOR_ON	0x02	/* Set cursor on */
+#define LCD_CMD_BLINK_ON	0x01	/* Set blink on */
+
+#define LCD_CMD_SHIFT		0x10	/* Shift cursor/display */
+#define LCD_CMD_DISPLAY_SHIFT	0x08	/* Shift display instead of cursor */
+#define LCD_CMD_SHIFT_RIGHT	0x04	/* Shift display/cursor to the right */
+
+#define LCD_CMD_FUNCTION_SET	0x20	/* Set function */
+#define LCD_CMD_DATA_LEN_8BITS	0x10	/* Set data length to 8 bits */
+#define LCD_CMD_TWO_LINES	0x08	/* Set to two display lines */
+#define LCD_CMD_FONT_5X10_DOTS	0x04	/* Set char font to 5x10 dots */
+
+#define LCD_CMD_SET_CGRAM_ADDR	0x40	/* Set char generator RAM address */
+
+#define LCD_CMD_SET_DDRAM_ADDR	0x80	/* Set display data RAM address */
+
 #define LCD_ESCAPE_LEN		24	/* max chars for LCD escape command */
 #define LCD_ESCAPE_CHAR	27	/* use char 27 for escape command */
 
@@ -228,9 +252,6 @@ static struct {
 	bool initialized;
 	bool must_clear;
 
-	/* TODO: use bool here? */
-	char left_shift;
-
 	int height;
 	int width;
 	int bwidth;
@@ -314,11 +335,11 @@ static unsigned char lcd_bits[LCD_PORTS][LCD_BITS][BIT_STATES];
  * LCD types
  */
 #define LCD_TYPE_NONE		0
-#define LCD_TYPE_OLD		1
-#define LCD_TYPE_KS0074		2
-#define LCD_TYPE_HANTRONIX	3
-#define LCD_TYPE_NEXCOM		4
-#define LCD_TYPE_CUSTOM		5
+#define LCD_TYPE_CUSTOM		1
+#define LCD_TYPE_OLD		2
+#define LCD_TYPE_KS0074		3
+#define LCD_TYPE_HANTRONIX	4
+#define LCD_TYPE_NEXCOM		5
 
 /*
  * keypad types
@@ -452,8 +473,6 @@ static struct pardevice *pprt;
 
 static int keypad_initialized;
 
-static char init_in_progress;
-
 static void (*lcd_write_cmd)(int);
 static void (*lcd_write_data)(int);
 static void (*lcd_clear_fast)(void);
@@ -481,7 +500,7 @@ MODULE_PARM_DESC(keypad_type,
 static int lcd_type = NOT_SET;
 module_param(lcd_type, int, 0000);
 MODULE_PARM_DESC(lcd_type,
-		 "LCD type: 0=none, 1=old //, 2=serial ks0074, 3=hantronix //, 4=nexcom //, 5=compiled-in");
+		 "LCD type: 0=none, 1=compiled-in, 2=old, 3=serial ks0074, 4=hantronix, 5=nexcom");
 
 static int lcd_height = NOT_SET;
 module_param(lcd_height, int, 0000);
@@ -759,7 +778,7 @@ static void long_sleep(int ms)
 	if (in_interrupt()) {
 		mdelay(ms);
 	} else {
-		current->state = TASK_INTERRUPTIBLE;
+		__set_current_state(TASK_INTERRUPTIBLE);
 		schedule_timeout((ms * HZ + 999) / 1000);
 	}
 }
@@ -886,7 +905,7 @@ static void lcd_write_data_tilcd(int data)
 
 static void lcd_gotoxy(void)
 {
-	lcd_write_cmd(0x80	/* set DDRAM address */
+	lcd_write_cmd(LCD_CMD_SET_DDRAM_ADDR
 		      | (lcd.addr.y ? lcd.hwidth : 0)
 		      /* we force the cursor to stay at the end of the
 			 line if it wants to go farther */
@@ -994,7 +1013,7 @@ static void lcd_clear_fast_tilcd(void)
 /* clears the display and resets X/Y */
 static void lcd_clear_display(void)
 {
-	lcd_write_cmd(0x01);	/* clear display */
+	lcd_write_cmd(LCD_CMD_DISPLAY_CLEAR);
 	lcd.addr.x = 0;
 	lcd.addr.y = 0;
 	/* we must wait a few milliseconds (15) */
@@ -1008,26 +1027,29 @@ static void lcd_init_display(void)
 
 	long_sleep(20);		/* wait 20 ms after power-up for the paranoid */
 
-	lcd_write_cmd(0x30);	/* 8bits, 1 line, small fonts */
+	/* 8bits, 1 line, small fonts; let's do it 3 times */
+	lcd_write_cmd(LCD_CMD_FUNCTION_SET | LCD_CMD_DATA_LEN_8BITS);
 	long_sleep(10);
-	lcd_write_cmd(0x30);	/* 8bits, 1 line, small fonts */
+	lcd_write_cmd(LCD_CMD_FUNCTION_SET | LCD_CMD_DATA_LEN_8BITS);
 	long_sleep(10);
-	lcd_write_cmd(0x30);	/* 8bits, 1 line, small fonts */
+	lcd_write_cmd(LCD_CMD_FUNCTION_SET | LCD_CMD_DATA_LEN_8BITS);
 	long_sleep(10);
 
-	lcd_write_cmd(0x30	/* set font height and lines number */
-		      | ((lcd.flags & LCD_FLAG_F) ? 4 : 0)
-		      | ((lcd.flags & LCD_FLAG_N) ? 8 : 0)
+	/* set font height and lines number */
+	lcd_write_cmd(LCD_CMD_FUNCTION_SET | LCD_CMD_DATA_LEN_8BITS
+		      | ((lcd.flags & LCD_FLAG_F) ? LCD_CMD_FONT_5X10_DOTS : 0)
+		      | ((lcd.flags & LCD_FLAG_N) ? LCD_CMD_TWO_LINES : 0)
 	    );
 	long_sleep(10);
 
-	lcd_write_cmd(0x08);	/* display off, cursor off, blink off */
+	/* display off, cursor off, blink off */
+	lcd_write_cmd(LCD_CMD_DISPLAY_CTRL);
 	long_sleep(10);
 
-	lcd_write_cmd(0x08	/* set display mode */
-		      | ((lcd.flags & LCD_FLAG_D) ? 4 : 0)
-		      | ((lcd.flags & LCD_FLAG_C) ? 2 : 0)
-		      | ((lcd.flags & LCD_FLAG_B) ? 1 : 0)
+	lcd_write_cmd(LCD_CMD_DISPLAY_CTRL	/* set display mode */
+		      | ((lcd.flags & LCD_FLAG_D) ? LCD_CMD_DISPLAY_ON : 0)
+		      | ((lcd.flags & LCD_FLAG_C) ? LCD_CMD_CURSOR_ON : 0)
+		      | ((lcd.flags & LCD_FLAG_B) ? LCD_CMD_BLINK_ON : 0)
 	    );
 
 	lcd_backlight((lcd.flags & LCD_FLAG_L) ? 1 : 0);
@@ -1035,7 +1057,7 @@ static void lcd_init_display(void)
 	long_sleep(10);
 
 	/* entry mode set : increment, cursor shifting */
-	lcd_write_cmd(0x06);
+	lcd_write_cmd(LCD_CMD_ENTRY_MODE | LCD_CMD_CURSOR_INC);
 
 	lcd_clear_display();
 }
@@ -1119,7 +1141,7 @@ static inline int handle_lcd_special_code(void)
 		if (lcd.addr.x > 0) {
 			/* back one char if not at end of line */
 			if (lcd.addr.x < lcd.bwidth)
-				lcd_write_cmd(0x10);
+				lcd_write_cmd(LCD_CMD_SHIFT);
 			lcd.addr.x--;
 		}
 		processed = 1;
@@ -1127,21 +1149,20 @@ static inline int handle_lcd_special_code(void)
 	case 'r':	/* shift cursor right */
 		if (lcd.addr.x < lcd.width) {
 			/* allow the cursor to pass the end of the line */
-			if (lcd.addr.x <
-			    (lcd.bwidth - 1))
-				lcd_write_cmd(0x14);
+			if (lcd.addr.x < (lcd.bwidth - 1))
+				lcd_write_cmd(LCD_CMD_SHIFT |
+						LCD_CMD_SHIFT_RIGHT);
 			lcd.addr.x++;
 		}
 		processed = 1;
 		break;
 	case 'L':	/* shift display left */
-		lcd.left_shift++;
-		lcd_write_cmd(0x18);
+		lcd_write_cmd(LCD_CMD_SHIFT | LCD_CMD_DISPLAY_SHIFT);
 		processed = 1;
 		break;
 	case 'R':	/* shift display right */
-		lcd.left_shift--;
-		lcd_write_cmd(0x1C);
+		lcd_write_cmd(LCD_CMD_SHIFT | LCD_CMD_DISPLAY_SHIFT |
+				LCD_CMD_SHIFT_RIGHT);
 		processed = 1;
 		break;
 	case 'k': {	/* kill end of line */
@@ -1157,7 +1178,6 @@ static inline int handle_lcd_special_code(void)
 	}
 	case 'I':	/* reinitialize display */
 		lcd_init_display();
-		lcd.left_shift = 0;
 		processed = 1;
 		break;
 	case 'G': {
@@ -1211,7 +1231,7 @@ static inline int handle_lcd_special_code(void)
 			esc++;
 		}
 
-		lcd_write_cmd(0x40 | (cgaddr * 8));
+		lcd_write_cmd(LCD_CMD_SET_CGRAM_ADDR | (cgaddr * 8));
 		for (addr = 0; addr < cgoffset; addr++)
 			lcd_write_data(cgbytes[addr]);
 
@@ -1244,21 +1264,29 @@ static inline int handle_lcd_special_code(void)
 		break;
 	}
 
+	/* TODO: This indent party here got ugly, clean it! */
 	/* Check whether one flag was changed */
 	if (oldflags != lcd.flags) {
 		/* check whether one of B,C,D flags were changed */
 		if ((oldflags ^ lcd.flags) &
 		    (LCD_FLAG_B | LCD_FLAG_C | LCD_FLAG_D))
 			/* set display mode */
-			lcd_write_cmd(0x08
-				      | ((lcd.flags & LCD_FLAG_D) ? 4 : 0)
-				      | ((lcd.flags & LCD_FLAG_C) ? 2 : 0)
-				      | ((lcd.flags & LCD_FLAG_B) ? 1 : 0));
+			lcd_write_cmd(LCD_CMD_DISPLAY_CTRL
+				      | ((lcd.flags & LCD_FLAG_D)
+						      ? LCD_CMD_DISPLAY_ON : 0)
+				      | ((lcd.flags & LCD_FLAG_C)
+						      ? LCD_CMD_CURSOR_ON : 0)
+				      | ((lcd.flags & LCD_FLAG_B)
+						      ? LCD_CMD_BLINK_ON : 0));
 		/* check whether one of F,N flags was changed */
 		else if ((oldflags ^ lcd.flags) & (LCD_FLAG_F | LCD_FLAG_N))
-			lcd_write_cmd(0x30
-				      | ((lcd.flags & LCD_FLAG_F) ? 4 : 0)
-				      | ((lcd.flags & LCD_FLAG_N) ? 8 : 0));
+			lcd_write_cmd(LCD_CMD_FUNCTION_SET
+				      | LCD_CMD_DATA_LEN_8BITS
+				      | ((lcd.flags & LCD_FLAG_F)
+						      ? LCD_CMD_TWO_LINES : 0)
+				      | ((lcd.flags & LCD_FLAG_N)
+						      ? LCD_CMD_FONT_5X10_DOTS
+								      : 0));
 		/* check whether L flag was changed */
 		else if ((oldflags ^ lcd.flags) & (LCD_FLAG_L)) {
 			if (lcd.flags & (LCD_FLAG_L))
@@ -1297,13 +1325,13 @@ static void lcd_write_char(char c)
 				   end of the line */
 				if (lcd.addr.x < lcd.bwidth)
 					/* back one char */
-					lcd_write_cmd(0x10);
+					lcd_write_cmd(LCD_CMD_SHIFT);
 				lcd.addr.x--;
 			}
 			/* replace with a space */
 			lcd_write_data(' ');
 			/* back one char again */
-			lcd_write_cmd(0x10);
+			lcd_write_cmd(LCD_CMD_SHIFT);
 			break;
 		case '\014':
 			/* quickly clear the display */
@@ -1688,9 +1716,6 @@ static struct miscdevice keypad_dev = {
 
 static void keypad_send_key(const char *string, int max_len)
 {
-	if (init_in_progress)
-		return;
-
 	/* send the key to the device only if a process is attached to it. */
 	if (!atomic_read(&keypad_available)) {
 		while (max_len-- && keypad_buflen < KEYPAD_BUFFER && *string) {
@@ -1980,10 +2005,8 @@ static void init_scan_timer(void)
 	if (scan_timer.function != NULL)
 		return;		/* already started */
 
-	init_timer(&scan_timer);
+	setup_timer(&scan_timer, (void *)&panel_scan_timer, 0);
 	scan_timer.expires = jiffies + INPUT_POLL_TIME;
-	scan_timer.data = 0;
-	scan_timer.function = (void *)&panel_scan_timer;
 	add_timer(&scan_timer);
 }
 
@@ -2206,6 +2229,7 @@ static void panel_attach(struct parport *port)
 		if (misc_register(&keypad_dev))
 			goto err_lcd_unreg;
 	}
+	register_reboot_notifier(&panel_notifier);
 	return;
 
 err_lcd_unreg:
@@ -2226,6 +2250,8 @@ static void panel_detach(struct parport *port)
 		       __func__, port->number, parport);
 		return;
 	}
+
+	unregister_reboot_notifier(&panel_notifier);
 
 	if (keypad.enabled && keypad_initialized) {
 		misc_deregister(&keypad_dev);
@@ -2251,7 +2277,7 @@ static struct parport_driver panel_driver = {
 /* init function */
 static int __init panel_init_module(void)
 {
-	int selected_keypad_type = NOT_SET;
+	int selected_keypad_type = NOT_SET, err;
 
 	/* take care of an eventual profile */
 	switch (profile) {
@@ -2294,26 +2320,6 @@ static int __init panel_init_module(void)
 	}
 
 	/*
-	 * Init lcd struct with load-time values to preserve exact current
-	 * functionality (at least for now).
-	 */
-	lcd.height = lcd_height;
-	lcd.width = lcd_width;
-	lcd.bwidth = lcd_bwidth;
-	lcd.hwidth = lcd_hwidth;
-	lcd.charset = lcd_charset;
-	lcd.proto = lcd_proto;
-	lcd.pins.e = lcd_e_pin;
-	lcd.pins.rs = lcd_rs_pin;
-	lcd.pins.rw = lcd_rw_pin;
-	lcd.pins.cl = lcd_cl_pin;
-	lcd.pins.da = lcd_da_pin;
-	lcd.pins.bl = lcd_bl_pin;
-
-	/* Leave it for now, just in case */
-	lcd.esc_seq.len = -1;
-
-	/*
 	 * Overwrite selection with module param values (both keypad and lcd),
 	 * where the deprecated params have lower prio.
 	 */
@@ -2331,6 +2337,28 @@ static int __init panel_init_module(void)
 
 	lcd.enabled = (selected_lcd_type > 0);
 
+	if (lcd.enabled) {
+		/*
+		 * Init lcd struct with load-time values to preserve exact
+		 * current functionality (at least for now).
+		 */
+		lcd.height = lcd_height;
+		lcd.width = lcd_width;
+		lcd.bwidth = lcd_bwidth;
+		lcd.hwidth = lcd_hwidth;
+		lcd.charset = lcd_charset;
+		lcd.proto = lcd_proto;
+		lcd.pins.e = lcd_e_pin;
+		lcd.pins.rs = lcd_rs_pin;
+		lcd.pins.rw = lcd_rw_pin;
+		lcd.pins.cl = lcd_cl_pin;
+		lcd.pins.da = lcd_da_pin;
+		lcd.pins.bl = lcd_bl_pin;
+
+		/* Leave it for now, just in case */
+		lcd.esc_seq.len = -1;
+	}
+
 	switch (selected_keypad_type) {
 	case KEYPAD_TYPE_OLD:
 		keypad_profile = old_keypad_profile;
@@ -2346,27 +2374,17 @@ static int __init panel_init_module(void)
 		break;
 	}
 
-	/* tells various subsystems about the fact that we are initializing */
-	init_in_progress = 1;
-
-	if (parport_register_driver(&panel_driver)) {
-		pr_err("could not register with parport. Aborting.\n");
-		return -EIO;
-	}
-
 	if (!lcd.enabled && !keypad.enabled) {
-		/* no device enabled, let's release the parport */
-		if (pprt) {
-			parport_release(pprt);
-			parport_unregister_device(pprt);
-			pprt = NULL;
-		}
-		parport_unregister_driver(&panel_driver);
+		/* no device enabled, let's exit */
 		pr_err("driver version " PANEL_VERSION " disabled.\n");
 		return -ENODEV;
 	}
 
-	register_reboot_notifier(&panel_notifier);
+	err = parport_register_driver(&panel_driver);
+	if (err) {
+		pr_err("could not register with parport. Aborting.\n");
+		return err;
+	}
 
 	if (pprt)
 		pr_info("driver version " PANEL_VERSION
@@ -2375,15 +2393,11 @@ static int __init panel_init_module(void)
 	else
 		pr_info("driver version " PANEL_VERSION
 			" not yet registered\n");
-	/* tells various subsystems about the fact that initialization
-	   is finished */
-	init_in_progress = 0;
 	return 0;
 }
 
 static void __exit panel_cleanup_module(void)
 {
-	unregister_reboot_notifier(&panel_notifier);
 
 	if (scan_timer.function != NULL)
 		del_timer_sync(&scan_timer);

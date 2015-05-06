@@ -510,6 +510,7 @@ config SENSORS_G762
 config SENSORS_GPIO_FAN
 	tristate "GPIO fan"
 	depends on GPIOLIB
+	depends on THERMAL || THERMAL=n
 	help
 	  If you say yes here you get support for fans connected to GPIO lines.
 
@@ -599,8 +600,8 @@ config SENSORS_IT87
 	help
 	  If you say yes here you get support for ITE IT8705F, IT8712F,
 	  IT8716F, IT8718F, IT8720F, IT8721F, IT8726F, IT8728F, IT8758E,
-	  IT8771E, IT8772E, IT8782F, IT8783E/F and IT8603E sensor chips,
-	  and the SiS950 clone.
+	  IT8771E, IT8772E, IT8781F, IT8782F, IT8783E/F, IT8786E, IT8790E,
+	  IT8603E, IT8620E, and IT8623E sensor chips, and the SiS950 clone.
 
 	  This driver can also be built as a module.  If so, the module
 	  will be called it87.
@@ -624,7 +625,7 @@ config SENSORS_JC42
 	  mobile devices and servers.  Support will include, but not be limited
 	  to, ADT7408, AT30TS00, CAT34TS02, CAT6095, MAX6604, MCP9804, MCP9805,
 	  MCP98242, MCP98243, MCP98244, MCP9843, SE97, SE98, STTS424(E),
-	  STTS2002, STTS3000, TSE2002B3, TSE2002GB2, TS3000B3, and TS3000GB2.
+	  STTS2002, STTS3000, TSE2002, TSE2004, TS3000, and TS3001.
 
 	  This driver can also be built as a module.  If so, the module
 	  will be called jc42.
@@ -1145,6 +1146,16 @@ config SENSORS_NCT7802
 	  This driver can also be built as a module.  If so, the module
 	  will be called nct7802.
 
+config SENSORS_NCT7904
+	tristate "Nuvoton NCT7904"
+	depends on I2C
+	help
+	  If you say yes here you get support for the Nuvoton NCT7904
+	  hardware monitoring chip, including manual fan speed control.
+
+	  This driver can also be built as a module.  If so, the module
+	  will be called nct7904.
+
 config SENSORS_PCF8591
 	tristate "Philips PCF8591 ADC/DAC"
 	depends on I2C
@@ -1164,6 +1175,7 @@ source drivers/hwmon/pmbus/Kconfig
 config SENSORS_PWM_FAN
 	tristate "PWM fan"
 	depends on (PWM && OF) || COMPILE_TEST
+	depends on THERMAL || THERMAL=n
 	help
 	  If you say yes here you get support for fans connected to PWM lines.
 	  The driver uses the generic PWM interface, thus it will work on a
@@ -1389,6 +1401,7 @@ config SENSORS_ADS1015
 config SENSORS_ADS7828
 	tristate "Texas Instruments ADS7828 and compatibles"
 	depends on I2C
+	select REGMAP_I2C
 	help
 	  If you say yes here you get support for Texas Instruments ADS7828 and
 	  ADS7830 8-channel A/D converters. ADS7828 resolution is 12-bit, while
@@ -1430,8 +1443,8 @@ config SENSORS_INA2XX
 	tristate "Texas Instruments INA219 and compatibles"
 	depends on I2C
 	help
-	  If you say yes here you get support for INA219, INA220, INA226, and
-	  INA230 power monitor chips.
+	  If you say yes here you get support for INA219, INA220, INA226,
+	  INA230, and INA231 power monitor chips.
 
 	  The INA2xx driver is configured for the default configuration of
 	  the part as described in the datasheet.
@@ -1605,7 +1618,7 @@ config SENSORS_W83795
 	  will be called w83795.
 
 config SENSORS_W83795_FANCTRL
-	boolean "Include automatic fan control support (DANGEROUS)"
+	bool "Include automatic fan control support (DANGEROUS)"
 	depends on SENSORS_W83795
 	default n
 	help

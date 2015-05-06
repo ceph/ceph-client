@@ -479,7 +479,8 @@ void usb_stor_adjust_quirks(struct usb_device *udev, unsigned long *fflags)
 			US_FL_SINGLE_LUN | US_FL_NO_WP_DETECT |
 			US_FL_NO_READ_DISC_INFO | US_FL_NO_READ_CAPACITY_16 |
 			US_FL_INITIAL_READ10 | US_FL_WRITE_CACHE |
-			US_FL_NO_ATA_1X | US_FL_NO_REPORT_OPCODES);
+			US_FL_NO_ATA_1X | US_FL_NO_REPORT_OPCODES |
+			US_FL_MAX_SECTORS_240);
 
 	p = quirks;
 	while (*p) {
@@ -519,6 +520,9 @@ void usb_stor_adjust_quirks(struct usb_device *udev, unsigned long *fflags)
 			break;
 		case 'f':
 			f |= US_FL_NO_REPORT_OPCODES;
+			break;
+		case 'g':
+			f |= US_FL_MAX_SECTORS_240;
 			break;
 		case 'h':
 			f |= US_FL_CAPACITY_HEURISTICS;
@@ -889,6 +893,12 @@ static void usb_stor_scan_dwork(struct work_struct *work)
 	    !(us->fflags & US_FL_SCM_MULT_TARG)) {
 		mutex_lock(&us->dev_mutex);
 		us->max_lun = usb_stor_Bulk_max_lun(us);
+		/*
+		 * Allow proper scanning of devices that present more than 8 LUNs
+		 * While not affecting other devices that may need the previous behavior
+		 */
+		if (us->max_lun >= 8)
+			us_to_host(us)->max_lun = us->max_lun+1;
 		mutex_unlock(&us->dev_mutex);
 	}
 	scsi_scan_host(us_to_host(us));
@@ -1074,7 +1084,7 @@ static int storage_probe(struct usb_interface *intf,
 
 	/* If uas is enabled and this device can do uas then ignore it. */
 #if IS_ENABLED(CONFIG_USB_UAS)
-	if (uas_use_uas_driver(intf, id))
+	if (uas_use_uas_driver(intf, id, NULL))
 		return -ENXIO;
 #endif
 

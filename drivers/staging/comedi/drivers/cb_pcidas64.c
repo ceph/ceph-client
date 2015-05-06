@@ -81,16 +81,13 @@ TODO:
 */
 
 #include <linux/module.h>
-#include <linux/pci.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
 
-#include "../comedidev.h"
+#include "../comedi_pci.h"
 
-#include "8253.h"
 #include "8255.h"
 #include "plx9080.h"
-#include "comedi_fc.h"
 
 #define TIMER_BASE 25		/*  40MHz master clock */
 /* 100kHz 'prescaled' clock for slow acquisition,
@@ -439,6 +436,29 @@ static const struct comedi_lrange ai_ranges_64xx = {
 	}
 };
 
+static const uint8_t ai_range_code_64xx[8] = {
+	0x0, 0x1, 0x2, 0x3,	/* bipolar 10, 5, 2,5, 1.25 */
+	0x8, 0x9, 0xa, 0xb	/* unipolar 10, 5, 2.5, 1.25 */
+};
+
+/* analog input ranges for 64-Mx boards */
+static const struct comedi_lrange ai_ranges_64_mx = {
+	7, {
+		BIP_RANGE(5),
+		BIP_RANGE(2.5),
+		BIP_RANGE(1.25),
+		BIP_RANGE(0.625),
+		UNI_RANGE(5),
+		UNI_RANGE(2.5),
+		UNI_RANGE(1.25)
+	}
+};
+
+static const uint8_t ai_range_code_64_mx[7] = {
+	0x0, 0x1, 0x2, 0x3,	/* bipolar 5, 2.5, 1.25, 0.625 */
+	0x9, 0xa, 0xb		/* unipolar 5, 2.5, 1.25 */
+};
+
 /* analog input ranges for 60xx boards */
 static const struct comedi_lrange ai_ranges_60xx = {
 	4, {
@@ -447,6 +467,10 @@ static const struct comedi_lrange ai_ranges_60xx = {
 		BIP_RANGE(0.5),
 		BIP_RANGE(0.05)
 	}
+};
+
+static const uint8_t ai_range_code_60xx[4] = {
+	0x0, 0x1, 0x4, 0x7	/* bipolar 10, 5, 0.5, 0.05 */
 };
 
 /* analog input ranges for 6030, etc boards */
@@ -469,6 +493,11 @@ static const struct comedi_lrange ai_ranges_6030 = {
 	}
 };
 
+static const uint8_t ai_range_code_6030[14] = {
+	0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, /* bip 10, 5, 2, 1, 0.5, 0.2, 0.1 */
+	0x9, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf  /* uni 10, 5, 2, 1, 0.5, 0.2, 0.1 */
+};
+
 /* analog input ranges for 6052, etc boards */
 static const struct comedi_lrange ai_ranges_6052 = {
 	15, {
@@ -488,6 +517,11 @@ static const struct comedi_lrange ai_ranges_6052 = {
 		UNI_RANGE(0.2),
 		UNI_RANGE(0.1)
 	}
+};
+
+static const uint8_t ai_range_code_6052[15] = {
+	0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7,	/* bipolar 10 ... 0.05 */
+	0x9, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf	/* unipolar 10 ... 0.1 */
 };
 
 /* analog input ranges for 4020 board */
@@ -593,6 +627,7 @@ struct pcidas64_board {
 	int ai_bits;		/*  analog input resolution */
 	int ai_speed;		/*  fastest conversion period in ns */
 	const struct comedi_lrange *ai_range_table;
+	const uint8_t *ai_range_code;
 	int ao_nchan;		/*  number of analog out channels */
 	int ao_bits;		/*  analog output resolution */
 	int ao_scan_speed;	/*  analog output scan speed */
@@ -651,6 +686,7 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_scan_speed	= 10000,
 		.layout		= LAYOUT_64XX,
 		.ai_range_table	= &ai_ranges_64xx,
+		.ai_range_code	= ai_range_code_64xx,
 		.ao_range_table	= &ao_ranges_64xx,
 		.ao_range_code	= ao_range_code_64xx,
 		.ai_fifo	= &ai_fifo_64xx,
@@ -666,6 +702,7 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_scan_speed	= 10000,
 		.layout		= LAYOUT_64XX,
 		.ai_range_table	= &ai_ranges_64xx,
+		.ai_range_code	= ai_range_code_64xx,
 		.ao_range_table	= &ao_ranges_64xx,
 		.ao_range_code	= ao_range_code_64xx,
 		.ai_fifo	= &ai_fifo_64xx,
@@ -680,7 +717,8 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_bits	= 16,
 		.ao_scan_speed	= 10000,
 		.layout		= LAYOUT_64XX,
-		.ai_range_table	= &ai_ranges_64xx,
+		.ai_range_table	= &ai_ranges_64_mx,
+		.ai_range_code	= ai_range_code_64_mx,
 		.ao_range_table	= &ao_ranges_64xx,
 		.ao_range_code	= ao_range_code_64xx,
 		.ai_fifo	= &ai_fifo_64xx,
@@ -695,7 +733,8 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_bits	= 16,
 		.ao_scan_speed	= 10000,
 		.layout		= LAYOUT_64XX,
-		.ai_range_table	= &ai_ranges_64xx,
+		.ai_range_table	= &ai_ranges_64_mx,
+		.ai_range_code	= ai_range_code_64_mx,
 		.ao_range_table	= &ao_ranges_64xx,
 		.ao_range_code	= ao_range_code_64xx,
 		.ai_fifo	= &ai_fifo_64xx,
@@ -710,7 +749,8 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_bits	= 16,
 		.ao_scan_speed	= 10000,
 		.layout		= LAYOUT_64XX,
-		.ai_range_table	= &ai_ranges_64xx,
+		.ai_range_table	= &ai_ranges_64_mx,
+		.ai_range_code	= ai_range_code_64_mx,
 		.ao_range_table	= &ao_ranges_64xx,
 		.ao_range_code	= ao_range_code_64xx,
 		.ai_fifo	= &ai_fifo_64xx,
@@ -725,6 +765,7 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_bits	= 16,
 		.layout		= LAYOUT_60XX,
 		.ai_range_table	= &ai_ranges_60xx,
+		.ai_range_code	= ai_range_code_60xx,
 		.ao_range_table	= &range_bipolar10,
 		.ao_range_code	= ao_range_code_60xx,
 		.ai_fifo	= &ai_fifo_60xx,
@@ -740,6 +781,7 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_scan_speed	= 100000,
 		.layout		= LAYOUT_60XX,
 		.ai_range_table	= &ai_ranges_60xx,
+		.ai_range_code	= ai_range_code_60xx,
 		.ao_range_table	= &range_bipolar10,
 		.ao_range_code	= ao_range_code_60xx,
 		.ai_fifo	= &ai_fifo_60xx,
@@ -754,6 +796,7 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_scan_speed	= 100000,
 		.layout		= LAYOUT_60XX,
 		.ai_range_table	= &ai_ranges_60xx,
+		.ai_range_code	= ai_range_code_60xx,
 		.ao_range_table	= &range_bipolar10,
 		.ao_range_code	= ao_range_code_60xx,
 		.ai_fifo	= &ai_fifo_60xx,
@@ -769,6 +812,7 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_scan_speed	= 100000,
 		.layout		= LAYOUT_60XX,
 		.ai_range_table	= &ai_ranges_60xx,
+		.ai_range_code	= ai_range_code_60xx,
 		.ao_range_table	= &range_bipolar10,
 		.ao_range_code	= ao_range_code_60xx,
 		.ai_fifo	= &ai_fifo_60xx,
@@ -784,6 +828,7 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_scan_speed	= 10000,
 		.layout		= LAYOUT_60XX,
 		.ai_range_table	= &ai_ranges_6030,
+		.ai_range_code	= ai_range_code_6030,
 		.ao_range_table	= &ao_ranges_6030,
 		.ao_range_code	= ao_range_code_6030,
 		.ai_fifo	= &ai_fifo_60xx,
@@ -799,6 +844,7 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_scan_speed	= 10000,
 		.layout		= LAYOUT_60XX,
 		.ai_range_table	= &ai_ranges_6030,
+		.ai_range_code	= ai_range_code_6030,
 		.ao_range_table	= &ao_ranges_6030,
 		.ao_range_code	= ao_range_code_6030,
 		.ai_fifo	= &ai_fifo_60xx,
@@ -812,6 +858,7 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_nchan	= 0,
 		.layout		= LAYOUT_60XX,
 		.ai_range_table	= &ai_ranges_6030,
+		.ai_range_code	= ai_range_code_6030,
 		.ai_fifo	= &ai_fifo_60xx,
 		.has_8255	= 0,
 	},
@@ -823,6 +870,7 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_nchan	= 0,
 		.layout		= LAYOUT_60XX,
 		.ai_range_table	= &ai_ranges_6030,
+		.ai_range_code	= ai_range_code_6030,
 		.ai_fifo	= &ai_fifo_60xx,
 		.has_8255	= 0,
 	},
@@ -835,6 +883,7 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_scan_speed	= 0,
 		.layout		= LAYOUT_60XX,
 		.ai_range_table	= &ai_ranges_60xx,
+		.ai_range_code	= ai_range_code_60xx,
 		.ai_fifo	= &ai_fifo_60xx,
 		.has_8255	= 0,
 	},
@@ -848,6 +897,7 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_scan_speed	= 100000,
 		.layout		= LAYOUT_60XX,
 		.ai_range_table	= &ai_ranges_60xx,
+		.ai_range_code	= ai_range_code_60xx,
 		.ao_range_table	= &range_bipolar10,
 		.ao_range_code	= ao_range_code_60xx,
 		.ai_fifo	= &ai_fifo_60xx,
@@ -863,6 +913,7 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_scan_speed	= 100000,
 		.layout		= LAYOUT_60XX,
 		.ai_range_table	= &ai_ranges_60xx,
+		.ai_range_code	= ai_range_code_60xx,
 		.ao_range_table	= &range_bipolar10,
 		.ao_range_code	= ao_range_code_60xx,
 		.ai_fifo	= &ai_fifo_60xx,
@@ -878,6 +929,7 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_scan_speed	= 1000,
 		.layout		= LAYOUT_60XX,
 		.ai_range_table	= &ai_ranges_6052,
+		.ai_range_code	= ai_range_code_6052,
 		.ao_range_table	= &ao_ranges_6030,
 		.ao_range_code	= ao_range_code_6030,
 		.ai_fifo	= &ai_fifo_60xx,
@@ -893,6 +945,7 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_scan_speed	= 3333,
 		.layout		= LAYOUT_60XX,
 		.ai_range_table	= &ai_ranges_6052,
+		.ai_range_code	= ai_range_code_6052,
 		.ao_range_table	= &ao_ranges_6030,
 		.ao_range_code	= ao_range_code_6030,
 		.ai_fifo	= &ai_fifo_60xx,
@@ -908,6 +961,7 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_scan_speed	= 1000,
 		.layout		= LAYOUT_60XX,
 		.ai_range_table	= &ai_ranges_6052,
+		.ai_range_code	= ai_range_code_6052,
 		.ao_range_table	= &ao_ranges_6030,
 		.ao_range_code	= ao_range_code_6030,
 		.ai_fifo	= &ai_fifo_60xx,
@@ -923,6 +977,7 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_scan_speed	= 1000,
 		.layout		= LAYOUT_60XX,
 		.ai_range_table	= &ai_ranges_6052,
+		.ai_range_code	= ai_range_code_6052,
 		.ao_range_table	= &ao_ranges_6030,
 		.ao_range_code	= ao_range_code_6030,
 		.ai_fifo	= &ai_fifo_60xx,
@@ -957,6 +1012,7 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_scan_speed	= 10000,
 		.layout		= LAYOUT_64XX,
 		.ai_range_table	= &ai_ranges_64xx,
+		.ai_range_code	= ai_range_code_64xx,
 		.ai_fifo	= ai_fifo_64xx,
 		.has_8255	= 1,
 	},
@@ -968,7 +1024,8 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_nchan	= 0,
 		.ao_scan_speed	= 10000,
 		.layout		= LAYOUT_64XX,
-		.ai_range_table	= &ai_ranges_64xx,
+		.ai_range_table	= &ai_ranges_64_mx,
+		.ai_range_code	= ai_range_code_64_mx,
 		.ai_fifo	= ai_fifo_64xx,
 		.has_8255	= 1,
 	},
@@ -980,7 +1037,8 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_nchan	= 0,
 		.ao_scan_speed	= 10000,
 		.layout		= LAYOUT_64XX,
-		.ai_range_table	= &ai_ranges_64xx,
+		.ai_range_table	= &ai_ranges_64_mx,
+		.ai_range_code	= ai_range_code_64_mx,
 		.ai_fifo	= ai_fifo_64xx,
 		.has_8255	= 1,
 	},
@@ -992,7 +1050,8 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_nchan	= 0,
 		.ao_scan_speed	= 10000,
 		.layout		= LAYOUT_64XX,
-		.ai_range_table	= &ai_ranges_64xx,
+		.ai_range_table	= &ai_ranges_64_mx,
+		.ai_range_code	= ai_range_code_64_mx,
 		.ai_fifo	= ai_fifo_64xx,
 		.has_8255	= 1,
 	},
@@ -1004,7 +1063,8 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_nchan	= 2,
 		.ao_scan_speed	= 10000,
 		.layout		= LAYOUT_64XX,
-		.ai_range_table	= &ai_ranges_64xx,
+		.ai_range_table	= &ai_ranges_64_mx,
+		.ai_range_code	= ai_range_code_64_mx,
 		.ai_fifo	= ai_fifo_64xx,
 		.has_8255	= 1,
 	},
@@ -1016,7 +1076,8 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_nchan	= 2,
 		.ao_scan_speed	= 10000,
 		.layout		= LAYOUT_64XX,
-		.ai_range_table	= &ai_ranges_64xx,
+		.ai_range_table	= &ai_ranges_64_mx,
+		.ai_range_code	= ai_range_code_64_mx,
 		.ai_fifo	= ai_fifo_64xx,
 		.has_8255	= 1,
 	},
@@ -1028,7 +1089,8 @@ static const struct pcidas64_board pcidas64_boards[] = {
 		.ao_nchan	= 2,
 		.ao_scan_speed	= 10000,
 		.layout		= LAYOUT_64XX,
-		.ai_range_table	= &ai_ranges_64xx,
+		.ai_range_table	= &ai_ranges_64_mx,
+		.ai_range_code	= ai_range_code_64_mx,
 		.ai_fifo	= ai_fifo_64xx,
 		.has_8255	= 1,
 	},
@@ -1115,45 +1177,8 @@ static unsigned int ai_range_bits_6xxx(const struct comedi_device *dev,
 				       unsigned int range_index)
 {
 	const struct pcidas64_board *thisboard = dev->board_ptr;
-	const struct comedi_krange *range =
-		&thisboard->ai_range_table->range[range_index];
-	unsigned int bits = 0;
 
-	switch (range->max) {
-	case 10000000:
-		bits = 0x000;
-		break;
-	case 5000000:
-		bits = 0x100;
-		break;
-	case 2000000:
-	case 2500000:
-		bits = 0x200;
-		break;
-	case 1000000:
-	case 1250000:
-		bits = 0x300;
-		break;
-	case 500000:
-		bits = 0x400;
-		break;
-	case 200000:
-	case 250000:
-		bits = 0x500;
-		break;
-	case 100000:
-		bits = 0x600;
-		break;
-	case 50000:
-		bits = 0x700;
-		break;
-	default:
-		dev_err(dev->class_dev, "bug! in %s\n", __func__);
-		break;
-	}
-	if (range->min == 0)
-		bits += 0x900;
-	return bits;
+	return thisboard->ai_range_code[range_index] << 8;
 }
 
 static unsigned int hw_revision(const struct comedi_device *dev,
@@ -1446,9 +1471,8 @@ static int alloc_and_init_dma_members(struct comedi_device *dev)
 		devpriv->ai_buffer[i] =
 			pci_alloc_consistent(pcidev, DMA_BUFFER_SIZE,
 					     &devpriv->ai_buffer_bus_addr[i]);
-		if (devpriv->ai_buffer[i] == NULL)
+		if (!devpriv->ai_buffer[i])
 			return -ENOMEM;
-
 	}
 	for (i = 0; i < AO_DMA_RING_COUNT; i++) {
 		if (ao_cmd_is_supported(thisboard)) {
@@ -1456,9 +1480,8 @@ static int alloc_and_init_dma_members(struct comedi_device *dev)
 				pci_alloc_consistent(pcidev, DMA_BUFFER_SIZE,
 						     &devpriv->
 						      ao_buffer_bus_addr[i]);
-			if (devpriv->ao_buffer[i] == NULL)
+			if (!devpriv->ao_buffer[i])
 				return -ENOMEM;
-
 		}
 	}
 	/*  allocate dma descriptors */
@@ -1466,7 +1489,7 @@ static int alloc_and_init_dma_members(struct comedi_device *dev)
 		pci_alloc_consistent(pcidev, sizeof(struct plx_dma_desc) *
 				     ai_dma_ring_count(thisboard),
 				     &devpriv->ai_dma_desc_bus_addr);
-	if (devpriv->ai_dma_desc == NULL)
+	if (!devpriv->ai_dma_desc)
 		return -ENOMEM;
 
 	if (ao_cmd_is_supported(thisboard)) {
@@ -1475,7 +1498,7 @@ static int alloc_and_init_dma_members(struct comedi_device *dev)
 					     sizeof(struct plx_dma_desc) *
 					     AO_DMA_RING_COUNT,
 					     &devpriv->ao_dma_desc_bus_addr);
-		if (devpriv->ao_dma_desc == NULL)
+		if (!devpriv->ao_dma_desc)
 			return -ENOMEM;
 	}
 	/*  initialize dma descriptors */
@@ -1676,8 +1699,7 @@ static void i2c_write(struct comedi_device *dev, unsigned int address,
 
 	/*  get acknowledge */
 	if (i2c_read_ack(dev) != 0) {
-		dev_err(dev->class_dev, "%s failed: no acknowledge\n",
-			__func__);
+		dev_err(dev->class_dev, "failed: no acknowledge\n");
 		i2c_stop(dev);
 		return;
 	}
@@ -1685,8 +1707,7 @@ static void i2c_write(struct comedi_device *dev, unsigned int address,
 	for (i = 0; i < length; i++) {
 		i2c_write_byte(dev, data[i]);
 		if (i2c_read_ack(dev) != 0) {
-			dev_err(dev->class_dev, "%s failed: no acknowledge\n",
-				__func__);
+			dev_err(dev->class_dev, "failed: no acknowledge\n");
 			i2c_stop(dev);
 			return;
 		}
@@ -1813,7 +1834,6 @@ static int ai_rinsn(struct comedi_device *dev, struct comedi_subdevice *s,
 	}
 
 	for (n = 0; n < insn->n; n++) {
-
 		/*  clear adc buffer (inside loop for 4020 sake) */
 		writew(0, devpriv->main_iobase + ADC_BUFFER_CLEAR_REG);
 
@@ -1875,7 +1895,6 @@ static int ai_config_block_size(struct comedi_device *dev, unsigned int *data)
 		retval = set_ai_fifo_size(dev, fifo_size);
 		if (retval < 0)
 			return retval;
-
 	}
 
 	block_size = ai_fifo_size(dev) / fifo->num_segments * bytes_in_sample;
@@ -1973,7 +1992,8 @@ static unsigned int get_divisor(unsigned int ns, unsigned int flags)
 static void check_adc_timing(struct comedi_device *dev, struct comedi_cmd *cmd)
 {
 	const struct pcidas64_board *thisboard = dev->board_ptr;
-	unsigned int convert_divisor = 0, scan_divisor;
+	unsigned long long convert_divisor = 0;
+	unsigned int scan_divisor;
 	static const int min_convert_divisor = 3;
 	static const int max_convert_divisor =
 		max_counter_value + min_convert_divisor;
@@ -1999,7 +2019,6 @@ static void check_adc_timing(struct comedi_device *dev, struct comedi_cmd *cmd)
 	if (cmd->scan_begin_src == TRIG_TIMER) {
 		scan_divisor = get_divisor(cmd->scan_begin_arg, cmd->flags);
 		if (cmd->convert_src == TRIG_TIMER) {
-			/*  XXX check for integer overflows */
 			min_scan_divisor = convert_divisor * cmd->chanlist_len;
 			max_scan_divisor =
 				(convert_divisor * cmd->chanlist_len - 1) +
@@ -2066,34 +2085,34 @@ static int ai_cmdtest(struct comedi_device *dev, struct comedi_subdevice *s,
 
 	/* Step 1 : check if triggers are trivially valid */
 
-	err |= cfc_check_trigger_src(&cmd->start_src, TRIG_NOW | TRIG_EXT);
+	err |= comedi_check_trigger_src(&cmd->start_src, TRIG_NOW | TRIG_EXT);
 
 	triggers = TRIG_TIMER;
 	if (thisboard->layout == LAYOUT_4020)
 		triggers |= TRIG_OTHER;
 	else
 		triggers |= TRIG_FOLLOW;
-	err |= cfc_check_trigger_src(&cmd->scan_begin_src, triggers);
+	err |= comedi_check_trigger_src(&cmd->scan_begin_src, triggers);
 
 	triggers = TRIG_TIMER;
 	if (thisboard->layout == LAYOUT_4020)
 		triggers |= TRIG_NOW;
 	else
 		triggers |= TRIG_EXT;
-	err |= cfc_check_trigger_src(&cmd->convert_src, triggers);
-	err |= cfc_check_trigger_src(&cmd->scan_end_src, TRIG_COUNT);
-	err |= cfc_check_trigger_src(&cmd->stop_src,
-				     TRIG_COUNT | TRIG_EXT | TRIG_NONE);
+	err |= comedi_check_trigger_src(&cmd->convert_src, triggers);
+	err |= comedi_check_trigger_src(&cmd->scan_end_src, TRIG_COUNT);
+	err |= comedi_check_trigger_src(&cmd->stop_src,
+					TRIG_COUNT | TRIG_EXT | TRIG_NONE);
 
 	if (err)
 		return 1;
 
 	/* Step 2a : make sure trigger sources are unique */
 
-	err |= cfc_check_trigger_is_unique(cmd->start_src);
-	err |= cfc_check_trigger_is_unique(cmd->scan_begin_src);
-	err |= cfc_check_trigger_is_unique(cmd->convert_src);
-	err |= cfc_check_trigger_is_unique(cmd->stop_src);
+	err |= comedi_check_trigger_is_unique(cmd->start_src);
+	err |= comedi_check_trigger_is_unique(cmd->scan_begin_src);
+	err |= comedi_check_trigger_is_unique(cmd->convert_src);
+	err |= comedi_check_trigger_is_unique(cmd->stop_src);
 
 	/* Step 2b : and mutually compatible */
 
@@ -2107,7 +2126,7 @@ static int ai_cmdtest(struct comedi_device *dev, struct comedi_subdevice *s,
 
 	switch (cmd->start_src) {
 	case TRIG_NOW:
-		err |= cfc_check_trigger_arg_is(&cmd->start_arg, 0);
+		err |= comedi_check_trigger_arg_is(&cmd->start_arg, 0);
 		break;
 	case TRIG_EXT:
 		/*
@@ -2119,30 +2138,37 @@ static int ai_cmdtest(struct comedi_device *dev, struct comedi_subdevice *s,
 
 	if (cmd->convert_src == TRIG_TIMER) {
 		if (thisboard->layout == LAYOUT_4020) {
-			err |= cfc_check_trigger_arg_is(&cmd->convert_arg, 0);
+			err |= comedi_check_trigger_arg_is(&cmd->convert_arg,
+							   0);
 		} else {
-			err |= cfc_check_trigger_arg_min(&cmd->convert_arg,
-							 thisboard->ai_speed);
-			/* if scans are timed faster than conversion rate allows */
-			if (cmd->scan_begin_src == TRIG_TIMER)
-				err |= cfc_check_trigger_arg_min(
+			err |= comedi_check_trigger_arg_min(&cmd->convert_arg,
+							    thisboard->
+							    ai_speed);
+			/*
+			 * if scans are timed faster than conversion rate
+			 * allows
+			 */
+			if (cmd->scan_begin_src == TRIG_TIMER) {
+				err |= comedi_check_trigger_arg_min(
 						&cmd->scan_begin_arg,
 						cmd->convert_arg *
 						cmd->chanlist_len);
+			}
 		}
 	}
 
-	err |= cfc_check_trigger_arg_min(&cmd->chanlist_len, 1);
-	err |= cfc_check_trigger_arg_is(&cmd->scan_end_arg, cmd->chanlist_len);
+	err |= comedi_check_trigger_arg_min(&cmd->chanlist_len, 1);
+	err |= comedi_check_trigger_arg_is(&cmd->scan_end_arg,
+					   cmd->chanlist_len);
 
 	switch (cmd->stop_src) {
 	case TRIG_EXT:
 		break;
 	case TRIG_COUNT:
-		err |= cfc_check_trigger_arg_min(&cmd->stop_arg, 1);
+		err |= comedi_check_trigger_arg_min(&cmd->stop_arg, 1);
 		break;
 	case TRIG_NONE:
-		err |= cfc_check_trigger_arg_is(&cmd->stop_arg, 0);
+		err |= comedi_check_trigger_arg_is(&cmd->stop_arg, 0);
 		break;
 	default:
 		break;
@@ -2609,8 +2635,9 @@ static int ai_cmd(struct comedi_device *dev, struct comedi_subdevice *s)
 		bits |= ADC_START_TRIG_EXT_BITS;
 		if (cmd->start_arg & CR_INVERT)
 			bits |= ADC_START_TRIG_FALLING_BIT;
-	} else if (cmd->start_src == TRIG_NOW)
+	} else if (cmd->start_src == TRIG_NOW) {
 		bits |= ADC_START_TRIG_SOFT_BITS;
+	}
 	if (use_hw_sample_counter(cmd))
 		bits |= ADC_SAMPLE_COUNTER_EN_BIT;
 	writew(bits, devpriv->main_iobase + ADC_CONTROL0_REG);
@@ -2776,7 +2803,7 @@ static void handle_ai_interrupt(struct comedi_device *dev,
 	/*  check for fifo overrun */
 	if (status & ADC_OVERRUN_BIT) {
 		dev_err(dev->class_dev, "fifo overrun\n");
-		async->events |= COMEDI_CB_EOA | COMEDI_CB_ERROR;
+		async->events |= COMEDI_CB_ERROR;
 	}
 	/*  spin lock makes sure no one else changes plx dma control reg */
 	spin_lock_irqsave(&dev->spinlock, flags);
@@ -2799,8 +2826,9 @@ static void handle_ai_interrupt(struct comedi_device *dev,
 		if (devpriv->ai_cmd_running) {
 			spin_unlock_irqrestore(&dev->spinlock, flags);
 			pio_drain_ai_fifo(dev);
-		} else
+		} else {
 			spin_unlock_irqrestore(&dev->spinlock, flags);
+		}
 	}
 	/*  if we are have all the data, then quit */
 	if ((cmd->stop_src == TRIG_COUNT &&
@@ -2950,7 +2978,7 @@ static void handle_ao_interrupt(struct comedi_device *dev,
 	unsigned long flags;
 
 	/* board might not support ao, in which case write_subdev is NULL */
-	if (s == NULL)
+	if (!s)
 		return;
 	async = s->async;
 	cmd = &async->cmd;
@@ -3284,20 +3312,20 @@ static int ao_cmdtest(struct comedi_device *dev, struct comedi_subdevice *s,
 
 	/* Step 1 : check if triggers are trivially valid */
 
-	err |= cfc_check_trigger_src(&cmd->start_src, TRIG_INT | TRIG_EXT);
-	err |= cfc_check_trigger_src(&cmd->scan_begin_src,
-				     TRIG_TIMER | TRIG_EXT);
-	err |= cfc_check_trigger_src(&cmd->convert_src, TRIG_NOW);
-	err |= cfc_check_trigger_src(&cmd->scan_end_src, TRIG_COUNT);
-	err |= cfc_check_trigger_src(&cmd->stop_src, TRIG_NONE);
+	err |= comedi_check_trigger_src(&cmd->start_src, TRIG_INT | TRIG_EXT);
+	err |= comedi_check_trigger_src(&cmd->scan_begin_src,
+					TRIG_TIMER | TRIG_EXT);
+	err |= comedi_check_trigger_src(&cmd->convert_src, TRIG_NOW);
+	err |= comedi_check_trigger_src(&cmd->scan_end_src, TRIG_COUNT);
+	err |= comedi_check_trigger_src(&cmd->stop_src, TRIG_NONE);
 
 	if (err)
 		return 1;
 
 	/* Step 2a : make sure trigger sources are unique */
 
-	err |= cfc_check_trigger_is_unique(cmd->start_src);
-	err |= cfc_check_trigger_is_unique(cmd->scan_begin_src);
+	err |= comedi_check_trigger_is_unique(cmd->start_src);
+	err |= comedi_check_trigger_is_unique(cmd->scan_begin_src);
 
 	/* Step 2b : and mutually compatible */
 
@@ -3312,11 +3340,11 @@ static int ao_cmdtest(struct comedi_device *dev, struct comedi_subdevice *s,
 
 	/* Step 3: check if arguments are trivially valid */
 
-	err |= cfc_check_trigger_arg_is(&cmd->start_arg, 0);
+	err |= comedi_check_trigger_arg_is(&cmd->start_arg, 0);
 
 	if (cmd->scan_begin_src == TRIG_TIMER) {
-		err |= cfc_check_trigger_arg_min(&cmd->scan_begin_arg,
-						 thisboard->ao_scan_speed);
+		err |= comedi_check_trigger_arg_min(&cmd->scan_begin_arg,
+						    thisboard->ao_scan_speed);
 		if (get_ao_divisor(cmd->scan_begin_arg, cmd->flags) >
 		    max_counter_value) {
 			cmd->scan_begin_arg = (max_counter_value + 2) *
@@ -3325,8 +3353,9 @@ static int ao_cmdtest(struct comedi_device *dev, struct comedi_subdevice *s,
 		}
 	}
 
-	err |= cfc_check_trigger_arg_min(&cmd->chanlist_len, 1);
-	err |= cfc_check_trigger_arg_is(&cmd->scan_end_arg, cmd->chanlist_len);
+	err |= comedi_check_trigger_arg_min(&cmd->chanlist_len, 1);
+	err |= comedi_check_trigger_arg_is(&cmd->scan_end_arg,
+					   cmd->chanlist_len);
 
 	if (err)
 		return 3;
@@ -3789,8 +3818,9 @@ static int setup_subdevices(struct comedi_device *dev)
 		s->maxdata = 1;
 		s->range_table = &range_digital;
 		s->insn_bits = di_rbits;
-	} else
+	} else {
 		s->type = COMEDI_SUBD_UNUSED;
+	}
 
 	/*  digital output */
 	if (thisboard->layout == LAYOUT_64XX) {
@@ -3801,8 +3831,9 @@ static int setup_subdevices(struct comedi_device *dev)
 		s->maxdata = 1;
 		s->range_table = &range_digital;
 		s->insn_bits = do_wbits;
-	} else
+	} else {
 		s->type = COMEDI_SUBD_UNUSED;
+	}
 
 	/* 8255 */
 	s = &dev->subdevices[4];
@@ -3830,8 +3861,9 @@ static int setup_subdevices(struct comedi_device *dev)
 		s->range_table = &range_digital;
 		s->insn_config = dio_60xx_config_insn;
 		s->insn_bits = dio_60xx_wbits;
-	} else
+	} else {
 		s->type = COMEDI_SUBD_UNUSED;
+	}
 
 	/*  caldac */
 	s = &dev->subdevices[6];
@@ -3870,8 +3902,9 @@ static int setup_subdevices(struct comedi_device *dev)
 			ad8402_write(dev, i, s->maxdata / 2);
 			s->readback[i] = s->maxdata / 2;
 		}
-	} else
+	} else {
 		s->type = COMEDI_SUBD_UNUSED;
+	}
 
 	/* serial EEPROM, if present */
 	s = &dev->subdevices[8];
@@ -3881,8 +3914,9 @@ static int setup_subdevices(struct comedi_device *dev)
 		s->n_chan = 128;
 		s->maxdata = 0xffff;
 		s->insn_read = eeprom_read_insn;
-	} else
+	} else {
 		s->type = COMEDI_SUBD_UNUSED;
+	}
 
 	/*  user counter subd XXX */
 	s = &dev->subdevices[9];

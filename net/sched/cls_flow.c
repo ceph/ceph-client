@@ -77,7 +77,7 @@ static u32 flow_get_dst(const struct sk_buff *skb, const struct flow_keys *flow)
 {
 	if (flow->dst)
 		return ntohl(flow->dst);
-	return addr_fold(skb_dst(skb)) ^ (__force u16)skb->protocol;
+	return addr_fold(skb_dst(skb)) ^ (__force u16) tc_skb_protocol(skb);
 }
 
 static u32 flow_get_proto(const struct sk_buff *skb, const struct flow_keys *flow)
@@ -98,7 +98,7 @@ static u32 flow_get_proto_dst(const struct sk_buff *skb, const struct flow_keys 
 	if (flow->ports)
 		return ntohs(flow->port16[1]);
 
-	return addr_fold(skb_dst(skb)) ^ (__force u16)skb->protocol;
+	return addr_fold(skb_dst(skb)) ^ (__force u16) tc_skb_protocol(skb);
 }
 
 static u32 flow_get_iif(const struct sk_buff *skb)
@@ -144,7 +144,7 @@ static u32 flow_get_nfct(const struct sk_buff *skb)
 
 static u32 flow_get_nfct_src(const struct sk_buff *skb, const struct flow_keys *flow)
 {
-	switch (skb->protocol) {
+	switch (tc_skb_protocol(skb)) {
 	case htons(ETH_P_IP):
 		return ntohl(CTTUPLE(skb, src.u3.ip));
 	case htons(ETH_P_IPV6):
@@ -156,7 +156,7 @@ fallback:
 
 static u32 flow_get_nfct_dst(const struct sk_buff *skb, const struct flow_keys *flow)
 {
-	switch (skb->protocol) {
+	switch (tc_skb_protocol(skb)) {
 	case htons(ETH_P_IP):
 		return ntohl(CTTUPLE(skb, dst.u3.ip));
 	case htons(ETH_P_IPV6):
@@ -557,10 +557,13 @@ static int flow_init(struct tcf_proto *tp)
 	return 0;
 }
 
-static void flow_destroy(struct tcf_proto *tp)
+static bool flow_destroy(struct tcf_proto *tp, bool force)
 {
 	struct flow_head *head = rtnl_dereference(tp->root);
 	struct flow_filter *f, *next;
+
+	if (!force && !list_empty(&head->filters))
+		return false;
 
 	list_for_each_entry_safe(f, next, &head->filters, list) {
 		list_del_rcu(&f->list);
@@ -568,6 +571,7 @@ static void flow_destroy(struct tcf_proto *tp)
 	}
 	RCU_INIT_POINTER(tp->root, NULL);
 	kfree_rcu(head, rcu);
+	return true;
 }
 
 static unsigned long flow_get(struct tcf_proto *tp, u32 handle)

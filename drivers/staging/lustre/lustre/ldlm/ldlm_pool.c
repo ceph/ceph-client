@@ -141,8 +141,6 @@
  */
 #define LDLM_POOL_SLV_SHIFT (10)
 
-extern struct proc_dir_entry *ldlm_ns_proc_dir;
-
 static inline __u64 dru(__u64 val, __u32 shift, int round_up)
 {
 	return (val + (round_up ? (1 << shift) - 1 : 0)) >> shift;
@@ -470,6 +468,7 @@ static void ldlm_cli_pool_pop_slv(struct ldlm_pool *pl)
 static int ldlm_cli_pool_recalc(struct ldlm_pool *pl)
 {
 	time_t recalc_interval_sec;
+	int ret;
 
 	recalc_interval_sec = get_seconds() - pl->pl_recalc_time;
 	if (recalc_interval_sec < pl->pl_recalc_period)
@@ -490,16 +489,15 @@ static int ldlm_cli_pool_recalc(struct ldlm_pool *pl)
 	 */
 	ldlm_cli_pool_pop_slv(pl);
 
-	pl->pl_recalc_time = get_seconds();
-	lprocfs_counter_add(pl->pl_stats, LDLM_POOL_TIMING_STAT,
-			    recalc_interval_sec);
 	spin_unlock(&pl->pl_lock);
 
 	/*
 	 * Do not cancel locks in case lru resize is disabled for this ns.
 	 */
-	if (!ns_connect_lru_resize(ldlm_pl2ns(pl)))
-		return 0;
+	if (!ns_connect_lru_resize(ldlm_pl2ns(pl))) {
+		ret = 0;
+		goto out;
+	}
 
 	/*
 	 * In the time of canceling locks on client we do not need to maintain
@@ -507,7 +505,19 @@ static int ldlm_cli_pool_recalc(struct ldlm_pool *pl)
 	 * It may be called when SLV has changed much, this is why we do not
 	 * take into account pl->pl_recalc_time here.
 	 */
-	return ldlm_cancel_lru(ldlm_pl2ns(pl), 0, LCF_ASYNC, LDLM_CANCEL_LRUR);
+	ret = ldlm_cancel_lru(ldlm_pl2ns(pl), 0, LCF_ASYNC, LDLM_CANCEL_LRUR);
+
+out:
+	spin_lock(&pl->pl_lock);
+	/*
+	 * Time of LRU resizing might be longer than period,
+	 * so update after LRU resizing rather than before it.
+	 */
+	pl->pl_recalc_time = get_seconds();
+	lprocfs_counter_add(pl->pl_stats, LDLM_POOL_TIMING_STAT,
+			    recalc_interval_sec);
+	spin_unlock(&pl->pl_lock);
+	return ret;
 }
 
 /**
@@ -591,6 +601,14 @@ int ldlm_pool_recalc(struct ldlm_pool *pl)
 	}
 	recalc_interval_sec = pl->pl_recalc_time - get_seconds() +
 			      pl->pl_recalc_period;
+	if (recalc_interval_sec <= 0) {
+		/* Prevent too frequent recalculation. */
+		CDEBUG(D_DLMTRACE, "Negative interval(%ld), "
+		       "too short period(%ld)",
+		       recalc_interval_sec,
+		       pl->pl_recalc_period);
+		recalc_interval_sec = 1;
+	}
 
 	return recalc_interval_sec;
 }
@@ -669,8 +687,8 @@ static int lprocfs_pool_state_seq_show(struct seq_file *m, void *unused)
 			      "  GP:  %d\n",
 			      grant_step, grant_plan);
 	}
-	seq_printf(m, "  GR:  %d\n" "  CR:  %d\n" "  GS:  %d\n"
-		      "  G:   %d\n" "  L:   %d\n",
+	seq_printf(m, "  GR:  %d\n  CR:  %d\n  GS:  %d\n"
+		      "  G:   %d\n  L:   %d\n",
 		      grant_rate, cancel_rate, grant_speed,
 		      granted, limit);
 
@@ -697,8 +715,8 @@ LPROC_SEQ_FOPS_RO(lprocfs_grant_plan);
 LDLM_POOL_PROC_READER_SEQ_SHOW(recalc_period, int);
 LDLM_POOL_PROC_WRITER(recalc_period, int);
 static ssize_t lprocfs_recalc_period_seq_write(struct file *file,
-					       const char *buf, size_t len,
-					       loff_t *off)
+					       const char __user *buf,
+					       size_t len, loff_t *off)
 {
 	struct seq_file *seq = file->private_data;
 

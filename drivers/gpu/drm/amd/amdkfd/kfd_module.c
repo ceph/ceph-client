@@ -29,12 +29,11 @@
 #define KFD_DRIVER_AUTHOR	"AMD Inc. and others"
 
 #define KFD_DRIVER_DESC		"Standalone HSA driver for AMD's GPUs"
-#define KFD_DRIVER_DATE		"20141113"
+#define KFD_DRIVER_DATE		"20150122"
 #define KFD_DRIVER_MAJOR	0
 #define KFD_DRIVER_MINOR	7
-#define KFD_DRIVER_PATCHLEVEL	0
+#define KFD_DRIVER_PATCHLEVEL	1
 
-const struct kfd2kgd_calls *kfd2kgd;
 static const struct kgd2kfd_calls kgd2kfd = {
 	.exit		= kgd2kfd_exit,
 	.probe		= kgd2kfd_probe,
@@ -48,16 +47,14 @@ static const struct kgd2kfd_calls kgd2kfd = {
 int sched_policy = KFD_SCHED_POLICY_HWS;
 module_param(sched_policy, int, 0444);
 MODULE_PARM_DESC(sched_policy,
-	"Kernel cmdline parameter that defines the amdkfd scheduling policy");
+	"Scheduling policy (0 = HWS (Default), 1 = HWS without over-subscription, 2 = Non-HWS (Used for debugging only)");
 
 int max_num_of_queues_per_device = KFD_MAX_NUM_OF_QUEUES_PER_DEVICE_DEFAULT;
 module_param(max_num_of_queues_per_device, int, 0444);
 MODULE_PARM_DESC(max_num_of_queues_per_device,
 	"Maximum number of supported queues per device (1 = Minimum, 4096 = default)");
 
-bool kgd2kfd_init(unsigned interface_version,
-		  const struct kfd2kgd_calls *f2g,
-		  const struct kgd2kfd_calls **g2f)
+bool kgd2kfd_init(unsigned interface_version, const struct kgd2kfd_calls **g2f)
 {
 	/*
 	 * Only one interface version is supported,
@@ -66,11 +63,6 @@ bool kgd2kfd_init(unsigned interface_version,
 	if (interface_version != KFD_INTERFACE_VERSION)
 		return false;
 
-	/* Protection against multiple amd kgd loads */
-	if (kfd2kgd)
-		return true;
-
-	kfd2kgd = f2g;
 	*g2f = &kgd2kfd;
 
 	return true;
@@ -84,8 +76,6 @@ void kgd2kfd_exit(void)
 static int __init kfd_module_init(void)
 {
 	int err;
-
-	kfd2kgd = NULL;
 
 	/* Verify module parameters */
 	if ((sched_policy < KFD_SCHED_POLICY_HWS) ||

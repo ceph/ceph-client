@@ -63,6 +63,10 @@ module_param(on_flash_bbt, int, 0);
 #include "atmel_nand_ecc.h"	/* Hardware ECC registers */
 #include "atmel_nand_nfc.h"	/* Nand Flash Controller definition */
 
+struct atmel_nand_caps {
+	bool pmecc_correct_erase_page;
+};
+
 /* oob layout for large page size
  * bad block info is on bytes 0 and 1
  * the bytes have to be consecutives to avoid
@@ -124,6 +128,7 @@ struct atmel_nand_host {
 
 	struct atmel_nfc	*nfc;
 
+	struct atmel_nand_caps	*caps;
 	bool			has_pmecc;
 	u8			pmecc_corr_cap;
 	u16			pmecc_sector_size;
@@ -480,7 +485,7 @@ static void pmecc_config_ecc_layout(struct nand_ecclayout *layout,
 	for (i = 0; i < ecc_len; i++)
 		layout->eccpos[i] = oobsize - ecc_len + i;
 
-	layout->oobfree[0].offset = 2;
+	layout->oobfree[0].offset = PMECC_OOB_RESERVED_BYTES;
 	layout->oobfree[0].length =
 		oobsize - ecc_len - layout->oobfree[0].offset;
 }
@@ -847,7 +852,11 @@ static int pmecc_correction(struct mtd_info *mtd, u32 pmecc_stat, uint8_t *buf,
 	struct atmel_nand_host *host = nand_chip->priv;
 	int i, err_nbr;
 	uint8_t *buf_pos;
-	int total_err = 0;
+	int max_bitflips = 0;
+
+	/* If can correct bitfilps from erased page, do the normal check */
+	if (host->caps->pmecc_correct_erase_page)
+		goto normal_check;
 
 	for (i = 0; i < nand_chip->ecc.total; i++)
 		if (ecc[i] != 0xff)
@@ -874,13 +883,13 @@ normal_check:
 				pmecc_correct_data(mtd, buf_pos, ecc, i,
 					nand_chip->ecc.bytes, err_nbr);
 				mtd->ecc_stats.corrected += err_nbr;
-				total_err += err_nbr;
+				max_bitflips = max_t(int, max_bitflips, err_nbr);
 			}
 		}
 		pmecc_stat >>= 1;
 	}
 
-	return total_err;
+	return max_bitflips;
 }
 
 static void pmecc_enable(struct atmel_nand_host *host, int ecc_op)
@@ -1195,14 +1204,14 @@ static int atmel_pmecc_nand_init_params(struct platform_device *pdev,
 		goto err;
 	}
 
-	regs_rom = platform_get_resource(pdev, IORESOURCE_MEM, 3);
-	host->pmecc_rom_base = devm_ioremap_resource(&pdev->dev, regs_rom);
-	if (IS_ERR(host->pmecc_rom_base)) {
-		if (!host->has_no_lookup_table)
-			/* Don't display the information again */
+	if (!host->has_no_lookup_table) {
+		regs_rom = platform_get_resource(pdev, IORESOURCE_MEM, 3);
+		host->pmecc_rom_base = devm_ioremap_resource(&pdev->dev,
+								regs_rom);
+		if (IS_ERR(host->pmecc_rom_base)) {
 			dev_err(host->dev, "Can not get I/O resource for ROM, will build a lookup table in runtime!\n");
-
-		host->has_no_lookup_table = true;
+			host->has_no_lookup_table = true;
+		}
 	}
 
 	if (host->has_no_lookup_table) {
@@ -1245,7 +1254,8 @@ static int atmel_pmecc_nand_init_params(struct platform_device *pdev,
 		nand_chip->ecc.steps = mtd->writesize / sector_size;
 		nand_chip->ecc.total = nand_chip->ecc.bytes *
 			nand_chip->ecc.steps;
-		if (nand_chip->ecc.total > mtd->oobsize - 2) {
+		if (nand_chip->ecc.total >
+				mtd->oobsize - PMECC_OOB_RESERVED_BYTES) {
 			dev_err(host->dev, "No room for ECC bytes\n");
 			err_no = -EINVAL;
 			goto err;
@@ -1474,6 +1484,8 @@ static void atmel_nand_hwctl(struct mtd_info *mtd, int mode)
 		ecc_writel(host->ecc, CR, ATMEL_ECC_RST);
 }
 
+static const struct of_device_id atmel_nand_dt_ids[];
+
 static int atmel_of_init_port(struct atmel_nand_host *host,
 			      struct device_node *np)
 {
@@ -1482,6 +1494,9 @@ static int atmel_of_init_port(struct atmel_nand_host *host,
 	int ecc_mode;
 	struct atmel_nand_data *board = &host->board;
 	enum of_gpio_flags flags = 0;
+
+	host->caps = (struct atmel_nand_caps *)
+		of_match_device(atmel_nand_dt_ids, host->dev)->data;
 
 	if (of_property_read_u32(np, "atmel,nand-addr-offset", &val) == 0) {
 		if (val >= 32) {
@@ -1705,7 +1720,7 @@ static int nfc_wait_interrupt(struct atmel_nand_host *host, u32 flag)
 		comp[index++] = &host->nfc->comp_cmd_done;
 
 	if (index == 0) {
-		dev_err(host->dev, "Unkown interrupt flag: 0x%08x\n", flag);
+		dev_err(host->dev, "Unknown interrupt flag: 0x%08x\n", flag);
 		return -EINVAL;
 	}
 
@@ -1738,11 +1753,10 @@ static int nfc_send_command(struct atmel_nand_host *host,
 		cmd, addr, cycle0);
 
 	timeout = jiffies + msecs_to_jiffies(NFC_TIME_OUT_MS);
-	while (nfc_cmd_readl(NFCADDR_CMD_NFCBUSY, host->nfc->base_cmd_regs)
-			& NFCADDR_CMD_NFCBUSY) {
+	while (nfc_readl(host->nfc->hsmc_regs, SR) & NFC_SR_BUSY) {
 		if (time_after(jiffies, timeout)) {
 			dev_err(host->dev,
-				"Time out to wait CMD_NFCBUSY ready!\n");
+				"Time out to wait for NFC ready!\n");
 			return -ETIMEDOUT;
 		}
 	}
@@ -2288,8 +2302,17 @@ static int atmel_nand_remove(struct platform_device *pdev)
 	return 0;
 }
 
+static struct atmel_nand_caps at91rm9200_caps = {
+	.pmecc_correct_erase_page = false,
+};
+
+static struct atmel_nand_caps sama5d4_caps = {
+	.pmecc_correct_erase_page = true,
+};
+
 static const struct of_device_id atmel_nand_dt_ids[] = {
-	{ .compatible = "atmel,at91rm9200-nand" },
+	{ .compatible = "atmel,at91rm9200-nand", .data = &at91rm9200_caps },
+	{ .compatible = "atmel,sama5d4-nand", .data = &sama5d4_caps },
 	{ /* sentinel */ }
 };
 

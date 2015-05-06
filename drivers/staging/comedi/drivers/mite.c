@@ -47,11 +47,9 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/module.h>
-#include <linux/pci.h>
 
-#include "../comedidev.h"
+#include "../comedi_pci.h"
 
-#include "comedi_fc.h"
 #include "mite.h"
 
 #define TOP_OF_PAGE(x) ((x)|(~(PAGE_MASK)))
@@ -186,10 +184,10 @@ struct mite_dma_descriptor_ring *mite_alloc_ring(struct mite_struct *mite)
 	struct mite_dma_descriptor_ring *ring =
 	    kmalloc(sizeof(struct mite_dma_descriptor_ring), GFP_KERNEL);
 
-	if (ring == NULL)
-		return ring;
+	if (!ring)
+		return NULL;
 	ring->hw_dev = get_device(&mite->pcidev->dev);
-	if (ring->hw_dev == NULL) {
+	if (!ring->hw_dev) {
 		kfree(ring);
 		return NULL;
 	}
@@ -494,9 +492,7 @@ EXPORT_SYMBOL_GPL(mite_bytes_read_from_memory_ub);
 unsigned mite_dma_tcr(struct mite_channel *mite_chan)
 {
 	struct mite_struct *mite = mite_chan->mite;
-	int lkar;
 
-	lkar = readl(mite->mite_io_addr + MITE_LKAR(mite_chan->channel));
 	return readl(mite->mite_io_addr + MITE_TCR(mite_chan->channel));
 }
 EXPORT_SYMBOL_GPL(mite_dma_tcr);

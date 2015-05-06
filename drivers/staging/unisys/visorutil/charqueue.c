@@ -28,7 +28,7 @@
 struct charqueue {
 	int alloc_size;
 	int nslots;
-	spinlock_t lock;
+	spinlock_t lock; /* read/write lock for this structure */
 	int head, tail;
 	unsigned char buf[0];
 };
@@ -36,13 +36,11 @@ struct charqueue {
 struct charqueue *visor_charqueue_create(ulong nslots)
 {
 	int alloc_size = sizeof(struct charqueue) + nslots + 1;
-	struct charqueue *cq = kmalloc(alloc_size, GFP_KERNEL|__GFP_NORETRY);
+	struct charqueue *cq;
 
-	if (cq == NULL) {
-		ERRDRV("visor_charqueue_create allocation failed (alloc_size=%d)",
-		       alloc_size);
+	cq = kmalloc(alloc_size, GFP_KERNEL|__GFP_NORETRY);
+	if (cq == NULL)
 		return NULL;
-	}
 	cq->alloc_size = alloc_size;
 	cq->nslots = nslots;
 	cq->head = 0;

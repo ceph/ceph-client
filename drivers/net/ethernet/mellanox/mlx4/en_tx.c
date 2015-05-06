@@ -91,10 +91,10 @@ int mlx4_en_create_tx_ring(struct mlx4_en_priv *priv,
 	ring->buf_size = ALIGN(size * ring->stride, MLX4_EN_PAGE_SIZE);
 
 	/* Allocate HW buffers on provided NUMA node */
-	set_dev_node(&mdev->dev->pdev->dev, node);
+	set_dev_node(&mdev->dev->persist->pdev->dev, node);
 	err = mlx4_alloc_hwq_res(mdev->dev, &ring->wqres, ring->buf_size,
 				 2 * PAGE_SIZE);
-	set_dev_node(&mdev->dev->pdev->dev, mdev->dev->numa_node);
+	set_dev_node(&mdev->dev->persist->pdev->dev, mdev->dev->numa_node);
 	if (err) {
 		en_err(priv, "Failed allocating hwq resources\n");
 		goto err_bounce;
@@ -143,8 +143,10 @@ int mlx4_en_create_tx_ring(struct mlx4_en_priv *priv,
 	ring->hwtstamp_tx_type = priv->hwtstamp_config.tx_type;
 	ring->queue_index = queue_index;
 
-	if (queue_index < priv->num_tx_rings_p_up && cpu_online(queue_index))
-		cpumask_set_cpu(queue_index, &ring->affinity_mask);
+	if (queue_index < priv->num_tx_rings_p_up)
+		cpumask_set_cpu_local_first(queue_index,
+					    priv->mdev->dev->numa_node,
+					    &ring->affinity_mask);
 
 	*pring = ring;
 	return 0;
@@ -213,7 +215,7 @@ int mlx4_en_activate_tx_ring(struct mlx4_en_priv *priv,
 
 	err = mlx4_qp_to_ready(mdev->dev, &ring->wqres.mtt, &ring->context,
 			       &ring->qp, &ring->qp_state);
-	if (!user_prio && cpu_online(ring->queue_index))
+	if (!cpumask_empty(&ring->affinity_mask))
 		netif_set_xps_queue(priv->dev, &ring->affinity_mask,
 				    ring->queue_index);
 
@@ -416,7 +418,7 @@ static bool mlx4_en_process_tx_cq(struct net_device *dev,
 		 * make sure we read the CQE after we read the
 		 * ownership bit
 		 */
-		rmb();
+		dma_rmb();
 
 		if (unlikely((cqe->owner_sr_opcode & MLX4_CQE_OPCODE_MASK) ==
 			     MLX4_CQE_OPCODE_ERROR)) {
@@ -667,7 +669,7 @@ static void build_inline_wqe(struct mlx4_en_tx_desc *tx_desc,
 				       skb_frag_size(&shinfo->frags[0]));
 		}
 
-		wmb();
+		dma_wmb();
 		inl->byte_count = cpu_to_be32(1 << 31 | (skb->len - spc));
 	}
 }
@@ -682,8 +684,8 @@ u16 mlx4_en_select_queue(struct net_device *dev, struct sk_buff *skb,
 	if (dev->num_tc)
 		return skb_tx_hash(dev, skb);
 
-	if (vlan_tx_tag_present(skb))
-		up = vlan_tx_tag_get(skb) >> VLAN_PRIO_SHIFT;
+	if (skb_vlan_tag_present(skb))
+		up = skb_vlan_tag_get(skb) >> VLAN_PRIO_SHIFT;
 
 	return fallback(dev, skb) % rings_p_up + up * rings_p_up;
 }
@@ -742,8 +744,8 @@ netdev_tx_t mlx4_en_xmit(struct sk_buff *skb, struct net_device *dev)
 		goto tx_drop;
 	}
 
-	if (vlan_tx_tag_present(skb))
-		vlan_tag = vlan_tx_tag_get(skb);
+	if (skb_vlan_tag_present(skb))
+		vlan_tag = skb_vlan_tag_get(skb);
 
 
 	netdev_txq_bql_enqueue_prefetchw(ring->tx_queue);
@@ -804,7 +806,7 @@ netdev_tx_t mlx4_en_xmit(struct sk_buff *skb, struct net_device *dev)
 
 			data->addr = cpu_to_be64(dma);
 			data->lkey = ring->mr_key;
-			wmb();
+			dma_wmb();
 			data->byte_count = cpu_to_be32(byte_count);
 			--data;
 		}
@@ -821,7 +823,7 @@ netdev_tx_t mlx4_en_xmit(struct sk_buff *skb, struct net_device *dev)
 
 			data->addr = cpu_to_be64(dma);
 			data->lkey = ring->mr_key;
-			wmb();
+			dma_wmb();
 			data->byte_count = cpu_to_be32(byte_count);
 		}
 		/* tx completion can avoid cache line miss for common cases */
@@ -930,7 +932,7 @@ netdev_tx_t mlx4_en_xmit(struct sk_buff *skb, struct net_device *dev)
 	real_size = (real_size / 16) & 0x3f;
 
 	if (ring->bf_enabled && desc_size <= MAX_BF && !bounce &&
-	    !vlan_tx_tag_present(skb) && send_doorbell) {
+	    !skb_vlan_tag_present(skb) && send_doorbell) {
 		tx_desc->ctrl.bf_qpn = ring->doorbell_qpn |
 				       cpu_to_be32(real_size);
 
@@ -938,7 +940,7 @@ netdev_tx_t mlx4_en_xmit(struct sk_buff *skb, struct net_device *dev)
 		/* Ensure new descriptor hits memory
 		 * before setting ownership of this descriptor to HW
 		 */
-		wmb();
+		dma_wmb();
 		tx_desc->ctrl.owner_opcode = op_own;
 
 		wmb();
@@ -952,13 +954,13 @@ netdev_tx_t mlx4_en_xmit(struct sk_buff *skb, struct net_device *dev)
 	} else {
 		tx_desc->ctrl.vlan_tag = cpu_to_be16(vlan_tag);
 		tx_desc->ctrl.ins_vlan = MLX4_WQE_CTRL_INS_VLAN *
-			!!vlan_tx_tag_present(skb);
+			!!skb_vlan_tag_present(skb);
 		tx_desc->ctrl.fence_size = real_size;
 
 		/* Ensure new descriptor hits memory
 		 * before setting ownership of this descriptor to HW
 		 */
-		wmb();
+		dma_wmb();
 		tx_desc->ctrl.owner_opcode = op_own;
 		if (send_doorbell) {
 			wmb();

@@ -203,13 +203,12 @@ sint r8712_update_attrib(struct _adapter *padapter, _pkt *pkt,
 	pattrib->ether_type = ntohs(etherhdr.h_proto);
 
 {
-	u8 bool;
 	/*If driver xmit ARP packet, driver can set ps mode to initial
 	 * setting. It stands for getting DHCP or fix IP.*/
 	if (pattrib->ether_type == 0x0806) {
 		if (padapter->pwrctrlpriv.pwr_mode !=
 		    padapter->registrypriv.power_mgnt) {
-			_cancel_timer(&(pmlmepriv->dhcp_timer), &bool);
+			del_timer_sync(&pmlmepriv->dhcp_timer);
 			r8712_set_ps_mode(padapter, padapter->registrypriv.
 				power_mgnt, padapter->registrypriv.smart_ps);
 		}
@@ -471,7 +470,7 @@ static sint xmitframe_swencrypt(struct _adapter *padapter,
 	return _SUCCESS;
 }
 
-static sint make_wlanhdr(struct _adapter *padapter , u8 *hdr,
+static sint make_wlanhdr(struct _adapter *padapter, u8 *hdr,
 			 struct pkt_attrib *pattrib)
 {
 	u16 *qc;

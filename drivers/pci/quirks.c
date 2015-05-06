@@ -3076,6 +3076,27 @@ static void quirk_no_bus_reset(struct pci_dev *dev)
  */
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_ATHEROS, 0x0030, quirk_no_bus_reset);
 
+static void quirk_no_pm_reset(struct pci_dev *dev)
+{
+	/*
+	 * We can't do a bus reset on root bus devices, but an ineffective
+	 * PM reset may be better than nothing.
+	 */
+	if (!pci_is_root_bus(dev->bus))
+		dev->dev_flags |= PCI_DEV_FLAGS_NO_PM_RESET;
+}
+
+/*
+ * Some AMD/ATI GPUS (HD8570 - Oland) report that a D3hot->D0 transition
+ * causes a reset (i.e., they advertise NoSoftRst-).  This transition seems
+ * to have no effect on the device: it retains the framebuffer contents and
+ * monitor sync.  Advertising this support makes other layers, like VFIO,
+ * assume pci_reset_function() is viable for this device.  Mark it as
+ * unavailable to skip it when testing reset methods.
+ */
+DECLARE_PCI_FIXUP_CLASS_HEADER(PCI_VENDOR_ID_ATI, PCI_ANY_ID,
+			       PCI_CLASS_DISPLAY_VGA, 8, quirk_no_pm_reset);
+
 #ifdef CONFIG_ACPI
 /*
  * Apple: Shutdown Cactus Ridge Thunderbolt controller.
@@ -3161,7 +3182,7 @@ static void quirk_apple_wait_for_thunderbolt(struct pci_dev *dev)
 			|| nhi->subsystem_vendor != 0x2222
 			|| nhi->subsystem_device != 0x1111)
 		goto out;
-	dev_info(&dev->dev, "quirk: wating for thunderbolt to reestablish pci tunnels...\n");
+	dev_info(&dev->dev, "quirk: waiting for thunderbolt to reestablish PCI tunnels...\n");
 	device_pm_wait_for_dev(&dev->dev, &nhi->dev);
 out:
 	pci_dev_put(nhi);
@@ -3576,6 +3597,44 @@ DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_JMICRON,
 			 quirk_dma_func1_alias);
 
 /*
+ * Some devices DMA with the wrong devfn, not just the wrong function.
+ * quirk_fixed_dma_alias() uses this table to create fixed aliases, where
+ * the alias is "fixed" and independent of the device devfn.
+ *
+ * For example, the Adaptec 3405 is a PCIe card with an Intel 80333 I/O
+ * processor.  To software, this appears as a PCIe-to-PCI/X bridge with a
+ * single device on the secondary bus.  In reality, the single exposed
+ * device at 0e.0 is the Address Translation Unit (ATU) of the controller
+ * that provides a bridge to the internal bus of the I/O processor.  The
+ * controller supports private devices, which can be hidden from PCI config
+ * space.  In the case of the Adaptec 3405, a private device at 01.0
+ * appears to be the DMA engine, which therefore needs to become a DMA
+ * alias for the device.
+ */
+static const struct pci_device_id fixed_dma_alias_tbl[] = {
+	{ PCI_DEVICE_SUB(PCI_VENDOR_ID_ADAPTEC2, 0x0285,
+			 PCI_VENDOR_ID_ADAPTEC2, 0x02bb), /* Adaptec 3405 */
+	  .driver_data = PCI_DEVFN(1, 0) },
+	{ 0 }
+};
+
+static void quirk_fixed_dma_alias(struct pci_dev *dev)
+{
+	const struct pci_device_id *id;
+
+	id = pci_match_id(fixed_dma_alias_tbl, dev);
+	if (id) {
+		dev->dma_alias_devfn = id->driver_data;
+		dev->dev_flags |= PCI_DEV_FLAGS_DMA_ALIAS_DEVFN;
+		dev_info(&dev->dev, "Enabling fixed DMA alias to %02x.%d\n",
+			 PCI_SLOT(dev->dma_alias_devfn),
+			 PCI_FUNC(dev->dma_alias_devfn));
+	}
+}
+
+DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_ADAPTEC2, 0x0285, quirk_fixed_dma_alias);
+
+/*
  * A few PCIe-to-PCI bridges fail to expose a PCIe capability, resulting in
  * using the wrong DMA alias for the device.  Some of these devices can be
  * used as either forward or reverse bridges, so we need to test whether the
@@ -3678,6 +3737,9 @@ static const u16 pci_quirk_intel_pch_acs_ids[] = {
 	0x9c98, 0x9c99, 0x9c9a, 0x9c9b,
 	/* Patsburg (X79) PCH */
 	0x1d10, 0x1d12, 0x1d14, 0x1d16, 0x1d18, 0x1d1a, 0x1d1c, 0x1d1e,
+	/* Wellsburg (X99) PCH */
+	0x8d10, 0x8d11, 0x8d12, 0x8d13, 0x8d14, 0x8d15, 0x8d16, 0x8d17,
+	0x8d18, 0x8d19, 0x8d1a, 0x8d1b, 0x8d1c, 0x8d1d, 0x8d1e,
 };
 
 static bool pci_quirk_intel_pch_acs_match(struct pci_dev *dev)
@@ -3760,7 +3822,41 @@ static const struct pci_dev_acs_enabled {
 	{ PCI_VENDOR_ID_INTEL, 0x154F, pci_quirk_mf_endpoint_acs },
 	{ PCI_VENDOR_ID_INTEL, 0x1551, pci_quirk_mf_endpoint_acs },
 	{ PCI_VENDOR_ID_INTEL, 0x1558, pci_quirk_mf_endpoint_acs },
+	/* 82580 */
+	{ PCI_VENDOR_ID_INTEL, 0x1509, pci_quirk_mf_endpoint_acs },
+	{ PCI_VENDOR_ID_INTEL, 0x150E, pci_quirk_mf_endpoint_acs },
+	{ PCI_VENDOR_ID_INTEL, 0x150F, pci_quirk_mf_endpoint_acs },
+	{ PCI_VENDOR_ID_INTEL, 0x1510, pci_quirk_mf_endpoint_acs },
+	{ PCI_VENDOR_ID_INTEL, 0x1511, pci_quirk_mf_endpoint_acs },
+	{ PCI_VENDOR_ID_INTEL, 0x1516, pci_quirk_mf_endpoint_acs },
+	{ PCI_VENDOR_ID_INTEL, 0x1527, pci_quirk_mf_endpoint_acs },
+	/* 82576 */
+	{ PCI_VENDOR_ID_INTEL, 0x10C9, pci_quirk_mf_endpoint_acs },
+	{ PCI_VENDOR_ID_INTEL, 0x10E6, pci_quirk_mf_endpoint_acs },
+	{ PCI_VENDOR_ID_INTEL, 0x10E7, pci_quirk_mf_endpoint_acs },
+	{ PCI_VENDOR_ID_INTEL, 0x10E8, pci_quirk_mf_endpoint_acs },
+	{ PCI_VENDOR_ID_INTEL, 0x150A, pci_quirk_mf_endpoint_acs },
+	{ PCI_VENDOR_ID_INTEL, 0x150D, pci_quirk_mf_endpoint_acs },
+	{ PCI_VENDOR_ID_INTEL, 0x1518, pci_quirk_mf_endpoint_acs },
+	{ PCI_VENDOR_ID_INTEL, 0x1526, pci_quirk_mf_endpoint_acs },
+	/* 82575 */
+	{ PCI_VENDOR_ID_INTEL, 0x10A7, pci_quirk_mf_endpoint_acs },
+	{ PCI_VENDOR_ID_INTEL, 0x10A9, pci_quirk_mf_endpoint_acs },
+	{ PCI_VENDOR_ID_INTEL, 0x10D6, pci_quirk_mf_endpoint_acs },
+	/* I350 */
+	{ PCI_VENDOR_ID_INTEL, 0x1521, pci_quirk_mf_endpoint_acs },
+	{ PCI_VENDOR_ID_INTEL, 0x1522, pci_quirk_mf_endpoint_acs },
+	{ PCI_VENDOR_ID_INTEL, 0x1523, pci_quirk_mf_endpoint_acs },
+	{ PCI_VENDOR_ID_INTEL, 0x1524, pci_quirk_mf_endpoint_acs },
+	/* 82571 (Quads omitted due to non-ACS switch) */
+	{ PCI_VENDOR_ID_INTEL, 0x105E, pci_quirk_mf_endpoint_acs },
+	{ PCI_VENDOR_ID_INTEL, 0x105F, pci_quirk_mf_endpoint_acs },
+	{ PCI_VENDOR_ID_INTEL, 0x1060, pci_quirk_mf_endpoint_acs },
+	{ PCI_VENDOR_ID_INTEL, 0x10D9, pci_quirk_mf_endpoint_acs },
+	/* Intel PCH root ports */
 	{ PCI_VENDOR_ID_INTEL, PCI_ANY_ID, pci_quirk_intel_pch_acs },
+	{ 0x19a2, 0x710, pci_quirk_mf_endpoint_acs }, /* Emulex BE3-R */
+	{ 0x10df, 0x720, pci_quirk_mf_endpoint_acs }, /* Emulex Skyhawk-R */
 	{ 0 }
 };
 

@@ -474,11 +474,11 @@ static void NCR5380_print_phase(struct Scsi_Host *instance)
  */
 #ifndef USLEEP_SLEEP
 /* 20 ms (reasonable hard disk speed) */
-#define USLEEP_SLEEP (20*HZ/1000)
+#define USLEEP_SLEEP msecs_to_jiffies(20)
 #endif
 /* 300 RPM (floppy speed) */
 #ifndef USLEEP_POLL
-#define USLEEP_POLL (200*HZ/1000)
+#define USLEEP_POLL msecs_to_jiffies(200)
 #endif
 #ifndef USLEEP_WAITLONG
 /* RvC: (reasonable time to wait on select error) */
@@ -576,7 +576,7 @@ static int __init __maybe_unused NCR5380_probe_irq(struct Scsi_Host *instance,
 		if ((mask & possible) && (request_irq(i, &probe_intr, 0, "NCR-probe", NULL) == 0))
 			trying_irqs |= mask;
 
-	timeout = jiffies + (250 * HZ / 1000);
+	timeout = jiffies + msecs_to_jiffies(250);
 	probe_irq = NO_IRQ;
 
 	/*
@@ -634,7 +634,7 @@ static void prepare_info(struct Scsi_Host *instance)
 	         "sg_tablesize %d, this_id %d, "
 	         "flags { %s%s%s}, "
 #if defined(USLEEP_POLL) && defined(USLEEP_WAITLONG)
-	         "USLEEP_POLL %d, USLEEP_WAITLONG %d, "
+		 "USLEEP_POLL %lu, USLEEP_WAITLONG %lu, "
 #endif
 	         "options { %s} ",
 	         instance->hostt->name, instance->io_port, instance->n_io_port,
@@ -716,8 +716,6 @@ static int __maybe_unused NCR5380_write_info(struct Scsi_Host *instance,
 }
 #endif
 
-#undef SPRINTF
-#define SPRINTF(args...) seq_printf(m, ## args)
 static
 void lprint_Scsi_Cmnd(struct scsi_cmnd *cmd, struct seq_file *m);
 static
@@ -734,19 +732,19 @@ static int __maybe_unused NCR5380_show_info(struct seq_file *m,
 	hostdata = (struct NCR5380_hostdata *) instance->hostdata;
 
 #ifdef PSEUDO_DMA
-	SPRINTF("Highwater I/O busy spin counts: write %d, read %d\n",
+	seq_printf(m, "Highwater I/O busy spin counts: write %d, read %d\n",
 	        hostdata->spin_max_w, hostdata->spin_max_r);
 #endif
 	spin_lock_irq(instance->host_lock);
 	if (!hostdata->connected)
-		SPRINTF("scsi%d: no currently connected command\n", instance->host_no);
+		seq_printf(m, "scsi%d: no currently connected command\n", instance->host_no);
 	else
 		lprint_Scsi_Cmnd((struct scsi_cmnd *) hostdata->connected, m);
-	SPRINTF("scsi%d: issue_queue\n", instance->host_no);
+	seq_printf(m, "scsi%d: issue_queue\n", instance->host_no);
 	for (ptr = (struct scsi_cmnd *) hostdata->issue_queue; ptr; ptr = (struct scsi_cmnd *) ptr->host_scribble)
 		lprint_Scsi_Cmnd(ptr, m);
 
-	SPRINTF("scsi%d: disconnected_queue\n", instance->host_no);
+	seq_printf(m, "scsi%d: disconnected_queue\n", instance->host_no);
 	for (ptr = (struct scsi_cmnd *) hostdata->disconnected_queue; ptr; ptr = (struct scsi_cmnd *) ptr->host_scribble)
 		lprint_Scsi_Cmnd(ptr, m);
 	spin_unlock_irq(instance->host_lock);
@@ -755,8 +753,8 @@ static int __maybe_unused NCR5380_show_info(struct seq_file *m,
 
 static void lprint_Scsi_Cmnd(struct scsi_cmnd *cmd, struct seq_file *m)
 {
-	SPRINTF("scsi%d : destination target %d, lun %llu\n", cmd->device->host->host_no, cmd->device->id, cmd->device->lun);
-	SPRINTF("        command = ");
+	seq_printf(m, "scsi%d : destination target %d, lun %llu\n", cmd->device->host->host_no, cmd->device->id, cmd->device->lun);
+	seq_puts(m, "        command = ");
 	lprint_command(cmd->cmnd, m);
 }
 
@@ -765,13 +763,13 @@ static void lprint_command(unsigned char *command, struct seq_file *m)
 	int i, s;
 	lprint_opcode(command[0], m);
 	for (i = 1, s = COMMAND_SIZE(command[0]); i < s; ++i)
-		SPRINTF("%02x ", command[i]);
-	SPRINTF("\n");
+		seq_printf(m, "%02x ", command[i]);
+	seq_putc(m, '\n');
 }
 
 static void lprint_opcode(int opcode, struct seq_file *m)
 {
-	SPRINTF("%2d (0x%02x)", opcode, opcode);
+	seq_printf(m, "%2d (0x%02x)", opcode, opcode);
 }
 
 
@@ -1348,7 +1346,7 @@ static int NCR5380_select(struct Scsi_Host *instance, struct scsi_cmnd *cmd)
 	 * selection.
 	 */
 
-	timeout = jiffies + (250 * HZ / 1000);
+	timeout = jiffies + msecs_to_jiffies(250);
 
 	/* 
 	 * XXX very interesting - we're seeing a bounce where the BSY we 

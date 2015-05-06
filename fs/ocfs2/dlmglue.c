@@ -1391,6 +1391,11 @@ static int __ocfs2_cluster_lock(struct ocfs2_super *osb,
 	int noqueue_attempted = 0;
 	int dlm_locked = 0;
 
+	if (!(lockres->l_flags & OCFS2_LOCK_INITIALIZED)) {
+		mlog_errno(-EINVAL);
+		return -EINVAL;
+	}
+
 	ocfs2_init_mask_waiter(&mw);
 
 	if (lockres->l_ops->flags & LOCK_TYPE_USES_LVB)
@@ -3749,6 +3754,9 @@ static int ocfs2_dentry_convert_worker(struct ocfs2_lock_res *lockres,
 		if (!dentry)
 			break;
 		spin_unlock(&dentry_attach_lock);
+
+		if (S_ISDIR(dl->dl_inode->i_mode))
+			shrink_dcache_parent(dentry);
 
 		mlog(0, "d_delete(%pd);\n", dentry);
 

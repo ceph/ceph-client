@@ -4137,7 +4137,7 @@ static int dsi_display_init_dispc(struct platform_device *dsidev,
 	dsi->timings.vsync_level = OMAPDSS_SIG_ACTIVE_HIGH;
 	dsi->timings.data_pclk_edge = OMAPDSS_DRIVE_SIG_RISING_EDGE;
 	dsi->timings.de_level = OMAPDSS_SIG_ACTIVE_HIGH;
-	dsi->timings.sync_pclk_edge = OMAPDSS_DRIVE_SIG_OPPOSITE_EDGES;
+	dsi->timings.sync_pclk_edge = OMAPDSS_DRIVE_SIG_FALLING_EDGE;
 
 	dss_mgr_set_timings(mgr, &dsi->timings);
 
@@ -5238,6 +5238,7 @@ static int dsi_init_pll_data(struct platform_device *dsidev)
 	}
 
 	pll->name = dsi->module_id == 0 ? "dsi0" : "dsi1";
+	pll->id = dsi->module_id == 0 ? DSS_PLL_DSI1 : DSS_PLL_DSI2;
 	pll->clkin = clk;
 	pll->base = dsi->pll_base;
 

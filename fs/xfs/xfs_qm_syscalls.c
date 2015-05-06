@@ -38,7 +38,6 @@
 STATIC int	xfs_qm_log_quotaoff(xfs_mount_t *, xfs_qoff_logitem_t **, uint);
 STATIC int	xfs_qm_log_quotaoff_end(xfs_mount_t *, xfs_qoff_logitem_t *,
 					uint);
-STATIC uint	xfs_qm_export_flags(uint);
 
 /*
  * Turn off quota accounting and/or enforcement for all udquots and/or
@@ -91,8 +90,7 @@ xfs_qm_scall_quotaoff(
 		mutex_unlock(&q->qi_quotaofflock);
 
 		/* XXX what to do if error ? Revert back to old vals incore ? */
-		error = xfs_qm_write_sb_changes(mp, XFS_SB_QFLAGS);
-		return error;
+		return xfs_sync_sb(mp, false);
 	}
 
 	dqtype = 0;
@@ -313,7 +311,6 @@ xfs_qm_scall_quotaon(
 {
 	int		error;
 	uint		qf;
-	__int64_t	sbflags;
 
 	flags &= (XFS_ALL_QUOTA_ACCT | XFS_ALL_QUOTA_ENFD);
 	/*
@@ -321,30 +318,22 @@ xfs_qm_scall_quotaon(
 	 */
 	flags &= ~(XFS_ALL_QUOTA_ACCT);
 
-	sbflags = 0;
-
 	if (flags == 0) {
 		xfs_debug(mp, "%s: zero flags, m_qflags=%x",
 			__func__, mp->m_qflags);
 		return -EINVAL;
 	}
 
-	/* No fs can turn on quotas with a delayed effect */
-	ASSERT((flags & XFS_ALL_QUOTA_ACCT) == 0);
-
 	/*
 	 * Can't enforce without accounting. We check the superblock
 	 * qflags here instead of m_qflags because rootfs can have
 	 * quota acct on ondisk without m_qflags' knowing.
 	 */
-	if (((flags & XFS_UQUOTA_ACCT) == 0 &&
-	     (mp->m_sb.sb_qflags & XFS_UQUOTA_ACCT) == 0 &&
+	if (((mp->m_sb.sb_qflags & XFS_UQUOTA_ACCT) == 0 &&
 	     (flags & XFS_UQUOTA_ENFD)) ||
-	    ((flags & XFS_GQUOTA_ACCT) == 0 &&
-	     (mp->m_sb.sb_qflags & XFS_GQUOTA_ACCT) == 0 &&
+	    ((mp->m_sb.sb_qflags & XFS_GQUOTA_ACCT) == 0 &&
 	     (flags & XFS_GQUOTA_ENFD)) ||
-	    ((flags & XFS_PQUOTA_ACCT) == 0 &&
-	     (mp->m_sb.sb_qflags & XFS_PQUOTA_ACCT) == 0 &&
+	    ((mp->m_sb.sb_qflags & XFS_PQUOTA_ACCT) == 0 &&
 	     (flags & XFS_PQUOTA_ENFD))) {
 		xfs_debug(mp,
 			"%s: Can't enforce without acct, flags=%x sbflags=%x",
@@ -369,11 +358,11 @@ xfs_qm_scall_quotaon(
 	/*
 	 * There's nothing to change if it's the same.
 	 */
-	if ((qf & flags) == flags && sbflags == 0)
+	if ((qf & flags) == flags)
 		return -EEXIST;
-	sbflags |= XFS_SB_QFLAGS;
 
-	if ((error = xfs_qm_write_sb_changes(mp, sbflags)))
+	error = xfs_sync_sb(mp, false);
+	if (error)
 		return error;
 	/*
 	 * If we aren't trying to switch on quota enforcement, we are done.
@@ -383,8 +372,7 @@ xfs_qm_scall_quotaon(
 	     ((mp->m_sb.sb_qflags & XFS_PQUOTA_ACCT) !=
 	     (mp->m_qflags & XFS_PQUOTA_ACCT)) ||
 	     ((mp->m_sb.sb_qflags & XFS_GQUOTA_ACCT) !=
-	     (mp->m_qflags & XFS_GQUOTA_ACCT)) ||
-	    (flags & XFS_ALL_QUOTA_ENFD) == 0)
+	     (mp->m_qflags & XFS_GQUOTA_ACCT)))
 		return 0;
 
 	if (! XFS_IS_QUOTA_RUNNING(mp))
@@ -397,178 +385,6 @@ xfs_qm_scall_quotaon(
 	mp->m_qflags |= (flags & XFS_ALL_QUOTA_ENFD);
 	mutex_unlock(&mp->m_quotainfo->qi_quotaofflock);
 
-	return 0;
-}
-
-
-/*
- * Return quota status information, such as uquota-off, enforcements, etc.
- * for Q_XGETQSTAT command.
- */
-int
-xfs_qm_scall_getqstat(
-	struct xfs_mount	*mp,
-	struct fs_quota_stat	*out)
-{
-	struct xfs_quotainfo	*q = mp->m_quotainfo;
-	struct xfs_inode	*uip = NULL;
-	struct xfs_inode	*gip = NULL;
-	struct xfs_inode	*pip = NULL;
-	bool                    tempuqip = false;
-	bool                    tempgqip = false;
-	bool                    temppqip = false;
-
-	memset(out, 0, sizeof(fs_quota_stat_t));
-
-	out->qs_version = FS_QSTAT_VERSION;
-	if (!xfs_sb_version_hasquota(&mp->m_sb)) {
-		out->qs_uquota.qfs_ino = NULLFSINO;
-		out->qs_gquota.qfs_ino = NULLFSINO;
-		return 0;
-	}
-
-	out->qs_flags = (__uint16_t) xfs_qm_export_flags(mp->m_qflags &
-							(XFS_ALL_QUOTA_ACCT|
-							 XFS_ALL_QUOTA_ENFD));
-	if (q) {
-		uip = q->qi_uquotaip;
-		gip = q->qi_gquotaip;
-		pip = q->qi_pquotaip;
-	}
-	if (!uip && mp->m_sb.sb_uquotino != NULLFSINO) {
-		if (xfs_iget(mp, NULL, mp->m_sb.sb_uquotino,
-					0, 0, &uip) == 0)
-			tempuqip = true;
-	}
-	if (!gip && mp->m_sb.sb_gquotino != NULLFSINO) {
-		if (xfs_iget(mp, NULL, mp->m_sb.sb_gquotino,
-					0, 0, &gip) == 0)
-			tempgqip = true;
-	}
-	/*
-	 * Q_XGETQSTAT doesn't have room for both group and project quotas.
-	 * So, allow the project quota values to be copied out only if
-	 * there is no group quota information available.
-	 */
-	if (!gip) {
-		if (!pip && mp->m_sb.sb_pquotino != NULLFSINO) {
-			if (xfs_iget(mp, NULL, mp->m_sb.sb_pquotino,
-						0, 0, &pip) == 0)
-				temppqip = true;
-		}
-	} else
-		pip = NULL;
-	if (uip) {
-		out->qs_uquota.qfs_ino = mp->m_sb.sb_uquotino;
-		out->qs_uquota.qfs_nblks = uip->i_d.di_nblocks;
-		out->qs_uquota.qfs_nextents = uip->i_d.di_nextents;
-		if (tempuqip)
-			IRELE(uip);
-	}
-
-	if (gip) {
-		out->qs_gquota.qfs_ino = mp->m_sb.sb_gquotino;
-		out->qs_gquota.qfs_nblks = gip->i_d.di_nblocks;
-		out->qs_gquota.qfs_nextents = gip->i_d.di_nextents;
-		if (tempgqip)
-			IRELE(gip);
-	}
-	if (pip) {
-		out->qs_gquota.qfs_ino = mp->m_sb.sb_gquotino;
-		out->qs_gquota.qfs_nblks = pip->i_d.di_nblocks;
-		out->qs_gquota.qfs_nextents = pip->i_d.di_nextents;
-		if (temppqip)
-			IRELE(pip);
-	}
-	if (q) {
-		out->qs_incoredqs = q->qi_dquots;
-		out->qs_btimelimit = q->qi_btimelimit;
-		out->qs_itimelimit = q->qi_itimelimit;
-		out->qs_rtbtimelimit = q->qi_rtbtimelimit;
-		out->qs_bwarnlimit = q->qi_bwarnlimit;
-		out->qs_iwarnlimit = q->qi_iwarnlimit;
-	}
-	return 0;
-}
-
-/*
- * Return quota status information, such as uquota-off, enforcements, etc.
- * for Q_XGETQSTATV command, to support separate project quota field.
- */
-int
-xfs_qm_scall_getqstatv(
-	struct xfs_mount	*mp,
-	struct fs_quota_statv	*out)
-{
-	struct xfs_quotainfo	*q = mp->m_quotainfo;
-	struct xfs_inode	*uip = NULL;
-	struct xfs_inode	*gip = NULL;
-	struct xfs_inode	*pip = NULL;
-	bool                    tempuqip = false;
-	bool                    tempgqip = false;
-	bool                    temppqip = false;
-
-	if (!xfs_sb_version_hasquota(&mp->m_sb)) {
-		out->qs_uquota.qfs_ino = NULLFSINO;
-		out->qs_gquota.qfs_ino = NULLFSINO;
-		out->qs_pquota.qfs_ino = NULLFSINO;
-		return 0;
-	}
-
-	out->qs_flags = (__uint16_t) xfs_qm_export_flags(mp->m_qflags &
-							(XFS_ALL_QUOTA_ACCT|
-							 XFS_ALL_QUOTA_ENFD));
-	out->qs_uquota.qfs_ino = mp->m_sb.sb_uquotino;
-	out->qs_gquota.qfs_ino = mp->m_sb.sb_gquotino;
-	out->qs_pquota.qfs_ino = mp->m_sb.sb_pquotino;
-
-	if (q) {
-		uip = q->qi_uquotaip;
-		gip = q->qi_gquotaip;
-		pip = q->qi_pquotaip;
-	}
-	if (!uip && mp->m_sb.sb_uquotino != NULLFSINO) {
-		if (xfs_iget(mp, NULL, mp->m_sb.sb_uquotino,
-					0, 0, &uip) == 0)
-			tempuqip = true;
-	}
-	if (!gip && mp->m_sb.sb_gquotino != NULLFSINO) {
-		if (xfs_iget(mp, NULL, mp->m_sb.sb_gquotino,
-					0, 0, &gip) == 0)
-			tempgqip = true;
-	}
-	if (!pip && mp->m_sb.sb_pquotino != NULLFSINO) {
-		if (xfs_iget(mp, NULL, mp->m_sb.sb_pquotino,
-					0, 0, &pip) == 0)
-			temppqip = true;
-	}
-	if (uip) {
-		out->qs_uquota.qfs_nblks = uip->i_d.di_nblocks;
-		out->qs_uquota.qfs_nextents = uip->i_d.di_nextents;
-		if (tempuqip)
-			IRELE(uip);
-	}
-
-	if (gip) {
-		out->qs_gquota.qfs_nblks = gip->i_d.di_nblocks;
-		out->qs_gquota.qfs_nextents = gip->i_d.di_nextents;
-		if (tempgqip)
-			IRELE(gip);
-	}
-	if (pip) {
-		out->qs_pquota.qfs_nblks = pip->i_d.di_nblocks;
-		out->qs_pquota.qfs_nextents = pip->i_d.di_nextents;
-		if (temppqip)
-			IRELE(pip);
-	}
-	if (q) {
-		out->qs_incoredqs = q->qi_dquots;
-		out->qs_btimelimit = q->qi_btimelimit;
-		out->qs_itimelimit = q->qi_itimelimit;
-		out->qs_rtbtimelimit = q->qi_rtbtimelimit;
-		out->qs_bwarnlimit = q->qi_bwarnlimit;
-		out->qs_iwarnlimit = q->qi_iwarnlimit;
-	}
 	return 0;
 }
 
@@ -800,7 +616,7 @@ xfs_qm_log_quotaoff(
 	mp->m_sb.sb_qflags = (mp->m_qflags & ~(flags)) & XFS_MOUNT_QUOTA_ALL;
 	spin_unlock(&mp->m_sb_lock);
 
-	xfs_mod_sb(tp, XFS_SB_QFLAGS);
+	xfs_log_sb(tp);
 
 	/*
 	 * We have to make sure that the transaction is secure on disk before we
@@ -901,28 +717,6 @@ xfs_qm_scall_getquota(
 out_put:
 	xfs_qm_dqput(dqp);
 	return error;
-}
-
-STATIC uint
-xfs_qm_export_flags(
-	uint flags)
-{
-	uint uflags;
-
-	uflags = 0;
-	if (flags & XFS_UQUOTA_ACCT)
-		uflags |= FS_QUOTA_UDQ_ACCT;
-	if (flags & XFS_GQUOTA_ACCT)
-		uflags |= FS_QUOTA_GDQ_ACCT;
-	if (flags & XFS_PQUOTA_ACCT)
-		uflags |= FS_QUOTA_PDQ_ACCT;
-	if (flags & XFS_UQUOTA_ENFD)
-		uflags |= FS_QUOTA_UDQ_ENFD;
-	if (flags & XFS_GQUOTA_ENFD)
-		uflags |= FS_QUOTA_GDQ_ENFD;
-	if (flags & XFS_PQUOTA_ENFD)
-		uflags |= FS_QUOTA_PDQ_ENFD;
-	return uflags;
 }
 
 

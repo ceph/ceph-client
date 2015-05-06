@@ -80,12 +80,6 @@ struct mmc_ios {
 
 struct mmc_host_ops {
 	/*
-	 * 'enable' is called when the host is claimed and 'disable' is called
-	 * when the host is released. 'enable' and 'disable' are deprecated.
-	 */
-	int (*enable)(struct mmc_host *host);
-	int (*disable)(struct mmc_host *host);
-	/*
 	 * It is optional for the host to implement pre_req and post_req in
 	 * order to support double buffering of requests (prepare one
 	 * request while another request is active).
@@ -166,7 +160,6 @@ struct mmc_async_req {
  * struct mmc_slot - MMC slot functions
  *
  * @cd_irq:		MMC/SD-card slot hotplug detection IRQ or -EINVAL
- * @lock:		protect the @handler_priv pointer
  * @handler_priv:	MMC/SD-card slot context
  *
  * Some MMC/SD host controllers implement slot-functions like card and
@@ -176,7 +169,6 @@ struct mmc_async_req {
  */
 struct mmc_slot {
 	int cd_irq;
-	struct mutex lock;
 	void *handler_priv;
 };
 
@@ -197,6 +189,7 @@ struct mmc_context_info {
 };
 
 struct regulator;
+struct mmc_pwrseq;
 
 struct mmc_supply {
 	struct regulator *vmmc;		/* Card power supply */
@@ -208,6 +201,7 @@ struct mmc_host {
 	struct device		class_dev;
 	int			index;
 	const struct mmc_host_ops *ops;
+	struct mmc_pwrseq	*pwrseq;
 	unsigned int		f_min;
 	unsigned int		f_max;
 	unsigned int		f_init;

@@ -14,7 +14,6 @@
 #include <linux/mmc/host.h>
 #include <linux/mmc/mmc.h>
 #include <linux/slab.h>
-#include <linux/device.h>
 
 #include <linux/scatterlist.h>
 #include <linux/swap.h>		/* For nr_free_buffer_pages() */
@@ -2342,20 +2341,16 @@ static int mmc_test_hw_reset(struct mmc_test_card *test)
 	struct mmc_host *host = card->host;
 	int err;
 
-	err = mmc_hw_reset_check(host);
-	if (!err)
-		return RESULT_OK;
-
-	if (err == -ENOSYS)
-		return RESULT_FAIL;
-
-	if (err != -EOPNOTSUPP)
-		return err;
-
-	if (!mmc_can_reset(card))
+	if (!mmc_card_mmc(card) || !mmc_can_reset(card))
 		return RESULT_UNSUP_CARD;
 
-	return RESULT_UNSUP_HOST;
+	err = mmc_hw_reset(host);
+	if (!err)
+		return RESULT_OK;
+	else if (err == -EOPNOTSUPP)
+		return RESULT_UNSUP_HOST;
+
+	return RESULT_FAIL;
 }
 
 static const struct mmc_test_case mmc_test_cases[] = {
@@ -3000,9 +2995,8 @@ err:
 	return ret;
 }
 
-static int mmc_test_probe(struct device *dev)
+static int mmc_test_probe(struct mmc_card *card)
 {
-	struct mmc_card *card = mmc_dev_to_card(dev);
 	int ret;
 
 	if (!mmc_card_mmc(card) && !mmc_card_sd(card))
@@ -3017,22 +3011,20 @@ static int mmc_test_probe(struct device *dev)
 	return 0;
 }
 
-static int mmc_test_remove(struct device *dev)
+static void mmc_test_remove(struct mmc_card *card)
 {
-	struct mmc_card *card = mmc_dev_to_card(dev);
-
 	mmc_test_free_result(card);
 	mmc_test_free_dbgfs_file(card);
-
-	return 0;
 }
 
-static void mmc_test_shutdown(struct device *dev)
+static void mmc_test_shutdown(struct mmc_card *card)
 {
 }
 
-static struct device_driver mmc_driver = {
-	.name	= "mmc_test",
+static struct mmc_driver mmc_driver = {
+	.drv		= {
+		.name	= "mmc_test",
+	},
 	.probe		= mmc_test_probe,
 	.remove		= mmc_test_remove,
 	.shutdown	= mmc_test_shutdown,

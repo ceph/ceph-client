@@ -103,6 +103,11 @@ void mlx4_en_update_loopback_state(struct net_device *dev,
 {
 	struct mlx4_en_priv *priv = netdev_priv(dev);
 
+	if (features & NETIF_F_LOOPBACK)
+		priv->ctrl_flags |= cpu_to_be32(MLX4_WQE_CTRL_FORCE_LOOPBACK);
+	else
+		priv->ctrl_flags &= cpu_to_be32(~MLX4_WQE_CTRL_FORCE_LOOPBACK);
+
 	priv->flags &= ~(MLX4_EN_FLAG_RX_FILTER_NEEDED|
 			MLX4_EN_FLAG_ENABLE_HW_LOOPBACK);
 
@@ -214,6 +219,8 @@ static void mlx4_en_remove(struct mlx4_dev *dev, void *endev_ptr)
 	iounmap(mdev->uar_map);
 	mlx4_uar_free(dev, &mdev->priv_uar);
 	mlx4_pd_free(dev, mdev->priv_pdn);
+	if (mdev->nb.notifier_call)
+		unregister_netdevice_notifier(&mdev->nb);
 	kfree(mdev);
 }
 
@@ -241,8 +248,8 @@ static void *mlx4_en_add(struct mlx4_dev *dev)
 	spin_lock_init(&mdev->uar_lock);
 
 	mdev->dev = dev;
-	mdev->dma_device = &(dev->pdev->dev);
-	mdev->pdev = dev->pdev;
+	mdev->dma_device = &dev->persist->pdev->dev;
+	mdev->pdev = dev->persist->pdev;
 	mdev->device_up = false;
 
 	mdev->LSO_support = !!(dev->caps.flags & (1 << 15));
@@ -297,6 +304,12 @@ static void *mlx4_en_add(struct mlx4_dev *dev)
 		mlx4_info(mdev, "Activating port:%d\n", i);
 		if (mlx4_en_init_netdev(mdev, i, &mdev->profile.prof[i]))
 			mdev->pndev[i] = NULL;
+	}
+	/* register notifier */
+	mdev->nb.notifier_call = mlx4_en_netdev_event;
+	if (register_netdevice_notifier(&mdev->nb)) {
+		mdev->nb.notifier_call = NULL;
+		mlx4_err(mdev, "Failed to create notifier\n");
 	}
 
 	return mdev;

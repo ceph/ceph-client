@@ -13,6 +13,7 @@
 #define __ARCH_ARM_MACH_EXYNOS_COMMON_H
 
 #include <linux/of.h>
+#include <linux/platform_data/cpuidle-exynos.h>
 
 #define EXYNOS3250_SOC_ID	0xE3472000
 #define EXYNOS3_SOC_MASK	0xFFFFF000
@@ -125,6 +126,12 @@ enum {
 
 void exynos_firmware_init(void);
 
+/* CPU BOOT mode flag for Exynos3250 SoC bootloader */
+#define C2_STATE	(1 << 3)
+
+void exynos_set_boot_flag(unsigned int cpu, unsigned int mode);
+void exynos_clear_boot_flag(unsigned int cpu, unsigned int mode);
+
 extern u32 exynos_get_eint_wake_mask(void);
 
 #ifdef CONFIG_PM_SLEEP
@@ -150,8 +157,11 @@ extern void exynos_pm_central_suspend(void);
 extern int exynos_pm_central_resume(void);
 extern void exynos_enter_aftr(void);
 
+extern struct cpuidle_exynos_data cpuidle_coupled_exynos_data;
+
 extern void s5p_init_cpu(void __iomem *cpuid_addr);
 extern unsigned int samsung_rev(void);
+extern void __iomem *cpu_boot_reg_base(void);
 
 static inline void pmu_raw_writel(u32 val, u32 offset)
 {

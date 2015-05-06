@@ -435,7 +435,8 @@ static void exit_mm(struct task_struct *tsk)
 	task_unlock(tsk);
 	mm_update_next_owner(mm);
 	mmput(mm);
-	clear_thread_flag(TIF_MEMDIE);
+	if (test_thread_flag(TIF_MEMDIE))
+		unmark_oom_victim();
 }
 
 static struct task_struct *find_alive_thread(struct task_struct *p)
@@ -754,8 +755,6 @@ void do_exit(long code)
 	perf_event_exit_task(tsk);
 
 	cgroup_exit(tsk);
-
-	module_put(task_thread_info(tsk)->exec_domain->module);
 
 	/*
 	 * FIXME: do that only when needed, using sched_exit tracepoint

@@ -41,7 +41,7 @@
 #include <linux/fs.h>
 #include <linux/pagemap.h>
 #include <linux/mm.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <linux/buffer_head.h>   /* for wait_on_buffer */
 #include <linux/pagevec.h>
 #include <linux/prefetch.h>
@@ -183,7 +183,10 @@ static int ll_dir_filler(void *_hash, struct page *page0)
 	op_data->op_offset = hash;
 	rc = md_readpage(exp, op_data, page_pool, &request);
 	ll_finish_md_op_data(op_data);
-	if (rc == 0) {
+	if (rc < 0) {
+		/* page0 is special, which was added into page cache early */
+		delete_from_page_cache(page0);
+	} else if (rc == 0) {
 		body = req_capsule_server_get(&request->rq_pill, &RMF_MDT_BODY);
 		/* Checked by mdc_readpage() */
 		LASSERT(body != NULL);
@@ -278,7 +281,7 @@ static struct page *ll_dir_page_locate(struct inode *dir, __u64 *hash,
 	spin_lock_irq(&mapping->tree_lock);
 	found = radix_tree_gang_lookup(&mapping->page_tree,
 				       (void **)&page, offset, 1);
-	if (found > 0) {
+	if (found > 0 && !radix_tree_exceptional_entry(page)) {
 		struct lu_dirpage *dp;
 
 		page_cache_get(page);
@@ -652,8 +655,8 @@ static int ll_send_mgc_param(struct obd_export *mgc, char *string)
 	return rc;
 }
 
-int ll_dir_setdirstripe(struct inode *dir, struct lmv_user_md *lump,
-			char *filename)
+static int ll_dir_setdirstripe(struct inode *dir, struct lmv_user_md *lump,
+			       char *filename)
 {
 	struct ptlrpc_request *request = NULL;
 	struct md_op_data *op_data;
@@ -1515,6 +1518,7 @@ out_rmdir:
 			lump = (struct lov_user_md *)arg;
 		} else {
 			struct lov_user_mds_data *lmdp;
+
 			lmdp = (struct lov_user_mds_data *)arg;
 			lump = &lmdp->lmd_lmm;
 		}
@@ -1906,21 +1910,21 @@ static loff_t ll_dir_seek(struct file *file, loff_t offset, int origin)
 
 	mutex_lock(&inode->i_mutex);
 	switch (origin) {
-		case SEEK_SET:
-			break;
-		case SEEK_CUR:
-			offset += file->f_pos;
-			break;
-		case SEEK_END:
-			if (offset > 0)
-				goto out;
-			if (api32)
-				offset += LL_DIR_END_OFF_32BIT;
-			else
-				offset += LL_DIR_END_OFF;
-			break;
-		default:
+	case SEEK_SET:
+		break;
+	case SEEK_CUR:
+		offset += file->f_pos;
+		break;
+	case SEEK_END:
+		if (offset > 0)
 			goto out;
+		if (api32)
+			offset += LL_DIR_END_OFF_32BIT;
+		else
+			offset += LL_DIR_END_OFF;
+		break;
+	default:
+		goto out;
 	}
 
 	if (offset >= 0 &&

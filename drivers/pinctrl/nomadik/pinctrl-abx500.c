@@ -466,7 +466,7 @@ static int abx500_set_mode(struct pinctrl_dev *pctldev, struct gpio_chip *chip,
 		break;
 
 	default:
-		dev_dbg(pct->dev, "unknow alt_setting %d\n", alt_setting);
+		dev_dbg(pct->dev, "unknown alt_setting %d\n", alt_setting);
 
 		return -EINVAL;
 	}
@@ -914,7 +914,7 @@ static int abx500_dt_subnode_to_map(struct pinctrl_dev *pctldev,
 		}
 	}
 
-	ret = pinconf_generic_parse_dt_config(np, &configs, &nconfigs);
+	ret = pinconf_generic_parse_dt_config(np, pctldev, &configs, &nconfigs);
 	if (nconfigs) {
 		const char *gpio_name;
 		const char *pin;

@@ -34,6 +34,7 @@
  */
 #undef __NO_VERSION__
 
+#include <linux/etherdevice.h>
 #include <linux/file.h>
 #include "device.h"
 #include "card.h"
@@ -319,7 +320,7 @@ static int vnt_init_registers(struct vnt_private *priv)
 
 	/* get permanent network address */
 	memcpy(priv->permanent_net_addr, init_rsp->net_addr, 6);
-	memcpy(priv->current_net_addr, priv->permanent_net_addr, ETH_ALEN);
+	ether_addr_copy(priv->current_net_addr, priv->permanent_net_addr);
 
 	/* if exist SW network address, use it */
 	dev_dbg(&priv->usb->dev, "Network address = %pM\n",
@@ -962,6 +963,7 @@ vt6656_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	hw = ieee80211_alloc_hw(sizeof(struct vnt_private), &vnt_mac_ops);
 	if (!hw) {
 		dev_err(&udev->dev, "could not register ieee80211_hw\n");
+		rc = -ENOMEM;
 		goto err_nomem;
 	}
 

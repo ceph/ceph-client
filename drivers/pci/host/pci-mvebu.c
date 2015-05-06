@@ -101,9 +101,7 @@ struct mvebu_pcie {
 	struct mvebu_pcie_port *ports;
 	struct msi_controller *msi;
 	struct resource io;
-	char io_name[30];
 	struct resource realio;
-	char mem_name[30];
 	struct resource mem;
 	struct resource busn;
 	int nports;
@@ -131,6 +129,7 @@ struct mvebu_pcie_port {
 	size_t memwin_size;
 	phys_addr_t iowin_base;
 	size_t iowin_size;
+	u32 saved_pcie_stat;
 };
 
 static inline void mvebu_writel(struct mvebu_pcie_port *port, u32 val, u32 reg)
@@ -723,18 +722,9 @@ static int mvebu_pcie_setup(int nr, struct pci_sys_data *sys)
 {
 	struct mvebu_pcie *pcie = sys_to_pcie(sys);
 	int i;
-	int domain = 0;
 
-#ifdef CONFIG_PCI_DOMAINS
-	domain = sys->domain;
-#endif
-
-	snprintf(pcie->mem_name, sizeof(pcie->mem_name), "PCI MEM %04x",
-		 domain);
-	pcie->mem.name = pcie->mem_name;
-
-	snprintf(pcie->io_name, sizeof(pcie->io_name), "PCI I/O %04x", domain);
-	pcie->realio.name = pcie->io_name;
+	pcie->mem.name = "PCI MEM";
+	pcie->realio.name = "PCI I/O";
 
 	if (request_resource(&iomem_resource, &pcie->mem))
 		return 0;
@@ -910,6 +900,35 @@ static void mvebu_pcie_msi_enable(struct mvebu_pcie *pcie)
 		pcie->msi->dev = &pcie->pdev->dev;
 }
 
+static int mvebu_pcie_suspend(struct device *dev)
+{
+	struct mvebu_pcie *pcie;
+	int i;
+
+	pcie = dev_get_drvdata(dev);
+	for (i = 0; i < pcie->nports; i++) {
+		struct mvebu_pcie_port *port = pcie->ports + i;
+		port->saved_pcie_stat = mvebu_readl(port, PCIE_STAT_OFF);
+	}
+
+	return 0;
+}
+
+static int mvebu_pcie_resume(struct device *dev)
+{
+	struct mvebu_pcie *pcie;
+	int i;
+
+	pcie = dev_get_drvdata(dev);
+	for (i = 0; i < pcie->nports; i++) {
+		struct mvebu_pcie_port *port = pcie->ports + i;
+		mvebu_writel(port, port->saved_pcie_stat, PCIE_STAT_OFF);
+		mvebu_pcie_setup_hw(port);
+	}
+
+	return 0;
+}
+
 static int mvebu_pcie_probe(struct platform_device *pdev)
 {
 	struct mvebu_pcie *pcie;
@@ -1067,6 +1086,8 @@ static int mvebu_pcie_probe(struct platform_device *pdev)
 	mvebu_pcie_msi_enable(pcie);
 	mvebu_pcie_enable(pcie);
 
+	platform_set_drvdata(pdev, pcie);
+
 	return 0;
 }
 
@@ -1079,12 +1100,18 @@ static const struct of_device_id mvebu_pcie_of_match_table[] = {
 };
 MODULE_DEVICE_TABLE(of, mvebu_pcie_of_match_table);
 
+static struct dev_pm_ops mvebu_pcie_pm_ops = {
+	.suspend_noirq = mvebu_pcie_suspend,
+	.resume_noirq = mvebu_pcie_resume,
+};
+
 static struct platform_driver mvebu_pcie_driver = {
 	.driver = {
 		.name = "mvebu-pcie",
 		.of_match_table = mvebu_pcie_of_match_table,
 		/* driver unloading/unbinding currently not supported */
 		.suppress_bind_attrs = true,
+		.pm = &mvebu_pcie_pm_ops,
 	},
 	.probe = mvebu_pcie_probe,
 };

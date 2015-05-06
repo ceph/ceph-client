@@ -1,7 +1,7 @@
 /*******************************************************************************
  *
  * Intel Ethernet Controller XL710 Family Linux Virtual Function Driver
- * Copyright(c) 2013 - 2014 Intel Corporation.
+ * Copyright(c) 2013 - 2015 Intel Corporation.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -44,7 +44,8 @@
 #define I40E_DEV_ID_QSFP_B		0x1584
 #define I40E_DEV_ID_QSFP_C		0x1585
 #define I40E_DEV_ID_10G_BASE_T		0x1586
-#define I40E_DEV_ID_VF		0x154C
+#define I40E_DEV_ID_20G_KR2		0x1587
+#define I40E_DEV_ID_VF			0x154C
 #define I40E_DEV_ID_VF_HV		0x1571
 
 #define i40e_is_40G_device(d)		((d) == I40E_DEV_ID_QSFP_A  || \
@@ -175,12 +176,12 @@ struct i40e_link_status {
 	u8 an_info;
 	u8 ext_info;
 	u8 loopback;
-	bool an_enabled;
 	/* is Link Status Event notification to SW enabled */
 	bool lse_enable;
 	u16 max_frame_size;
 	bool crc_enable;
 	u8 pacing;
+	u8 requested_speeds;
 };
 
 struct i40e_phy_info {
@@ -211,6 +212,7 @@ struct i40e_hw_capabilities {
 	bool evb_802_1_qbh; /* Bridge Port Extension */
 	bool dcb;
 	bool fcoe;
+	bool iscsi; /* Indicates iSCSI enabled */
 	bool mfp_mode_1;
 	bool mgmt_cem;
 	bool ieee_1588;
@@ -240,6 +242,7 @@ struct i40e_hw_capabilities {
 	u8 rx_buf_chain_len;
 	u32 enabled_tcmap;
 	u32 maxtc;
+	u64 wr_csr_prot;
 };
 
 struct i40e_mac_info {
@@ -425,7 +428,7 @@ struct i40e_hw {
 	u8 __iomem *hw_addr;
 	void *back;
 
-	/* function pointer structs */
+	/* subsystem structs */
 	struct i40e_phy_info phy;
 	struct i40e_mac_info mac;
 	struct i40e_bus_info bus;
@@ -451,6 +454,11 @@ struct i40e_hw {
 	/* device profile info */
 	u8  pf_id;
 	u16 main_vsi_seid;
+
+	/* for multi-function MACs */
+	u16 partition_id;
+	u16 num_partitions;
+	u16 num_ports;
 
 	/* Closest numa node to the device */
 	u16 numa_node;
@@ -1110,7 +1118,7 @@ struct i40e_hw_port_stats {
 /* Checksum and Shadow RAM pointers */
 #define I40E_SR_NVM_CONTROL_WORD		0x00
 #define I40E_SR_EMP_MODULE_PTR			0x0F
-#define I40E_SR_NVM_IMAGE_VERSION		0x18
+#define I40E_SR_NVM_DEV_STARTER_VERSION		0x18
 #define I40E_SR_NVM_WAKE_ON_LAN			0x19
 #define I40E_SR_ALTERNATE_SAN_MAC_ADDRESS_PTR	0x27
 #define I40E_SR_NVM_EETRACK_LO			0x2D

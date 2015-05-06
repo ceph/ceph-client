@@ -124,7 +124,7 @@
 #include <linux/if_vlan.h>
 #include <linux/bitops.h>
 #include <linux/ptp_clock_kernel.h>
-#include <linux/clocksource.h>
+#include <linux/timecounter.h>
 #include <linux/net_tstamp.h>
 #include <net/dcbnl.h>
 
@@ -182,10 +182,18 @@
 #define XGBE_PHY_NAME		"amd_xgbe_phy"
 #define XGBE_PRTAD		0
 
+/* Common property names */
+#define XGBE_MAC_ADDR_PROPERTY	"mac-address"
+#define XGBE_PHY_MODE_PROPERTY	"phy-mode"
+#define XGBE_DMA_IRQS_PROPERTY	"amd,per-channel-interrupt"
+
 /* Device-tree clock names */
 #define XGBE_DMA_CLOCK		"dma_clk"
 #define XGBE_PTP_CLOCK		"ptp_clk"
-#define XGBE_DMA_IRQS		"amd,per-channel-interrupt"
+
+/* ACPI property names */
+#define XGBE_ACPI_DMA_FREQ	"amd,dma-freq"
+#define XGBE_ACPI_PTP_FREQ	"amd,ptp-freq"
 
 /* Timestamp support - values based on 50MHz PTP clock
  *   50MHz => 20 nsec
@@ -214,7 +222,7 @@
 	 ((_idx) & ((_ring)->rdesc_count - 1)))
 
 /* Default coalescing parameters */
-#define XGMAC_INIT_DMA_TX_USECS		50
+#define XGMAC_INIT_DMA_TX_USECS		1000
 #define XGMAC_INIT_DMA_TX_FRAMES	25
 
 #define XGMAC_MAX_DMA_RIWT		0xff
@@ -317,8 +325,6 @@ struct xgbe_ring_data {
 	struct xgbe_tx_ring_data tx;	/* Tx-related data */
 	struct xgbe_rx_ring_data rx;	/* Rx-related data */
 
-	unsigned int interrupt;		/* Interrupt indicator */
-
 	unsigned int mapped_as_page;
 
 	/* Incomplete receive save location.  If the budget is exhausted
@@ -361,8 +367,7 @@ struct xgbe_ring {
 	 *  cur   - Tx: index of descriptor to be used for current transfer
 	 *          Rx: index of descriptor to check for packet availability
 	 *  dirty - Tx: index of descriptor to check for transfer complete
-	 *          Rx: count of descriptors in which a packet has been received
-	 *              (used with skb_realloc_index to refresh the ring)
+	 *          Rx: index of descriptor to check for buffer reallocation
 	 */
 	unsigned int cur;
 	unsigned int dirty;
@@ -377,11 +382,6 @@ struct xgbe_ring {
 			unsigned short cur_mss;
 			unsigned short cur_vlan_ctag;
 		} tx;
-
-		struct {
-			unsigned int realloc_index;
-			unsigned int realloc_threshold;
-		} rx;
 	};
 } ____cacheline_aligned;
 
@@ -408,7 +408,7 @@ struct xgbe_channel {
 	unsigned int saved_ier;
 
 	unsigned int tx_timer_active;
-	struct hrtimer tx_timer;
+	struct timer_list tx_timer;
 
 	struct xgbe_ring *tx_ring;
 	struct xgbe_ring *rx_ring;
@@ -495,10 +495,8 @@ struct xgbe_mmc_stats {
 struct xgbe_hw_if {
 	int (*tx_complete)(struct xgbe_ring_desc *);
 
-	int (*set_promiscuous_mode)(struct xgbe_prv_data *, unsigned int);
-	int (*set_all_multicast_mode)(struct xgbe_prv_data *, unsigned int);
-	int (*add_mac_addresses)(struct xgbe_prv_data *);
 	int (*set_mac_address)(struct xgbe_prv_data *, u8 *addr);
+	int (*config_rx_mode)(struct xgbe_prv_data *);
 
 	int (*enable_rx_csum)(struct xgbe_prv_data *);
 	int (*disable_rx_csum)(struct xgbe_prv_data *);
@@ -534,8 +532,9 @@ struct xgbe_hw_if {
 	int (*dev_read)(struct xgbe_channel *);
 	void (*tx_desc_init)(struct xgbe_channel *);
 	void (*rx_desc_init)(struct xgbe_channel *);
-	void (*rx_desc_reset)(struct xgbe_ring_data *);
 	void (*tx_desc_reset)(struct xgbe_ring_data *);
+	void (*rx_desc_reset)(struct xgbe_prv_data *, struct xgbe_ring_data *,
+			      unsigned int);
 	int (*is_last_desc)(struct xgbe_ring_desc *);
 	int (*is_context_desc)(struct xgbe_ring_desc *);
 	void (*tx_start_xmit)(struct xgbe_channel *, struct xgbe_ring *);
@@ -596,7 +595,8 @@ struct xgbe_desc_if {
 	int (*alloc_ring_resources)(struct xgbe_prv_data *);
 	void (*free_ring_resources)(struct xgbe_prv_data *);
 	int (*map_tx_skb)(struct xgbe_channel *, struct sk_buff *);
-	void (*realloc_rx_buffer)(struct xgbe_channel *);
+	int (*map_rx_buffer)(struct xgbe_prv_data *, struct xgbe_ring *,
+			     struct xgbe_ring_data *);
 	void (*unmap_rdata)(struct xgbe_prv_data *, struct xgbe_ring_data *);
 	void (*wrapper_tx_desc_init)(struct xgbe_prv_data *);
 	void (*wrapper_rx_desc_init)(struct xgbe_prv_data *);
@@ -617,7 +617,7 @@ struct xgbe_hw_features {
 	unsigned int mgk;		/* PMT magic packet */
 	unsigned int mmc;		/* RMON module */
 	unsigned int aoe;		/* ARP Offload */
-	unsigned int ts;		/* IEEE 1588-2008 Adavanced Timestamp */
+	unsigned int ts;		/* IEEE 1588-2008 Advanced Timestamp */
 	unsigned int eee;		/* Energy Efficient Ethernet */
 	unsigned int tx_coe;		/* Tx Checksum Offload */
 	unsigned int rx_coe;		/* Rx Checksum Offload */
@@ -629,6 +629,7 @@ struct xgbe_hw_features {
 	unsigned int rx_fifo_size;	/* MTL Receive FIFO Size */
 	unsigned int tx_fifo_size;	/* MTL Transmit FIFO Size */
 	unsigned int adv_ts_hi;		/* Advance Timestamping High Word */
+	unsigned int dma_width;		/* DMA width */
 	unsigned int dcb;		/* DCB Feature */
 	unsigned int sph;		/* Split Header Feature */
 	unsigned int tso;		/* TCP Segmentation Offload */
@@ -650,7 +651,11 @@ struct xgbe_hw_features {
 struct xgbe_prv_data {
 	struct net_device *netdev;
 	struct platform_device *pdev;
+	struct acpi_device *adev;
 	struct device *dev;
+
+	/* ACPI or DT flag */
+	unsigned int use_acpi;
 
 	/* XGMAC/XPCS related mmio registers */
 	void __iomem *xgmac_regs;	/* XGMAC CSRs */
@@ -672,6 +677,7 @@ struct xgbe_prv_data {
 	struct xgbe_desc_if desc_if;
 
 	/* AXI DMA settings */
+	unsigned int coherent;
 	unsigned int axdomain;
 	unsigned int arcache;
 	unsigned int awcache;
@@ -707,6 +713,7 @@ struct xgbe_prv_data {
 
 	/* Rx coalescing settings */
 	unsigned int rx_riwt;
+	unsigned int rx_usecs;
 	unsigned int rx_frames;
 
 	/* Current Rx buffer size */
@@ -739,6 +746,7 @@ struct xgbe_prv_data {
 	unsigned int phy_rx_pause;
 
 	/* Netdev related settings */
+	unsigned char mac_addr[ETH_ALEN];
 	netdev_features_t netdev_features;
 	struct napi_struct napi;
 	struct xgbe_mmc_stats mmc_stats;
@@ -748,7 +756,9 @@ struct xgbe_prv_data {
 
 	/* Device clocks */
 	struct clk *sysclk;
+	unsigned long sysclk_rate;
 	struct clk *ptpclk;
+	unsigned long ptpclk_rate;
 
 	/* Timestamp support */
 	spinlock_t tstamp_lock;

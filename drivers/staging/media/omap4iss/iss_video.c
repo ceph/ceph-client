@@ -25,9 +25,6 @@
 #include "iss_video.h"
 #include "iss.h"
 
-static unsigned debug;
-module_param(debug, uint, 0644);
-MODULE_PARM_DESC(debug, "activates debug info");
 
 /* -----------------------------------------------------------------------------
  * Helper functions
@@ -174,13 +171,13 @@ static void iss_video_pix_to_mbus(const struct v4l2_pix_format *pix,
 	mbus->width = pix->width;
 	mbus->height = pix->height;
 
-	for (i = 0; i < ARRAY_SIZE(formats); ++i) {
+	/* Skip the last format in the loop so that it will be selected if no
+	 * match is found.
+	 */
+	for (i = 0; i < ARRAY_SIZE(formats) - 1; ++i) {
 		if (formats[i].pixelformat == pix->pixelformat)
 			break;
 	}
-
-	if (WARN_ON(i == ARRAY_SIZE(formats)))
-		return;
 
 	mbus->code = formats[i].code;
 	mbus->colorspace = pix->colorspace;
@@ -773,6 +770,14 @@ iss_video_qbuf(struct file *file, void *fh, struct v4l2_buffer *b)
 }
 
 static int
+iss_video_expbuf(struct file *file, void *fh, struct v4l2_exportbuffer *e)
+{
+	struct iss_video_fh *vfh = to_iss_video_fh(fh);
+
+	return vb2_expbuf(&vfh->queue, e);
+}
+
+static int
 iss_video_dqbuf(struct file *file, void *fh, struct v4l2_buffer *b)
 {
 	struct iss_video_fh *vfh = to_iss_video_fh(fh);
@@ -1021,6 +1026,7 @@ static const struct v4l2_ioctl_ops iss_video_ioctl_ops = {
 	.vidioc_reqbufs			= iss_video_reqbufs,
 	.vidioc_querybuf		= iss_video_querybuf,
 	.vidioc_qbuf			= iss_video_qbuf,
+	.vidioc_expbuf			= iss_video_expbuf,
 	.vidioc_dqbuf			= iss_video_dqbuf,
 	.vidioc_streamon		= iss_video_streamon,
 	.vidioc_streamoff		= iss_video_streamoff,
@@ -1043,8 +1049,6 @@ static int iss_video_open(struct file *file)
 	handle = kzalloc(sizeof(*handle), GFP_KERNEL);
 	if (handle == NULL)
 		return -ENOMEM;
-
-	video->video.debug = debug;
 
 	v4l2_fh_init(&handle->vfh, &video->video);
 	v4l2_fh_add(&handle->vfh);
@@ -1071,7 +1075,7 @@ static int iss_video_open(struct file *file)
 	q = &handle->queue;
 
 	q->type = video->type;
-	q->io_modes = VB2_MMAP;
+	q->io_modes = VB2_MMAP | VB2_DMABUF;
 	q->drv_priv = handle;
 	q->ops = &iss_video_vb2ops;
 	q->mem_ops = &vb2_dma_contig_memops;
@@ -1217,8 +1221,7 @@ int omap4iss_video_register(struct iss_video *video, struct v4l2_device *vdev)
 	ret = video_register_device(&video->video, VFL_TYPE_GRABBER, -1);
 	if (ret < 0)
 		dev_err(video->iss->dev,
-			"%s: could not register video device (%d)\n",
-			__func__, ret);
+			"could not register video device (%d)\n", ret);
 
 	return ret;
 }

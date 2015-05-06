@@ -420,10 +420,9 @@ static int wm_coeff_put(struct snd_kcontrol *kcontrol,
 
 	memcpy(ctl->cache, p, ctl->len);
 
-	if (!ctl->enabled) {
-		ctl->set = 1;
+	ctl->set = 1;
+	if (!ctl->enabled)
 		return 0;
-	}
 
 	return wm_coeff_write_control(kcontrol, p, ctl->len);
 }
@@ -1185,7 +1184,6 @@ static int wm_adsp_load_coeff(struct wm_adsp *dsp)
 	int ret, pos, blocks, type, offset, reg;
 	char *file;
 	struct wm_adsp_buf *buf;
-	int tmp;
 
 	file = kzalloc(PAGE_SIZE, GFP_KERNEL);
 	if (file == NULL)
@@ -1335,12 +1333,7 @@ static int wm_adsp_load_coeff(struct wm_adsp *dsp)
 			}
 		}
 
-		tmp = le32_to_cpu(blk->len) % 4;
-		if (tmp)
-			pos += le32_to_cpu(blk->len) + (4 - tmp) + sizeof(*blk);
-		else
-			pos += le32_to_cpu(blk->len) + sizeof(*blk);
-
+		pos += (le32_to_cpu(blk->len) + sizeof(*blk) + 3) & ~0x03;
 		blocks++;
 	}
 
@@ -1373,7 +1366,7 @@ int wm_adsp1_event(struct snd_soc_dapm_widget *w,
 		   struct snd_kcontrol *kcontrol,
 		   int event)
 {
-	struct snd_soc_codec *codec = w->codec;
+	struct snd_soc_codec *codec = snd_soc_dapm_to_codec(w->dapm);
 	struct wm_adsp *dsps = snd_soc_codec_get_drvdata(codec);
 	struct wm_adsp *dsp = &dsps[w->shift];
 	struct wm_adsp_alg_region *alg_region;
@@ -1605,7 +1598,7 @@ err:
 int wm_adsp2_early_event(struct snd_soc_dapm_widget *w,
 		   struct snd_kcontrol *kcontrol, int event)
 {
-	struct snd_soc_codec *codec = w->codec;
+	struct snd_soc_codec *codec = snd_soc_dapm_to_codec(w->dapm);
 	struct wm_adsp *dsps = snd_soc_codec_get_drvdata(codec);
 	struct wm_adsp *dsp = &dsps[w->shift];
 
@@ -1626,7 +1619,7 @@ EXPORT_SYMBOL_GPL(wm_adsp2_early_event);
 int wm_adsp2_event(struct snd_soc_dapm_widget *w,
 		   struct snd_kcontrol *kcontrol, int event)
 {
-	struct snd_soc_codec *codec = w->codec;
+	struct snd_soc_codec *codec = snd_soc_dapm_to_codec(w->dapm);
 	struct wm_adsp *dsps = snd_soc_codec_get_drvdata(codec);
 	struct wm_adsp *dsp = &dsps[w->shift];
 	struct wm_adsp_alg_region *alg_region;

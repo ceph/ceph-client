@@ -65,9 +65,12 @@ static unsigned long basic_get(struct tcf_proto *tp, u32 handle)
 	if (head == NULL)
 		return 0UL;
 
-	list_for_each_entry(f, &head->flist, link)
-		if (f->handle == handle)
+	list_for_each_entry(f, &head->flist, link) {
+		if (f->handle == handle) {
 			l = (unsigned long) f;
+			break;
+		}
+	}
 
 	return l;
 }
@@ -93,10 +96,13 @@ static void basic_delete_filter(struct rcu_head *head)
 	kfree(f);
 }
 
-static void basic_destroy(struct tcf_proto *tp)
+static bool basic_destroy(struct tcf_proto *tp, bool force)
 {
 	struct basic_head *head = rtnl_dereference(tp->root);
 	struct basic_filter *f, *n;
+
+	if (!force && !list_empty(&head->flist))
+		return false;
 
 	list_for_each_entry_safe(f, n, &head->flist, link) {
 		list_del_rcu(&f->link);
@@ -105,6 +111,7 @@ static void basic_destroy(struct tcf_proto *tp)
 	}
 	RCU_INIT_POINTER(tp->root, NULL);
 	kfree_rcu(head, rcu);
+	return true;
 }
 
 static int basic_delete(struct tcf_proto *tp, unsigned long arg)

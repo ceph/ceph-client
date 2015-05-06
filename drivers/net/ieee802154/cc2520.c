@@ -19,7 +19,6 @@
 #include <linux/workqueue.h>
 #include <linux/interrupt.h>
 #include <linux/skbuff.h>
-#include <linux/pinctrl/consumer.h>
 #include <linux/of_gpio.h>
 #include <linux/ieee802154.h>
 
@@ -45,9 +44,9 @@
 #define	CC2520_FREG_MASK	0x3F
 
 /* status byte values */
-#define	CC2520_STATUS_XOSC32M_STABLE	(1 << 7)
-#define	CC2520_STATUS_RSSI_VALID	(1 << 6)
-#define	CC2520_STATUS_TX_UNDERFLOW	(1 << 3)
+#define	CC2520_STATUS_XOSC32M_STABLE	BIT(7)
+#define	CC2520_STATUS_RSSI_VALID	BIT(6)
+#define	CC2520_STATUS_TX_UNDERFLOW	BIT(3)
 
 /* IEEE-802.15.4 defined constants (2.4 GHz logical channels) */
 #define	CC2520_MINCHANNEL		11
@@ -513,7 +512,6 @@ err_tx:
 	return rc;
 }
 
-
 static int cc2520_rx(struct cc2520_private *priv)
 {
 	u8 len = 0, lqi = 0, bytes = 1;
@@ -551,14 +549,14 @@ cc2520_ed(struct ieee802154_hw *hw, u8 *level)
 	u8 rssi;
 	int ret;
 
-	ret = cc2520_read_register(priv , CC2520_RSSISTAT, &status);
+	ret = cc2520_read_register(priv, CC2520_RSSISTAT, &status);
 	if (ret)
 		return ret;
 
 	if (status != RSSI_VALID)
 		return -EINVAL;
 
-	ret = cc2520_read_register(priv , CC2520_RSSI, &rssi);
+	ret = cc2520_read_register(priv, CC2520_RSSI, &rssi);
 	if (ret)
 		return ret;
 
@@ -652,6 +650,7 @@ static int cc2520_register(struct cc2520_private *priv)
 	priv->hw->parent = &priv->spi->dev;
 	priv->hw->extra_tx_headroom = 0;
 	priv->hw->vif_data_size = sizeof(*priv);
+	ieee802154_random_extended_addr(&priv->hw->phy->perm_extended_addr);
 
 	/* We do support only 2.4 Ghz */
 	priv->hw->phy->channels_supported[0] = 0x7FFF800;
@@ -715,11 +714,45 @@ static irqreturn_t cc2520_sfd_isr(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
+static int cc2520_get_platform_data(struct spi_device *spi,
+				    struct cc2520_platform_data *pdata)
+{
+	struct device_node *np = spi->dev.of_node;
+	struct cc2520_private *priv = spi_get_drvdata(spi);
+
+	if (!np) {
+		struct cc2520_platform_data *spi_pdata = spi->dev.platform_data;
+		if (!spi_pdata)
+			return -ENOENT;
+		*pdata = *spi_pdata;
+		return 0;
+	}
+
+	pdata->fifo = of_get_named_gpio(np, "fifo-gpio", 0);
+	priv->fifo_pin = pdata->fifo;
+
+	pdata->fifop = of_get_named_gpio(np, "fifop-gpio", 0);
+
+	pdata->sfd = of_get_named_gpio(np, "sfd-gpio", 0);
+	pdata->cca = of_get_named_gpio(np, "cca-gpio", 0);
+	pdata->vreg = of_get_named_gpio(np, "vreg-gpio", 0);
+	pdata->reset = of_get_named_gpio(np, "reset-gpio", 0);
+
+	pdata->amplified = of_property_read_bool(np, "amplified");
+
+	return 0;
+}
+
 static int cc2520_hw_init(struct cc2520_private *priv)
 {
 	u8 status = 0, state = 0xff;
 	int ret;
 	int timeout = 100;
+	struct cc2520_platform_data pdata;
+
+	ret = cc2520_get_platform_data(priv->spi, &pdata);
+	if (ret)
+		goto err_ret;
 
 	ret = cc2520_read_register(priv, CC2520_FSMSTAT1, &state);
 	if (ret)
@@ -742,11 +775,47 @@ static int cc2520_hw_init(struct cc2520_private *priv)
 
 	dev_vdbg(&priv->spi->dev, "oscillator brought up\n");
 
-	/* Registers default value: section 28.1 in Datasheet */
-	ret = cc2520_write_register(priv, CC2520_TXPOWER, 0xF7);
-	if (ret)
-		goto err_ret;
+	/* If the CC2520 is connected to a CC2591 amplifier, we must both
+	 * configure GPIOs on the CC2520 to correctly configure the CC2591
+	 * and change a couple settings of the CC2520 to work with the
+	 * amplifier. See section 8 page 17 of TI application note AN065.
+	 * http://www.ti.com/lit/an/swra229a/swra229a.pdf
+	 */
+	if (pdata.amplified) {
+		ret = cc2520_write_register(priv, CC2520_TXPOWER, 0xF9);
+		if (ret)
+			goto err_ret;
 
+		ret = cc2520_write_register(priv, CC2520_AGCCTRL1, 0x16);
+		if (ret)
+			goto err_ret;
+
+		ret = cc2520_write_register(priv, CC2520_GPIOCTRL0, 0x46);
+		if (ret)
+			goto err_ret;
+
+		ret = cc2520_write_register(priv, CC2520_GPIOCTRL5, 0x47);
+		if (ret)
+			goto err_ret;
+
+		ret = cc2520_write_register(priv, CC2520_GPIOPOLARITY, 0x1e);
+		if (ret)
+			goto err_ret;
+
+		ret = cc2520_write_register(priv, CC2520_TXCTRL, 0xc1);
+		if (ret)
+			goto err_ret;
+	} else {
+		ret = cc2520_write_register(priv, CC2520_TXPOWER, 0xF7);
+		if (ret)
+			goto err_ret;
+
+		ret = cc2520_write_register(priv, CC2520_AGCCTRL1, 0x11);
+		if (ret)
+			goto err_ret;
+	}
+
+	/* Registers default value: section 28.1 in Datasheet */
 	ret = cc2520_write_register(priv, CC2520_CCACTRL0, 0x1A);
 	if (ret)
 		goto err_ret;
@@ -768,10 +837,6 @@ static int cc2520_hw_init(struct cc2520_private *priv)
 		goto err_ret;
 
 	ret = cc2520_write_register(priv, CC2520_FSCAL1, 0x2b);
-	if (ret)
-		goto err_ret;
-
-	ret = cc2520_write_register(priv, CC2520_AGCCTRL1, 0x11);
 	if (ret)
 		goto err_ret;
 
@@ -809,59 +874,20 @@ err_ret:
 	return ret;
 }
 
-static struct cc2520_platform_data *
-cc2520_get_platform_data(struct spi_device *spi)
-{
-	struct cc2520_platform_data *pdata;
-	struct device_node *np = spi->dev.of_node;
-	struct cc2520_private *priv = spi_get_drvdata(spi);
-
-	if (!np)
-		return spi->dev.platform_data;
-
-	pdata = devm_kzalloc(&spi->dev, sizeof(*pdata), GFP_KERNEL);
-	if (!pdata)
-		goto done;
-
-	pdata->fifo = of_get_named_gpio(np, "fifo-gpio", 0);
-	priv->fifo_pin = pdata->fifo;
-
-	pdata->fifop = of_get_named_gpio(np, "fifop-gpio", 0);
-
-	pdata->sfd = of_get_named_gpio(np, "sfd-gpio", 0);
-	pdata->cca = of_get_named_gpio(np, "cca-gpio", 0);
-	pdata->vreg = of_get_named_gpio(np, "vreg-gpio", 0);
-	pdata->reset = of_get_named_gpio(np, "reset-gpio", 0);
-
-	spi->dev.platform_data = pdata;
-
-done:
-	return pdata;
-}
-
 static int cc2520_probe(struct spi_device *spi)
 {
 	struct cc2520_private *priv;
-	struct pinctrl *pinctrl;
-	struct cc2520_platform_data *pdata;
+	struct cc2520_platform_data pdata;
 	int ret;
 
-	priv = devm_kzalloc(&spi->dev,
-			    sizeof(struct cc2520_private), GFP_KERNEL);
-	if (!priv) {
-		ret = -ENOMEM;
-		goto err_ret;
-	}
+	priv = devm_kzalloc(&spi->dev, sizeof(*priv), GFP_KERNEL);
+	if (!priv)
+		return -ENOMEM;
 
 	spi_set_drvdata(spi, priv);
 
-	pinctrl = devm_pinctrl_get_select_default(&spi->dev);
-	if (IS_ERR(pinctrl))
-		dev_warn(&spi->dev,
-			 "pinctrl pins are not configured\n");
-
-	pdata = cc2520_get_platform_data(spi);
-	if (!pdata) {
+	ret = cc2520_get_platform_data(spi, &pdata);
+	if (ret < 0) {
 		dev_err(&spi->dev, "no platform data\n");
 		return -EINVAL;
 	}
@@ -870,10 +896,8 @@ static int cc2520_probe(struct spi_device *spi)
 
 	priv->buf = devm_kzalloc(&spi->dev,
 				 SPI_COMMAND_BUFFER, GFP_KERNEL);
-	if (!priv->buf) {
-		ret = -ENOMEM;
-		goto err_ret;
-	}
+	if (!priv->buf)
+		return -ENOMEM;
 
 	mutex_init(&priv->buffer_mutex);
 	INIT_WORK(&priv->fifop_irqwork, cc2520_fifop_irqwork);
@@ -881,77 +905,76 @@ static int cc2520_probe(struct spi_device *spi)
 	init_completion(&priv->tx_complete);
 
 	/* Request all the gpio's */
-	if (!gpio_is_valid(pdata->fifo)) {
+	if (!gpio_is_valid(pdata.fifo)) {
 		dev_err(&spi->dev, "fifo gpio is not valid\n");
 		ret = -EINVAL;
 		goto err_hw_init;
 	}
 
-	ret = devm_gpio_request_one(&spi->dev, pdata->fifo,
+	ret = devm_gpio_request_one(&spi->dev, pdata.fifo,
 				    GPIOF_IN, "fifo");
 	if (ret)
 		goto err_hw_init;
 
-	if (!gpio_is_valid(pdata->cca)) {
+	if (!gpio_is_valid(pdata.cca)) {
 		dev_err(&spi->dev, "cca gpio is not valid\n");
 		ret = -EINVAL;
 		goto err_hw_init;
 	}
 
-	ret = devm_gpio_request_one(&spi->dev, pdata->cca,
+	ret = devm_gpio_request_one(&spi->dev, pdata.cca,
 				    GPIOF_IN, "cca");
 	if (ret)
 		goto err_hw_init;
 
-	if (!gpio_is_valid(pdata->fifop)) {
+	if (!gpio_is_valid(pdata.fifop)) {
 		dev_err(&spi->dev, "fifop gpio is not valid\n");
 		ret = -EINVAL;
 		goto err_hw_init;
 	}
 
-	ret = devm_gpio_request_one(&spi->dev, pdata->fifop,
+	ret = devm_gpio_request_one(&spi->dev, pdata.fifop,
 				    GPIOF_IN, "fifop");
 	if (ret)
 		goto err_hw_init;
 
-	if (!gpio_is_valid(pdata->sfd)) {
+	if (!gpio_is_valid(pdata.sfd)) {
 		dev_err(&spi->dev, "sfd gpio is not valid\n");
 		ret = -EINVAL;
 		goto err_hw_init;
 	}
 
-	ret = devm_gpio_request_one(&spi->dev, pdata->sfd,
+	ret = devm_gpio_request_one(&spi->dev, pdata.sfd,
 				    GPIOF_IN, "sfd");
 	if (ret)
 		goto err_hw_init;
 
-	if (!gpio_is_valid(pdata->reset)) {
+	if (!gpio_is_valid(pdata.reset)) {
 		dev_err(&spi->dev, "reset gpio is not valid\n");
 		ret = -EINVAL;
 		goto err_hw_init;
 	}
 
-	ret = devm_gpio_request_one(&spi->dev, pdata->reset,
+	ret = devm_gpio_request_one(&spi->dev, pdata.reset,
 				    GPIOF_OUT_INIT_LOW, "reset");
 	if (ret)
 		goto err_hw_init;
 
-	if (!gpio_is_valid(pdata->vreg)) {
+	if (!gpio_is_valid(pdata.vreg)) {
 		dev_err(&spi->dev, "vreg gpio is not valid\n");
 		ret = -EINVAL;
 		goto err_hw_init;
 	}
 
-	ret = devm_gpio_request_one(&spi->dev, pdata->vreg,
+	ret = devm_gpio_request_one(&spi->dev, pdata.vreg,
 				    GPIOF_OUT_INIT_LOW, "vreg");
 	if (ret)
 		goto err_hw_init;
 
-
-	gpio_set_value(pdata->vreg, HIGH);
+	gpio_set_value(pdata.vreg, HIGH);
 	usleep_range(100, 150);
 
-	gpio_set_value(pdata->reset, HIGH);
+	gpio_set_value(pdata.reset, HIGH);
 	usleep_range(200, 250);
 
 	ret = cc2520_hw_init(priv);
@@ -960,7 +983,7 @@ static int cc2520_probe(struct spi_device *spi)
 
 	/* Set up fifop interrupt */
 	ret = devm_request_irq(&spi->dev,
-			       gpio_to_irq(pdata->fifop),
+			       gpio_to_irq(pdata.fifop),
 			       cc2520_fifop_isr,
 			       IRQF_TRIGGER_RISING,
 			       dev_name(&spi->dev),
@@ -972,7 +995,7 @@ static int cc2520_probe(struct spi_device *spi)
 
 	/* Set up sfd interrupt */
 	ret = devm_request_irq(&spi->dev,
-			       gpio_to_irq(pdata->sfd),
+			       gpio_to_irq(pdata.sfd),
 			       cc2520_sfd_isr,
 			       IRQF_TRIGGER_FALLING,
 			       dev_name(&spi->dev),
@@ -991,8 +1014,6 @@ static int cc2520_probe(struct spi_device *spi)
 err_hw_init:
 	mutex_destroy(&priv->buffer_mutex);
 	flush_work(&priv->fifop_irqwork);
-
-err_ret:
 	return ret;
 }
 

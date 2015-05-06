@@ -444,7 +444,7 @@ iblock_execute_write_same_unmap(struct se_cmd *cmd)
 	struct block_device *bdev = IBLOCK_DEV(cmd->se_dev)->ibd_bd;
 	sector_t lba = cmd->t_task_lba;
 	sector_t nolb = sbc_get_write_same_sectors(cmd);
-	int ret;
+	sense_reason_t ret;
 
 	ret = iblock_do_unmap(cmd, bdev, lba, nolb);
 	if (ret)
@@ -464,6 +464,11 @@ iblock_execute_write_same(struct se_cmd *cmd)
 	sector_t block_lba = cmd->t_task_lba;
 	sector_t sectors = sbc_get_write_same_sectors(cmd);
 
+	if (cmd->prot_op) {
+		pr_err("WRITE_SAME: Protection information with IBLOCK"
+		       " backends not supported\n");
+		return TCM_LOGICAL_UNIT_COMMUNICATION_FAILURE;
+	}
 	sg = &cmd->t_data_sg[0];
 
 	if (cmd->t_data_nents > 1 ||
@@ -769,7 +774,7 @@ iblock_execute_rw(struct se_cmd *cmd, struct scatterlist *sgl, u32 sgl_nents,
 		sg_num--;
 	}
 
-	if (cmd->prot_type) {
+	if (cmd->prot_type && dev->dev_attrib.pi_prot_type) {
 		int rc = iblock_alloc_bip(cmd, bio_start);
 		if (rc)
 			goto fail_put_bios;

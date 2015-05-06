@@ -257,6 +257,7 @@ static int radeonfb_create(struct drm_fb_helper *helper,
 	}
 
 	info->par = rfbdev;
+	info->skip_vt_switch = true;
 
 	ret = radeon_framebuffer_init(rdev->ddev, &rfbdev->rfb, &mode_cmd, gobj);
 	if (ret) {
@@ -390,18 +391,27 @@ int radeon_fbdev_init(struct radeon_device *rdev)
 	ret = drm_fb_helper_init(rdev->ddev, &rfbdev->helper,
 				 rdev->num_crtc,
 				 RADEONFB_CONN_LIMIT);
-	if (ret) {
-		kfree(rfbdev);
-		return ret;
-	}
+	if (ret)
+		goto free;
 
-	drm_fb_helper_single_add_all_connectors(&rfbdev->helper);
+	ret = drm_fb_helper_single_add_all_connectors(&rfbdev->helper);
+	if (ret)
+		goto fini;
 
 	/* disable all the possible outputs/crtcs before entering KMS mode */
 	drm_helper_disable_unused_functions(rdev->ddev);
 
-	drm_fb_helper_initial_config(&rfbdev->helper, bpp_sel);
+	ret = drm_fb_helper_initial_config(&rfbdev->helper, bpp_sel);
+	if (ret)
+		goto fini;
+
 	return 0;
+
+fini:
+	drm_fb_helper_fini(&rfbdev->helper);
+free:
+	kfree(rfbdev);
+	return ret;
 }
 
 void radeon_fbdev_fini(struct radeon_device *rdev)
@@ -419,19 +429,19 @@ void radeon_fbdev_set_suspend(struct radeon_device *rdev, int state)
 	fb_set_suspend(rdev->mode_info.rfbdev->helper.fbdev, state);
 }
 
-int radeon_fbdev_total_size(struct radeon_device *rdev)
-{
-	struct radeon_bo *robj;
-	int size = 0;
-
-	robj = gem_to_radeon_bo(rdev->mode_info.rfbdev->rfb.obj);
-	size += radeon_bo_size(robj);
-	return size;
-}
-
 bool radeon_fbdev_robj_is_fb(struct radeon_device *rdev, struct radeon_bo *robj)
 {
 	if (robj == gem_to_radeon_bo(rdev->mode_info.rfbdev->rfb.obj))
 		return true;
 	return false;
+}
+
+void radeon_fb_add_connector(struct radeon_device *rdev, struct drm_connector *connector)
+{
+	drm_fb_helper_add_one_connector(&rdev->mode_info.rfbdev->helper, connector);
+}
+
+void radeon_fb_remove_connector(struct radeon_device *rdev, struct drm_connector *connector)
+{
+	drm_fb_helper_remove_one_connector(&rdev->mode_info.rfbdev->helper, connector);
 }

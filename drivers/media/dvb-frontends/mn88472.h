@@ -19,6 +19,16 @@
 
 #include <linux/dvb/frontend.h>
 
+enum ts_clock {
+	VARIABLE_TS_CLOCK,
+	FIXED_TS_CLOCK,
+};
+
+enum ts_mode {
+	SERIAL_TS_MODE,
+	PARALLEL_TS_MODE,
+};
+
 struct mn88472_config {
 	/*
 	 * Max num of bytes given I2C adapter could write at once.
@@ -33,6 +43,14 @@ struct mn88472_config {
 	 * DVB frontend.
 	 */
 	struct dvb_frontend **fe;
+
+	/*
+	 * Xtal frequency.
+	 * Hz
+	 */
+	u32 xtal;
+	int ts_mode;
+	int ts_clock;
 };
 
 #endif

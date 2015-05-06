@@ -151,10 +151,13 @@ typedef struct xfs_sb {
 	__uint32_t	sb_features2;	/* additional feature bits */
 
 	/*
-	 * bad features2 field as a result of failing to pad the sb
-	 * structure to 64 bits. Some machines will be using this field
-	 * for features2 bits. Easiest just to mark it bad and not use
-	 * it for anything else.
+	 * bad features2 field as a result of failing to pad the sb structure to
+	 * 64 bits. Some machines will be using this field for features2 bits.
+	 * Easiest just to mark it bad and not use it for anything else.
+	 *
+	 * This is not kept up to date in memory; it is always overwritten by
+	 * the value in sb_features2 when formatting the incore superblock to
+	 * the disk buffer.
 	 */
 	__uint32_t	sb_bad_features2;
 
@@ -260,68 +263,6 @@ typedef struct xfs_dsb {
 
 	/* must be padded to 64 bit alignment */
 } xfs_dsb_t;
-
-/*
- * Sequence number values for the fields.
- */
-typedef enum {
-	XFS_SBS_MAGICNUM, XFS_SBS_BLOCKSIZE, XFS_SBS_DBLOCKS, XFS_SBS_RBLOCKS,
-	XFS_SBS_REXTENTS, XFS_SBS_UUID, XFS_SBS_LOGSTART, XFS_SBS_ROOTINO,
-	XFS_SBS_RBMINO, XFS_SBS_RSUMINO, XFS_SBS_REXTSIZE, XFS_SBS_AGBLOCKS,
-	XFS_SBS_AGCOUNT, XFS_SBS_RBMBLOCKS, XFS_SBS_LOGBLOCKS,
-	XFS_SBS_VERSIONNUM, XFS_SBS_SECTSIZE, XFS_SBS_INODESIZE,
-	XFS_SBS_INOPBLOCK, XFS_SBS_FNAME, XFS_SBS_BLOCKLOG,
-	XFS_SBS_SECTLOG, XFS_SBS_INODELOG, XFS_SBS_INOPBLOG, XFS_SBS_AGBLKLOG,
-	XFS_SBS_REXTSLOG, XFS_SBS_INPROGRESS, XFS_SBS_IMAX_PCT, XFS_SBS_ICOUNT,
-	XFS_SBS_IFREE, XFS_SBS_FDBLOCKS, XFS_SBS_FREXTENTS, XFS_SBS_UQUOTINO,
-	XFS_SBS_GQUOTINO, XFS_SBS_QFLAGS, XFS_SBS_FLAGS, XFS_SBS_SHARED_VN,
-	XFS_SBS_INOALIGNMT, XFS_SBS_UNIT, XFS_SBS_WIDTH, XFS_SBS_DIRBLKLOG,
-	XFS_SBS_LOGSECTLOG, XFS_SBS_LOGSECTSIZE, XFS_SBS_LOGSUNIT,
-	XFS_SBS_FEATURES2, XFS_SBS_BAD_FEATURES2, XFS_SBS_FEATURES_COMPAT,
-	XFS_SBS_FEATURES_RO_COMPAT, XFS_SBS_FEATURES_INCOMPAT,
-	XFS_SBS_FEATURES_LOG_INCOMPAT, XFS_SBS_CRC, XFS_SBS_PAD,
-	XFS_SBS_PQUOTINO, XFS_SBS_LSN,
-	XFS_SBS_FIELDCOUNT
-} xfs_sb_field_t;
-
-/*
- * Mask values, defined based on the xfs_sb_field_t values.
- * Only define the ones we're using.
- */
-#define	XFS_SB_MVAL(x)		(1LL << XFS_SBS_ ## x)
-#define	XFS_SB_UUID		XFS_SB_MVAL(UUID)
-#define	XFS_SB_FNAME		XFS_SB_MVAL(FNAME)
-#define	XFS_SB_ROOTINO		XFS_SB_MVAL(ROOTINO)
-#define	XFS_SB_RBMINO		XFS_SB_MVAL(RBMINO)
-#define	XFS_SB_RSUMINO		XFS_SB_MVAL(RSUMINO)
-#define	XFS_SB_VERSIONNUM	XFS_SB_MVAL(VERSIONNUM)
-#define XFS_SB_UQUOTINO		XFS_SB_MVAL(UQUOTINO)
-#define XFS_SB_GQUOTINO		XFS_SB_MVAL(GQUOTINO)
-#define XFS_SB_QFLAGS		XFS_SB_MVAL(QFLAGS)
-#define XFS_SB_SHARED_VN	XFS_SB_MVAL(SHARED_VN)
-#define XFS_SB_UNIT		XFS_SB_MVAL(UNIT)
-#define XFS_SB_WIDTH		XFS_SB_MVAL(WIDTH)
-#define XFS_SB_ICOUNT		XFS_SB_MVAL(ICOUNT)
-#define XFS_SB_IFREE		XFS_SB_MVAL(IFREE)
-#define XFS_SB_FDBLOCKS		XFS_SB_MVAL(FDBLOCKS)
-#define XFS_SB_FEATURES2	XFS_SB_MVAL(FEATURES2)
-#define XFS_SB_BAD_FEATURES2	XFS_SB_MVAL(BAD_FEATURES2)
-#define XFS_SB_FEATURES_COMPAT	XFS_SB_MVAL(FEATURES_COMPAT)
-#define XFS_SB_FEATURES_RO_COMPAT XFS_SB_MVAL(FEATURES_RO_COMPAT)
-#define XFS_SB_FEATURES_INCOMPAT XFS_SB_MVAL(FEATURES_INCOMPAT)
-#define XFS_SB_FEATURES_LOG_INCOMPAT XFS_SB_MVAL(FEATURES_LOG_INCOMPAT)
-#define XFS_SB_CRC		XFS_SB_MVAL(CRC)
-#define XFS_SB_PQUOTINO		XFS_SB_MVAL(PQUOTINO)
-#define	XFS_SB_NUM_BITS		((int)XFS_SBS_FIELDCOUNT)
-#define	XFS_SB_ALL_BITS		((1LL << XFS_SB_NUM_BITS) - 1)
-#define	XFS_SB_MOD_BITS		\
-	(XFS_SB_UUID | XFS_SB_ROOTINO | XFS_SB_RBMINO | XFS_SB_RSUMINO | \
-	 XFS_SB_VERSIONNUM | XFS_SB_UQUOTINO | XFS_SB_GQUOTINO | \
-	 XFS_SB_QFLAGS | XFS_SB_SHARED_VN | XFS_SB_UNIT | XFS_SB_WIDTH | \
-	 XFS_SB_ICOUNT | XFS_SB_IFREE | XFS_SB_FDBLOCKS | XFS_SB_FEATURES2 | \
-	 XFS_SB_BAD_FEATURES2 | XFS_SB_FEATURES_COMPAT | \
-	 XFS_SB_FEATURES_RO_COMPAT | XFS_SB_FEATURES_INCOMPAT | \
-	 XFS_SB_FEATURES_LOG_INCOMPAT | XFS_SB_PQUOTINO)
 
 
 /*
@@ -453,13 +394,11 @@ static inline void xfs_sb_version_addattr2(struct xfs_sb *sbp)
 {
 	sbp->sb_versionnum |= XFS_SB_VERSION_MOREBITSBIT;
 	sbp->sb_features2 |= XFS_SB_VERSION2_ATTR2BIT;
-	sbp->sb_bad_features2 |= XFS_SB_VERSION2_ATTR2BIT;
 }
 
 static inline void xfs_sb_version_removeattr2(struct xfs_sb *sbp)
 {
 	sbp->sb_features2 &= ~XFS_SB_VERSION2_ATTR2BIT;
-	sbp->sb_bad_features2 &= ~XFS_SB_VERSION2_ATTR2BIT;
 	if (!sbp->sb_features2)
 		sbp->sb_versionnum &= ~XFS_SB_VERSION_MOREBITSBIT;
 }
@@ -475,7 +414,6 @@ static inline void xfs_sb_version_addprojid32bit(struct xfs_sb *sbp)
 {
 	sbp->sb_versionnum |= XFS_SB_VERSION_MOREBITSBIT;
 	sbp->sb_features2 |= XFS_SB_VERSION2_PROJID32BIT;
-	sbp->sb_bad_features2 |= XFS_SB_VERSION2_PROJID32BIT;
 }
 
 /*

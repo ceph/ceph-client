@@ -83,9 +83,8 @@ static void mfree_all_stainfo(struct sta_priv *pstapriv)
 	spin_lock_irqsave(&pstapriv->sta_hash_lock, irqL);
 	phead = &pstapriv->free_sta_queue.queue;
 	plist = phead->next;
-	while ((end_of_queue_search(phead, plist)) == false) {
+	while ((end_of_queue_search(phead, plist)) == false)
 		plist = plist->next;
-	}
 
 	spin_unlock_irqrestore(&pstapriv->sta_hash_lock, irqL);
 }
@@ -199,7 +198,7 @@ void r8712_free_stainfo(struct _adapter *padapter, struct sta_info *psta)
 	 * cancel reordering_ctrl_timer */
 	for (i = 0; i < 16; i++) {
 		preorder_ctrl = &psta->recvreorder_ctrl[i];
-		_cancel_timer_ex(&preorder_ctrl->reordering_ctrl_timer);
+		del_timer_sync(&preorder_ctrl->reordering_ctrl_timer);
 	}
 	spin_lock(&(pfree_sta_queue->lock));
 	/* insert into free_sta_queue; 20061114 */
@@ -228,7 +227,7 @@ void r8712_free_all_stainfo(struct _adapter *padapter)
 					      struct sta_info, hash_list);
 			plist = plist->next;
 			if (pbcmc_stainfo != psta)
-				r8712_free_stainfo(padapter , psta);
+				r8712_free_stainfo(padapter, psta);
 		}
 	}
 	spin_unlock_irqrestore(&pstapriv->sta_hash_lock, irqL);

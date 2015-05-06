@@ -88,7 +88,7 @@ static int radeon_cs_parser_relocs(struct radeon_cs_parser *p)
 	p->dma_reloc_idx = 0;
 	/* FIXME: we assume that each relocs use 4 dwords */
 	p->nrelocs = chunk->length_dw / 4;
-	p->relocs = kcalloc(p->nrelocs, sizeof(struct radeon_bo_list), GFP_KERNEL);
+	p->relocs = drm_calloc_large(p->nrelocs, sizeof(struct radeon_bo_list));
 	if (p->relocs == NULL) {
 		return -ENOMEM;
 	}
@@ -256,11 +256,13 @@ int radeon_cs_parser_init(struct radeon_cs_parser *p, void *data)
 	u32 ring = RADEON_CS_RING_GFX;
 	s32 priority = 0;
 
+	INIT_LIST_HEAD(&p->validated);
+
 	if (!cs->num_chunks) {
 		return 0;
 	}
+
 	/* get chunks */
-	INIT_LIST_HEAD(&p->validated);
 	p->idx = 0;
 	p->ib.sa_bo = NULL;
 	p->const_ib.sa_bo = NULL;
@@ -426,7 +428,7 @@ static void radeon_cs_parser_fini(struct radeon_cs_parser *parser, int error, bo
 		}
 	}
 	kfree(parser->track);
-	kfree(parser->relocs);
+	drm_free_large(parser->relocs);
 	drm_free_large(parser->vm_bos);
 	for (i = 0; i < parser->nchunks; i++)
 		drm_free_large(parser->chunks[i].kdata);
@@ -715,6 +717,7 @@ int radeon_cs_packet_parse(struct radeon_cs_parser *p,
 	struct radeon_cs_chunk *ib_chunk = p->chunk_ib;
 	struct radeon_device *rdev = p->rdev;
 	uint32_t header;
+	int ret = 0, i;
 
 	if (idx >= ib_chunk->length_dw) {
 		DRM_ERROR("Can not parse packet at %d after CS end %d !\n",
@@ -743,14 +746,25 @@ int radeon_cs_packet_parse(struct radeon_cs_parser *p,
 		break;
 	default:
 		DRM_ERROR("Unknown packet type %d at %d !\n", pkt->type, idx);
-		return -EINVAL;
+		ret = -EINVAL;
+		goto dump_ib;
 	}
 	if ((pkt->count + 1 + pkt->idx) >= ib_chunk->length_dw) {
 		DRM_ERROR("Packet (%d:%d:%d) end after CS buffer (%d) !\n",
 			  pkt->idx, pkt->type, pkt->count, ib_chunk->length_dw);
-		return -EINVAL;
+		ret = -EINVAL;
+		goto dump_ib;
 	}
 	return 0;
+
+dump_ib:
+	for (i = 0; i < ib_chunk->length_dw; i++) {
+		if (i == idx)
+			printk("\t0x%08x <---\n", radeon_get_ib_value(p, i));
+		else
+			printk("\t0x%08x\n", radeon_get_ib_value(p, i));
+	}
+	return ret;
 }
 
 /**

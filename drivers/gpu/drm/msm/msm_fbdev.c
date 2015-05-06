@@ -110,7 +110,8 @@ static int msm_fbdev_create(struct drm_fb_helper *helper,
 	size = mode_cmd.pitches[0] * mode_cmd.height;
 	DBG("allocating %d bytes for fb %d", size, dev->primary->index);
 	mutex_lock(&dev->struct_mutex);
-	fbdev->bo = msm_gem_new(dev, size, MSM_BO_SCANOUT | MSM_BO_WC);
+	fbdev->bo = msm_gem_new(dev, size, MSM_BO_SCANOUT |
+			MSM_BO_WC | MSM_BO_STOLEN);
 	mutex_unlock(&dev->struct_mutex);
 	if (IS_ERR(fbdev->bo)) {
 		ret = PTR_ERR(fbdev->bo);
@@ -241,17 +242,20 @@ struct drm_fb_helper *msm_fbdev_init(struct drm_device *dev)
 		goto fail;
 	}
 
-	drm_fb_helper_single_add_all_connectors(helper);
+	ret = drm_fb_helper_single_add_all_connectors(helper);
+	if (ret)
+		goto fini;
 
-	/* disable all the possible outputs/crtcs before entering KMS mode */
-	drm_helper_disable_unused_functions(dev);
-
-	drm_fb_helper_initial_config(helper, 32);
+	ret = drm_fb_helper_initial_config(helper, 32);
+	if (ret)
+		goto fini;
 
 	priv->fbdev = helper;
 
 	return helper;
 
+fini:
+	drm_fb_helper_fini(helper);
 fail:
 	kfree(fbdev);
 	return NULL;

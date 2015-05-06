@@ -115,6 +115,7 @@
  */
 
 #include <linux/phy.h>
+#include <linux/mdio.h>
 #include <linux/clk.h>
 #include <linux/bitrev.h>
 #include <linux/crc32.h>
@@ -130,7 +131,7 @@ static unsigned int xgbe_usec_to_riwt(struct xgbe_prv_data *pdata,
 
 	DBGPR("-->xgbe_usec_to_riwt\n");
 
-	rate = clk_get_rate(pdata->sysclk);
+	rate = pdata->sysclk_rate;
 
 	/*
 	 * Convert the input usec value to the watchdog timer value. Each
@@ -153,7 +154,7 @@ static unsigned int xgbe_riwt_to_usec(struct xgbe_prv_data *pdata,
 
 	DBGPR("-->xgbe_riwt_to_usec\n");
 
-	rate = clk_get_rate(pdata->sysclk);
+	rate = pdata->sysclk_rate;
 
 	/*
 	 * Convert the input watchdog timer value to the usec value. Each
@@ -673,6 +674,9 @@ static void xgbe_enable_mac_interrupts(struct xgbe_prv_data *pdata)
 
 static int xgbe_set_gmii_speed(struct xgbe_prv_data *pdata)
 {
+	if (XGMAC_IOREAD_BITS(pdata, MAC_TCR, SS) == 0x3)
+		return 0;
+
 	XGMAC_IOWRITE_BITS(pdata, MAC_TCR, SS, 0x3);
 
 	return 0;
@@ -680,6 +684,9 @@ static int xgbe_set_gmii_speed(struct xgbe_prv_data *pdata)
 
 static int xgbe_set_gmii_2500_speed(struct xgbe_prv_data *pdata)
 {
+	if (XGMAC_IOREAD_BITS(pdata, MAC_TCR, SS) == 0x2)
+		return 0;
+
 	XGMAC_IOWRITE_BITS(pdata, MAC_TCR, SS, 0x2);
 
 	return 0;
@@ -687,6 +694,9 @@ static int xgbe_set_gmii_2500_speed(struct xgbe_prv_data *pdata)
 
 static int xgbe_set_xgmii_speed(struct xgbe_prv_data *pdata)
 {
+	if (XGMAC_IOREAD_BITS(pdata, MAC_TCR, SS) == 0)
+		return 0;
+
 	XGMAC_IOWRITE_BITS(pdata, MAC_TCR, SS, 0);
 
 	return 0;
@@ -843,6 +853,22 @@ static int xgbe_set_mac_address(struct xgbe_prv_data *pdata, u8 *addr)
 	return 0;
 }
 
+static int xgbe_config_rx_mode(struct xgbe_prv_data *pdata)
+{
+	struct net_device *netdev = pdata->netdev;
+	unsigned int pr_mode, am_mode;
+
+	pr_mode = ((netdev->flags & IFF_PROMISC) != 0);
+	am_mode = ((netdev->flags & IFF_ALLMULTI) != 0);
+
+	xgbe_set_promiscuous_mode(pdata, pr_mode);
+	xgbe_set_all_multicast_mode(pdata, am_mode);
+
+	xgbe_add_mac_addresses(pdata);
+
+	return 0;
+}
+
 static int xgbe_read_mmd_regs(struct xgbe_prv_data *pdata, int prtad,
 			      int mmd_reg)
 {
@@ -880,6 +906,23 @@ static void xgbe_write_mmd_regs(struct xgbe_prv_data *pdata, int prtad,
 		mmd_address = mmd_reg & ~MII_ADDR_C45;
 	else
 		mmd_address = (pdata->mdio_mmd << 16) | (mmd_reg & 0xffff);
+
+	/* If the PCS is changing modes, match the MAC speed to it */
+	if (((mmd_address >> 16) == MDIO_MMD_PCS) &&
+	    ((mmd_address & 0xffff) == MDIO_CTRL2)) {
+		struct phy_device *phydev = pdata->phydev;
+
+		if (mmd_data & MDIO_PCS_CTRL2_TYPE) {
+			/* KX mode */
+			if (phydev->supported & SUPPORTED_1000baseKX_Full)
+				xgbe_set_gmii_speed(pdata);
+			else
+				xgbe_set_gmii_2500_speed(pdata);
+		} else {
+			/* KR mode */
+			xgbe_set_xgmii_speed(pdata);
+		}
+	}
 
 	/* The PCS registers are accessed using mmio. The underlying APB3
 	 * management interface uses indirect addressing to access the MMD
@@ -1041,7 +1084,7 @@ static void xgbe_tx_desc_reset(struct xgbe_ring_data *rdata)
 	rdesc->desc3 = 0;
 
 	/* Make sure ownership is written to the descriptor */
-	wmb();
+	dma_wmb();
 }
 
 static void xgbe_tx_desc_init(struct xgbe_channel *channel)
@@ -1074,9 +1117,24 @@ static void xgbe_tx_desc_init(struct xgbe_channel *channel)
 	DBGPR("<--tx_desc_init\n");
 }
 
-static void xgbe_rx_desc_reset(struct xgbe_ring_data *rdata)
+static void xgbe_rx_desc_reset(struct xgbe_prv_data *pdata,
+			       struct xgbe_ring_data *rdata, unsigned int index)
 {
 	struct xgbe_ring_desc *rdesc = rdata->rdesc;
+	unsigned int rx_usecs = pdata->rx_usecs;
+	unsigned int rx_frames = pdata->rx_frames;
+	unsigned int inte;
+
+	if (!rx_usecs && !rx_frames) {
+		/* No coalescing, interrupt for every descriptor */
+		inte = 1;
+	} else {
+		/* Set interrupt based on Rx frame coalescing setting */
+		if (rx_frames && !((index + 1) % rx_frames))
+			inte = 1;
+		else
+			inte = 0;
+	}
 
 	/* Reset the Rx descriptor
 	 *   Set buffer 1 (lo) address to header dma address (lo)
@@ -1090,19 +1148,18 @@ static void xgbe_rx_desc_reset(struct xgbe_ring_data *rdata)
 	rdesc->desc2 = cpu_to_le32(lower_32_bits(rdata->rx.buf.dma));
 	rdesc->desc3 = cpu_to_le32(upper_32_bits(rdata->rx.buf.dma));
 
-	XGMAC_SET_BITS_LE(rdesc->desc3, RX_NORMAL_DESC3, INTE,
-			  rdata->interrupt ? 1 : 0);
+	XGMAC_SET_BITS_LE(rdesc->desc3, RX_NORMAL_DESC3, INTE, inte);
 
 	/* Since the Rx DMA engine is likely running, make sure everything
 	 * is written to the descriptor(s) before setting the OWN bit
 	 * for the descriptor
 	 */
-	wmb();
+	dma_wmb();
 
 	XGMAC_SET_BITS_LE(rdesc->desc3, RX_NORMAL_DESC3, OWN, 1);
 
 	/* Make sure ownership is written to the descriptor */
-	wmb();
+	dma_wmb();
 }
 
 static void xgbe_rx_desc_init(struct xgbe_channel *channel)
@@ -1111,26 +1168,16 @@ static void xgbe_rx_desc_init(struct xgbe_channel *channel)
 	struct xgbe_ring *ring = channel->rx_ring;
 	struct xgbe_ring_data *rdata;
 	unsigned int start_index = ring->cur;
-	unsigned int rx_coalesce, rx_frames;
 	unsigned int i;
 
 	DBGPR("-->rx_desc_init\n");
-
-	rx_coalesce = (pdata->rx_riwt || pdata->rx_frames) ? 1 : 0;
-	rx_frames = pdata->rx_frames;
 
 	/* Initialize all descriptors */
 	for (i = 0; i < ring->rdesc_count; i++) {
 		rdata = XGBE_GET_DESC_DATA(ring, i);
 
-		/* Set interrupt on completion bit as appropriate */
-		if (rx_coalesce && (!rx_frames || ((i + 1) % rx_frames)))
-			rdata->interrupt = 0;
-		else
-			rdata->interrupt = 1;
-
 		/* Initialize Rx descriptor */
-		xgbe_rx_desc_reset(rdata);
+		xgbe_rx_desc_reset(pdata, rdata, i);
 	}
 
 	/* Update the total number of Rx descriptors */
@@ -1331,18 +1378,20 @@ static void xgbe_tx_start_xmit(struct xgbe_channel *channel,
 	struct xgbe_prv_data *pdata = channel->pdata;
 	struct xgbe_ring_data *rdata;
 
+	/* Make sure everything is written before the register write */
+	wmb();
+
 	/* Issue a poll command to Tx DMA by writing address
 	 * of next immediate free descriptor */
 	rdata = XGBE_GET_DESC_DATA(ring, ring->cur);
 	XGMAC_DMA_IOWRITE(channel, DMA_CH_TDTR_LO,
 			  lower_32_bits(rdata->rdesc_dma));
 
-	/* Start the Tx coalescing timer */
+	/* Start the Tx timer */
 	if (pdata->tx_usecs && !channel->tx_timer_active) {
 		channel->tx_timer_active = 1;
-		hrtimer_start(&channel->tx_timer,
-			      ktime_set(0, pdata->tx_usecs * NSEC_PER_USEC),
-			      HRTIMER_MODE_REL);
+		mod_timer(&channel->tx_timer,
+			  jiffies + usecs_to_jiffies(pdata->tx_usecs));
 	}
 
 	ring->tx.xmit_more = 0;
@@ -1359,6 +1408,7 @@ static void xgbe_dev_xmit(struct xgbe_channel *channel)
 	unsigned int tso_context, vlan_context;
 	unsigned int tx_set_ic;
 	int start_index = ring->cur;
+	int cur_index = ring->cur;
 	int i;
 
 	DBGPR("-->xgbe_dev_xmit\n");
@@ -1401,7 +1451,7 @@ static void xgbe_dev_xmit(struct xgbe_channel *channel)
 	else
 		tx_set_ic = 0;
 
-	rdata = XGBE_GET_DESC_DATA(ring, ring->cur);
+	rdata = XGBE_GET_DESC_DATA(ring, cur_index);
 	rdesc = rdata->rdesc;
 
 	/* Create a context descriptor if this is a TSO packet */
@@ -1444,8 +1494,8 @@ static void xgbe_dev_xmit(struct xgbe_channel *channel)
 			ring->tx.cur_vlan_ctag = packet->vlan_ctag;
 		}
 
-		ring->cur++;
-		rdata = XGBE_GET_DESC_DATA(ring, ring->cur);
+		cur_index++;
+		rdata = XGBE_GET_DESC_DATA(ring, cur_index);
 		rdesc = rdata->rdesc;
 	}
 
@@ -1473,7 +1523,7 @@ static void xgbe_dev_xmit(struct xgbe_channel *channel)
 	XGMAC_SET_BITS_LE(rdesc->desc3, TX_NORMAL_DESC3, CTXT, 0);
 
 	/* Set OWN bit if not the first descriptor */
-	if (ring->cur != start_index)
+	if (cur_index != start_index)
 		XGMAC_SET_BITS_LE(rdesc->desc3, TX_NORMAL_DESC3, OWN, 1);
 
 	if (tso) {
@@ -1497,9 +1547,9 @@ static void xgbe_dev_xmit(struct xgbe_channel *channel)
 				  packet->length);
 	}
 
-	for (i = ring->cur - start_index + 1; i < packet->rdesc_count; i++) {
-		ring->cur++;
-		rdata = XGBE_GET_DESC_DATA(ring, ring->cur);
+	for (i = cur_index - start_index + 1; i < packet->rdesc_count; i++) {
+		cur_index++;
+		rdata = XGBE_GET_DESC_DATA(ring, cur_index);
 		rdesc = rdata->rdesc;
 
 		/* Update buffer address */
@@ -1537,7 +1587,7 @@ static void xgbe_dev_xmit(struct xgbe_channel *channel)
 	 * is written to the descriptor(s) before setting the OWN bit
 	 * for the first descriptor
 	 */
-	wmb();
+	dma_wmb();
 
 	/* Set OWN bit for the first descriptor */
 	rdata = XGBE_GET_DESC_DATA(ring, start_index);
@@ -1549,9 +1599,9 @@ static void xgbe_dev_xmit(struct xgbe_channel *channel)
 #endif
 
 	/* Make sure ownership is written to the descriptor */
-	wmb();
+	dma_wmb();
 
-	ring->cur++;
+	ring->cur = cur_index + 1;
 	if (!packet->skb->xmit_more ||
 	    netif_xmit_stopped(netdev_get_tx_queue(pdata->netdev,
 						   channel->queue_index)))
@@ -1585,7 +1635,7 @@ static int xgbe_dev_read(struct xgbe_channel *channel)
 		return 1;
 
 	/* Make sure descriptor fields are read after reading the OWN bit */
-	rmb();
+	dma_rmb();
 
 #ifdef XGMAC_ENABLE_RX_DESC_DUMP
 	xgbe_dump_rx_desc(ring, rdesc, ring->cur);
@@ -1976,7 +2026,8 @@ static void xgbe_config_tx_fifo_size(struct xgbe_prv_data *pdata)
 	for (i = 0; i < pdata->tx_q_count; i++)
 		XGMAC_MTL_IOWRITE_BITS(pdata, i, MTL_Q_TQOMR, TQS, fifo_size);
 
-	netdev_notice(pdata->netdev, "%d Tx queues, %d byte fifo per queue\n",
+	netdev_notice(pdata->netdev,
+		      "%d Tx hardware queues, %d byte fifo per queue\n",
 		      pdata->tx_q_count, ((fifo_size + 1) * 256));
 }
 
@@ -1991,7 +2042,8 @@ static void xgbe_config_rx_fifo_size(struct xgbe_prv_data *pdata)
 	for (i = 0; i < pdata->rx_q_count; i++)
 		XGMAC_MTL_IOWRITE_BITS(pdata, i, MTL_Q_RQOMR, RQS, fifo_size);
 
-	netdev_notice(pdata->netdev, "%d Rx queues, %d byte fifo per queue\n",
+	netdev_notice(pdata->netdev,
+		      "%d Rx hardware queues, %d byte fifo per queue\n",
 		      pdata->rx_q_count, ((fifo_size + 1) * 256));
 }
 
@@ -2105,6 +2157,23 @@ static void xgbe_config_jumbo_enable(struct xgbe_prv_data *pdata)
 	val = (pdata->netdev->mtu > XGMAC_STD_PACKET_MTU) ? 1 : 0;
 
 	XGMAC_IOWRITE_BITS(pdata, MAC_RCR, JE, val);
+}
+
+static void xgbe_config_mac_speed(struct xgbe_prv_data *pdata)
+{
+	switch (pdata->phy_speed) {
+	case SPEED_10000:
+		xgbe_set_xgmii_speed(pdata);
+		break;
+
+	case SPEED_2500:
+		xgbe_set_gmii_2500_speed(pdata);
+		break;
+
+	case SPEED_1000:
+		xgbe_set_gmii_speed(pdata);
+		break;
+	}
 }
 
 static void xgbe_config_checksum_offload(struct xgbe_prv_data *pdata)
@@ -2755,8 +2824,10 @@ static int xgbe_init(struct xgbe_prv_data *pdata)
 	 * Initialize MAC related features
 	 */
 	xgbe_config_mac_address(pdata);
+	xgbe_config_rx_mode(pdata);
 	xgbe_config_jumbo_enable(pdata);
 	xgbe_config_flow_control(pdata);
+	xgbe_config_mac_speed(pdata);
 	xgbe_config_checksum_offload(pdata);
 	xgbe_config_vlan_support(pdata);
 	xgbe_config_mmc(pdata);
@@ -2773,10 +2844,8 @@ void xgbe_init_function_ptrs_dev(struct xgbe_hw_if *hw_if)
 
 	hw_if->tx_complete = xgbe_tx_complete;
 
-	hw_if->set_promiscuous_mode = xgbe_set_promiscuous_mode;
-	hw_if->set_all_multicast_mode = xgbe_set_all_multicast_mode;
-	hw_if->add_mac_addresses = xgbe_add_mac_addresses;
 	hw_if->set_mac_address = xgbe_set_mac_address;
+	hw_if->config_rx_mode = xgbe_config_rx_mode;
 
 	hw_if->enable_rx_csum = xgbe_enable_rx_csum;
 	hw_if->disable_rx_csum = xgbe_disable_rx_csum;

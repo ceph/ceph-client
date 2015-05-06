@@ -64,6 +64,7 @@ enum ath_op_flags {
 	ATH_OP_HW_RESET,
 	ATH_OP_SCANNING,
 	ATH_OP_MULTI_CHANNEL,
+	ATH_OP_WOW_ENABLED,
 };
 
 enum ath_bus_type {
@@ -130,6 +131,9 @@ struct ath_ops {
 	void (*enable_write_buffer)(void *);
 	void (*write_flush) (void *);
 	u32 (*rmw)(void *, u32 reg_offset, u32 set, u32 clr);
+	void (*enable_rmw_buffer)(void *);
+	void (*rmw_flush) (void *);
+
 };
 
 struct ath_common;

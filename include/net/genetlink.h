@@ -92,9 +92,7 @@ struct genl_info {
 	struct genlmsghdr *	genlhdr;
 	void *			userhdr;
 	struct nlattr **	attrs;
-#ifdef CONFIG_NET_NS
-	struct net *		_net;
-#endif
+	possible_net_t		_net;
 	void *			user_ptr[2];
 	struct sock *		dst_sk;
 };
@@ -211,6 +209,23 @@ static inline struct nlmsghdr *genlmsg_nlhdr(void *user_hdr,
 }
 
 /**
+ * genlmsg_parse - parse attributes of a genetlink message
+ * @nlh: netlink message header
+ * @family: genetlink message family
+ * @tb: destination array with maxtype+1 elements
+ * @maxtype: maximum attribute type to be expected
+ * @policy: validation policy
+ * */
+static inline int genlmsg_parse(const struct nlmsghdr *nlh,
+				const struct genl_family *family,
+				struct nlattr *tb[], int maxtype,
+				const struct nla_policy *policy)
+{
+	return nlmsg_parse(nlh, family->hdrsize + GENL_HDRLEN, tb, maxtype,
+			   policy);
+}
+
+/**
  * genl_dump_check_consistent - check if sequence is consistent and advertise if not
  * @cb: netlink callback structure that stores the sequence number
  * @user_hdr: user header as returned from genlmsg_put()
@@ -250,9 +265,9 @@ static inline void *genlmsg_put_reply(struct sk_buff *skb,
  * @skb: socket buffer the message is stored in
  * @hdr: user specific header
  */
-static inline int genlmsg_end(struct sk_buff *skb, void *hdr)
+static inline void genlmsg_end(struct sk_buff *skb, void *hdr)
 {
-	return nlmsg_end(skb, hdr - GENL_HDRLEN - NLMSG_HDRLEN);
+	nlmsg_end(skb, hdr - GENL_HDRLEN - NLMSG_HDRLEN);
 }
 
 /**

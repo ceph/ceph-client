@@ -86,7 +86,8 @@
 #define UART_FCR6_T_TRIGGER_8	0x10 /* Mask for transmit trigger set at 8 */
 #define UART_FCR6_T_TRIGGER_24  0x20 /* Mask for transmit trigger set at 24 */
 #define UART_FCR6_T_TRIGGER_30	0x30 /* Mask for transmit trigger set at 30 */
-#define UART_FCR7_64BYTE	0x20 /* Go into 64 byte mode (TI16C750) */
+#define UART_FCR7_64BYTE	0x20 /* Go into 64 byte mode (TI16C750 and
+					some Freescale UARTs) */
 
 #define UART_FCR_R_TRIG_SHIFT		6
 #define UART_FCR_R_TRIG_BITS(x)		\
@@ -239,25 +240,6 @@
 #define UART_FCR_PXAR8	0x40	/* receive FIFO threshold = 8 */
 #define UART_FCR_PXAR16	0x80	/* receive FIFO threshold = 16 */
 #define UART_FCR_PXAR32	0xc0	/* receive FIFO threshold = 32 */
-
-/*
- * Intel MID on-chip HSU (High Speed UART) defined bits
- */
-#define UART_FCR_HSU_64_1B	0x00	/* receive FIFO treshold = 1 */
-#define UART_FCR_HSU_64_16B	0x40	/* receive FIFO treshold = 16 */
-#define UART_FCR_HSU_64_32B	0x80	/* receive FIFO treshold = 32 */
-#define UART_FCR_HSU_64_56B	0xc0	/* receive FIFO treshold = 56 */
-
-#define UART_FCR_HSU_16_1B	0x00	/* receive FIFO treshold = 1 */
-#define UART_FCR_HSU_16_4B	0x40	/* receive FIFO treshold = 4 */
-#define UART_FCR_HSU_16_8B	0x80	/* receive FIFO treshold = 8 */
-#define UART_FCR_HSU_16_14B	0xc0	/* receive FIFO treshold = 14 */
-
-#define UART_FCR_HSU_64B_FIFO	0x20	/* chose 64 bytes FIFO */
-#define UART_FCR_HSU_16B_FIFO	0x00	/* chose 16 bytes FIFO */
-
-#define UART_FCR_HALF_EMPT_TXI	0x00	/* trigger TX_EMPT IRQ for half empty */
-#define UART_FCR_FULL_EMPT_TXI	0x08	/* trigger TX_EMPT IRQ for full empty */
 
 /*
  * These register definitions are for the 16C950

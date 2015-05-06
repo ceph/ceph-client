@@ -103,10 +103,24 @@ enum cache_policy {
 	cache_policy_noncoherent
 };
 
+enum asic_family_type {
+	CHIP_KAVERI = 0,
+	CHIP_CARRIZO
+};
+
 struct kfd_device_info {
+	unsigned int asic_family;
 	unsigned int max_pasid_bits;
 	size_t ih_ring_entry_size;
+	uint8_t num_of_watch_points;
 	uint16_t mqd_size_aligned;
+};
+
+struct kfd_mem_obj {
+	uint32_t range_start;
+	uint32_t range_end;
+	uint64_t gpu_addr;
+	uint32_t *cpu_ptr;
 };
 
 struct kfd_dev {
@@ -134,6 +148,19 @@ struct kfd_dev {
 
 	struct kgd2kfd_shared_resources shared_resources;
 
+	const struct kfd2kgd_calls *kfd2kgd;
+	struct mutex doorbell_mutex;
+	unsigned long doorbell_available_index[DIV_ROUND_UP(
+		KFD_MAX_NUM_OF_QUEUES_PER_PROCESS, BITS_PER_LONG)];
+
+	void *gtt_mem;
+	uint64_t gtt_start_gpu_addr;
+	void *gtt_start_cpu_ptr;
+	void *gtt_sa_bitmap;
+	struct mutex gtt_sa_lock;
+	unsigned int gtt_sa_chunk_size;
+	unsigned int gtt_sa_num_of_chunks;
+
 	/* QCM Device instance */
 	struct device_queue_manager *dqm;
 
@@ -142,18 +169,11 @@ struct kfd_dev {
 
 /* KGD2KFD callbacks */
 void kgd2kfd_exit(void);
-struct kfd_dev *kgd2kfd_probe(struct kgd_dev *kgd, struct pci_dev *pdev);
+struct kfd_dev *kgd2kfd_probe(struct kgd_dev *kgd,
+			struct pci_dev *pdev, const struct kfd2kgd_calls *f2g);
 bool kgd2kfd_device_init(struct kfd_dev *kfd,
-			 const struct kgd2kfd_shared_resources *gpu_resources);
+			const struct kgd2kfd_shared_resources *gpu_resources);
 void kgd2kfd_device_exit(struct kfd_dev *kfd);
-
-extern const struct kfd2kgd_calls *kfd2kgd;
-
-struct kfd_mem_obj {
-	void *bo;
-	uint64_t gpu_addr;
-	uint32_t *cpu_ptr;
-};
 
 enum kfd_mempool {
 	KFD_MEMPOOL_SYSTEM_CACHEABLE = 1,
@@ -272,6 +292,15 @@ struct queue_properties {
 	bool is_active;
 	/* Not relevant for user mode queues in cp scheduling */
 	unsigned int vmid;
+	/* Relevant only for sdma queues*/
+	uint32_t sdma_engine_id;
+	uint32_t sdma_queue_id;
+	uint32_t sdma_vm_addr;
+	/* Relevant only for VI */
+	uint64_t eop_ring_buffer_address;
+	uint32_t eop_ring_buffer_size;
+	uint64_t ctx_save_restore_area_address;
+	uint32_t ctx_save_restore_area_size;
 };
 
 /**
@@ -314,6 +343,8 @@ struct queue {
 	uint32_t pipe;
 	uint32_t queue;
 
+	unsigned int sdma_id;
+
 	struct kfd_process	*process;
 	struct kfd_dev		*device;
 };
@@ -322,10 +353,10 @@ struct queue {
  * Please read the kfd_mqd_manager.h description.
  */
 enum KFD_MQD_TYPE {
-	KFD_MQD_TYPE_CIK_COMPUTE = 0, /* for no cp scheduling */
-	KFD_MQD_TYPE_CIK_HIQ, /* for hiq */
-	KFD_MQD_TYPE_CIK_CP, /* for cp queues and diq */
-	KFD_MQD_TYPE_CIK_SDMA, /* for sdma queues */
+	KFD_MQD_TYPE_COMPUTE = 0,	/* for no cp scheduling */
+	KFD_MQD_TYPE_HIQ,		/* for hiq */
+	KFD_MQD_TYPE_CP,		/* for cp queues and diq */
+	KFD_MQD_TYPE_SDMA,		/* for sdma queues */
 	KFD_MQD_TYPE_MAX
 };
 
@@ -351,8 +382,6 @@ struct qcm_process_device {
 	/* The Device Queue Manager that owns this data */
 	struct device_queue_manager *dqm;
 	struct process_queue_manager *pqm;
-	/* Device Queue Manager lock */
-	struct mutex *lock;
 	/* Queues list */
 	struct list_head queues_list;
 	struct list_head priv_queue_list;
@@ -477,8 +506,9 @@ struct kfd_process_device *kfd_bind_process_to_device(struct kfd_dev *dev,
 							struct kfd_process *p);
 void kfd_unbind_process_from_device(struct kfd_dev *dev, unsigned int pasid);
 struct kfd_process_device *kfd_get_process_device_data(struct kfd_dev *dev,
-							struct kfd_process *p,
-							int create_pdd);
+							struct kfd_process *p);
+struct kfd_process_device *kfd_create_process_device_data(struct kfd_dev *dev,
+							struct kfd_process *p);
 
 /* Process device data iterator */
 struct kfd_process_device *kfd_get_first_process_device_data(struct kfd_process *p);
@@ -506,6 +536,13 @@ unsigned int kfd_queue_id_to_doorbell(struct kfd_dev *kfd,
 					struct kfd_process *process,
 					unsigned int queue_id);
 
+/* GTT Sub-Allocator */
+
+int kfd_gtt_sa_allocate(struct kfd_dev *kfd, unsigned int size,
+			struct kfd_mem_obj **mem_obj);
+
+int kfd_gtt_sa_free(struct kfd_dev *kfd, struct kfd_mem_obj *mem_obj);
+
 extern struct device *kfd_device;
 
 /* Topology */
@@ -530,6 +567,8 @@ int kfd_init_apertures(struct kfd_process *process);
 /* Queue Context Management */
 inline uint32_t lower_32(uint64_t x);
 inline uint32_t upper_32(uint64_t x);
+struct cik_sdma_rlc_registers *get_sdma_mqd(void *mqd);
+inline uint32_t get_sdma_base_addr(struct cik_sdma_rlc_registers *m);
 
 int init_queue(struct queue **q, struct queue_properties properties);
 void uninit_queue(struct queue *q);
@@ -538,6 +577,10 @@ void print_queue(struct queue *q);
 
 struct mqd_manager *mqd_manager_init(enum KFD_MQD_TYPE type,
 					struct kfd_dev *dev);
+struct mqd_manager *mqd_manager_init_cik(enum KFD_MQD_TYPE type,
+		struct kfd_dev *dev);
+struct mqd_manager *mqd_manager_init_vi(enum KFD_MQD_TYPE type,
+		struct kfd_dev *dev);
 struct device_queue_manager *device_queue_manager_init(struct kfd_dev *dev);
 void device_queue_manager_uninit(struct device_queue_manager *dqm);
 struct kernel_queue *kernel_queue_init(struct kfd_dev *dev,

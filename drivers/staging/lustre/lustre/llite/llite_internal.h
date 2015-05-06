@@ -786,9 +786,9 @@ extern const struct dentry_operations ll_d_ops;
 void ll_intent_drop_lock(struct lookup_intent *);
 void ll_intent_release(struct lookup_intent *);
 void ll_invalidate_aliases(struct inode *);
-void ll_lookup_finish_locks(struct lookup_intent *it, struct dentry *dentry);
+void ll_lookup_finish_locks(struct lookup_intent *it, struct inode *inode);
 int ll_revalidate_it_finish(struct ptlrpc_request *request,
-			    struct lookup_intent *it, struct dentry *de);
+			    struct lookup_intent *it, struct inode *inode);
 
 /* llite/llite_lib.c */
 extern struct super_operations lustre_super_operations;
@@ -816,7 +816,6 @@ int ll_show_options(struct seq_file *seq, struct dentry *dentry);
 void ll_dirty_page_discard_warn(struct page *page, int ioret);
 int ll_prep_inode(struct inode **inode, struct ptlrpc_request *req,
 		  struct super_block *, struct lookup_intent *);
-void lustre_dump_dentry(struct dentry *, int recur);
 int ll_obd_statfs(struct inode *inode, void *arg);
 int ll_get_max_mdsize(struct ll_sb_info *sbi, int *max_mdsize);
 int ll_get_default_mdsize(struct ll_sb_info *sbi, int *default_mdsize);
@@ -939,10 +938,8 @@ struct ll_cl_context {
 };
 
 struct vvp_thread_info {
-	struct iovec	 vti_local_iov;
 	struct vvp_io_args   vti_args;
 	struct ra_io_arg     vti_ria;
-	struct kiocb	 vti_kiocb;
 	struct ll_cl_context vti_io_ctx;
 };
 
@@ -1491,7 +1488,7 @@ static inline void d_lustre_invalidate(struct dentry *dentry, int nested)
 {
 	CDEBUG(D_DENTRY, "invalidate dentry %pd (%p) parent %p inode %p refc %d\n",
 	       dentry, dentry,
-	       dentry->d_parent, dentry->d_inode, d_count(dentry));
+	       dentry->d_parent, d_inode(dentry), d_count(dentry));
 
 	spin_lock_nested(&dentry->d_lock,
 			 nested ? DENTRY_D_LOCK_NESTED : DENTRY_D_LOCK_NORMAL);

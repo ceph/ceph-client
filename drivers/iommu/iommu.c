@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2007-2008 Advanced Micro Devices, Inc.
- * Author: Joerg Roedel <joerg.roedel@amd.com>
+ * Author: Joerg Roedel <jroedel@suse.de>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2 as published
@@ -901,36 +901,24 @@ EXPORT_SYMBOL_GPL(iommu_set_fault_handler);
 struct iommu_domain *iommu_domain_alloc(struct bus_type *bus)
 {
 	struct iommu_domain *domain;
-	int ret;
 
 	if (bus == NULL || bus->iommu_ops == NULL)
 		return NULL;
 
-	domain = kzalloc(sizeof(*domain), GFP_KERNEL);
+	domain = bus->iommu_ops->domain_alloc(IOMMU_DOMAIN_UNMANAGED);
 	if (!domain)
 		return NULL;
 
-	domain->ops = bus->iommu_ops;
-
-	ret = domain->ops->domain_init(domain);
-	if (ret)
-		goto out_free;
+	domain->ops  = bus->iommu_ops;
+	domain->type = IOMMU_DOMAIN_UNMANAGED;
 
 	return domain;
-
-out_free:
-	kfree(domain);
-
-	return NULL;
 }
 EXPORT_SYMBOL_GPL(iommu_domain_alloc);
 
 void iommu_domain_free(struct iommu_domain *domain)
 {
-	if (likely(domain->ops->domain_destroy != NULL))
-		domain->ops->domain_destroy(domain);
-
-	kfree(domain);
+	domain->ops->domain_free(domain);
 }
 EXPORT_SYMBOL_GPL(iommu_domain_free);
 
@@ -1049,6 +1037,9 @@ int iommu_map(struct iommu_domain *domain, unsigned long iova,
 		     domain->ops->pgsize_bitmap == 0UL))
 		return -ENODEV;
 
+	if (unlikely(!(domain->type & __IOMMU_DOMAIN_PAGING)))
+		return -EINVAL;
+
 	/* find out the minimum page size supported */
 	min_pagesz = 1 << __ffs(domain->ops->pgsize_bitmap);
 
@@ -1084,7 +1075,7 @@ int iommu_map(struct iommu_domain *domain, unsigned long iova,
 	if (ret)
 		iommu_unmap(domain, orig_iova, orig_size - size);
 	else
-		trace_map(iova, paddr, size);
+		trace_map(orig_iova, paddr, orig_size);
 
 	return ret;
 }
@@ -1094,10 +1085,14 @@ size_t iommu_unmap(struct iommu_domain *domain, unsigned long iova, size_t size)
 {
 	size_t unmapped_page, unmapped = 0;
 	unsigned int min_pagesz;
+	unsigned long orig_iova = iova;
 
 	if (unlikely(domain->ops->unmap == NULL ||
 		     domain->ops->pgsize_bitmap == 0UL))
 		return -ENODEV;
+
+	if (unlikely(!(domain->type & __IOMMU_DOMAIN_PAGING)))
+		return -EINVAL;
 
 	/* find out the minimum page size supported */
 	min_pagesz = 1 << __ffs(domain->ops->pgsize_bitmap);
@@ -1133,7 +1128,7 @@ size_t iommu_unmap(struct iommu_domain *domain, unsigned long iova, size_t size)
 		unmapped += unmapped_page;
 	}
 
-	trace_unmap(iova, 0, size);
+	trace_unmap(orig_iova, size, unmapped);
 	return unmapped;
 }
 EXPORT_SYMBOL_GPL(iommu_unmap);

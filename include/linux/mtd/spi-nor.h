@@ -56,6 +56,10 @@
 /* Used for Spansion flashes only. */
 #define SPINOR_OP_BRWR		0x17	/* Bank register write */
 
+/* Used for Micron flashes only. */
+#define SPINOR_OP_RD_EVCR      0x65    /* Read EVCR register */
+#define SPINOR_OP_WD_EVCR      0x61    /* Write EVCR register */
+
 /* Status Register bits. */
 #define SR_WIP			1	/* Write in progress */
 #define SR_WEL			2	/* Write enable latch */
@@ -66,6 +70,9 @@
 #define SR_SRWD			0x80	/* SR write protect */
 
 #define SR_QUAD_EN_MX		0x40	/* Macronix Quad I/O */
+
+/* Enhanced Volatile Configuration Register bits */
+#define EVCR_QUAD_EN_MICRON    0x80    /* Micron Quad I/O */
 
 /* Flag Status Register bits */
 #define FSR_READY		0x80
@@ -148,6 +155,8 @@ enum spi_nor_option_flags {
  * @write:		[DRIVER-SPECIFIC] write data to the SPI NOR
  * @erase:		[DRIVER-SPECIFIC] erase a sector of the SPI NOR
  *			at the offset @offs
+ * @lock:		[FLASH-SPECIFIC] lock a region of the SPI NOR
+ * @unlock:		[FLASH-SPECIFIC] unlock a region of the SPI NOR
  * @priv:		the private data
  */
 struct spi_nor {
@@ -181,6 +190,9 @@ struct spi_nor {
 	void (*write)(struct spi_nor *nor, loff_t to,
 			size_t len, size_t *retlen, const u_char *write_buf);
 	int (*erase)(struct spi_nor *nor, loff_t offs);
+
+	int (*flash_lock)(struct spi_nor *nor, loff_t ofs, uint64_t len);
+	int (*flash_unlock)(struct spi_nor *nor, loff_t ofs, uint64_t len);
 
 	void *priv;
 };

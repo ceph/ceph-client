@@ -46,7 +46,6 @@
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/fcntl.h>
-#include <linux/aio.h>
 #include <linux/workqueue.h>
 #include <linux/kthread.h>
 #include <linux/seq_file.h>
@@ -68,15 +67,6 @@
 #define HOSTADDRESS unsigned long long
 #endif
 
-/** Try to evaulate the provided expression, and do a RETINT(x) iff
- *  the expression evaluates to < 0.
- */
-#define ASSERT(cond)                                           \
-	do { if (!(cond))                                      \
-			HUHDRV("ASSERT failed - %s",	       \
-			       __stringify(cond));	       \
-	} while (0)
-
 #define sizeofmember(TYPE, MEMBER) (sizeof(((TYPE *)0)->MEMBER))
 /** "Covered quotient" function */
 #define COVQ(v, d)  (((v) + (d) - 1) / (d))
@@ -87,14 +77,8 @@
 		(void *)(p2) = SWAPPOINTERS_TEMP;	\
 	} while (0)
 
-#define PRINTKDRV(fmt, args...) LOGINF(fmt, ## args)
-#define TBDDRV(fmt, args...)    LOGERR(fmt, ## args)
-#define HUHDRV(fmt, args...)    LOGERR(fmt, ## args)
-#define ERRDRV(fmt, args...)    LOGERR(fmt, ## args)
 #define WARNDRV(fmt, args...)   LOGWRN(fmt, ## args)
 #define SECUREDRV(fmt, args...) LOGWRN(fmt, ## args)
-#define INFODRV(fmt, args...)   LOGINF(fmt, ## args)
-#define DEBUGDRV(fmt, args...)  DBGINF(fmt, ## args)
 
 #define PRINTKDEV(devname, fmt, args...)  LOGINFDEV(devname, fmt, ## args)
 #define TBDDEV(devname, fmt, args...)     LOGERRDEV(devname, fmt, ## args)
@@ -105,7 +89,6 @@
 #define SECUREDEV(devname, fmt, args...)  LOGWRNDEV(devname, fmt, ## args)
 #define INFODEV(devname, fmt, args...)    LOGINFDEV(devname, fmt, ## args)
 #define INFODEVX(devno, fmt, args...)     LOGINFDEVX(devno, fmt, ## args)
-#define DEBUGDEV(devname, fmt, args...)   DBGINFDEV(devname, fmt, ## args)
 
 /** Verifies the consistency of your PRIVATEDEVICEDATA structure using
  *  conventional "signature" fields:
@@ -133,7 +116,7 @@
  *  x - the number of seconds to sleep.
  */
 #define SLEEP(x)					     \
-	do { current->state = TASK_INTERRUPTIBLE;	     \
+	do { __set_current_state(TASK_INTERRUPTIBLE);        \
 		schedule_timeout((x)*HZ);		     \
 	} while (0)
 
@@ -141,7 +124,7 @@
  *  x - the number of jiffies to sleep.
  */
 #define SLEEPJIFFIES(x)						    \
-	do { current->state = TASK_INTERRUPTIBLE;		    \
+	do { __set_current_state(TASK_INTERRUPTIBLE);		    \
 		schedule_timeout(x);				    \
 	} while (0)
 

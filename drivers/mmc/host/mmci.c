@@ -430,7 +430,6 @@ static void mmci_init_sg(struct mmci_host *host, struct mmc_data *data)
 static void mmci_dma_setup(struct mmci_host *host)
 {
 	const char *rxname, *txname;
-	dma_cap_mask_t mask;
 	struct variant_data *variant = host->variant;
 
 	host->dma_rx_channel = dma_request_slave_channel(mmc_dev(host->mmc), "rx");
@@ -438,10 +437,6 @@ static void mmci_dma_setup(struct mmci_host *host)
 
 	/* initialize pre request cookie */
 	host->next_data.cookie = 1;
-
-	/* Try to acquire a generic DMA engine slave channel */
-	dma_cap_zero(mask);
-	dma_cap_set(DMA_SLAVE, mask);
 
 	/*
 	 * If only an RX channel is specified, the driver will
@@ -1618,7 +1613,10 @@ static int mmci_probe(struct amba_device *dev,
 	dev_dbg(mmc_dev(mmc), "clocking block at %u Hz\n", mmc->f_max);
 
 	/* Get regulators and the supported OCR mask */
-	mmc_regulator_get_supply(mmc);
+	ret = mmc_regulator_get_supply(mmc);
+	if (ret == -EPROBE_DEFER)
+		goto clk_disable;
+
 	if (!mmc->ocr_avail)
 		mmc->ocr_avail = plat->ocr_mask;
 	else if (plat->ocr_mask)
@@ -1739,10 +1737,10 @@ static int mmci_probe(struct amba_device *dev,
 
 	pm_runtime_set_autosuspend_delay(&dev->dev, 50);
 	pm_runtime_use_autosuspend(&dev->dev);
-	pm_runtime_put(&dev->dev);
 
 	mmc_add_host(mmc);
 
+	pm_runtime_put(&dev->dev);
 	return 0;
 
  clk_disable:

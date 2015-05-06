@@ -459,7 +459,7 @@ static inline struct btrfs_fs_info *to_fs_info(struct kobject *kobj)
 static char btrfs_unknown_feature_names[3][NUM_FEATURE_BITS][13];
 static struct btrfs_feature_attr btrfs_feature_attrs[3][NUM_FEATURE_BITS];
 
-static u64 supported_feature_masks[3] = {
+static const u64 supported_feature_masks[3] = {
 	[FEAT_COMPAT]    = BTRFS_FEATURE_COMPAT_SUPP,
 	[FEAT_COMPAT_RO] = BTRFS_FEATURE_COMPAT_RO_SUPP,
 	[FEAT_INCOMPAT]  = BTRFS_FEATURE_INCOMPAT_SUPP,
@@ -733,10 +733,18 @@ int btrfs_init_sysfs(void)
 
 	ret = btrfs_init_debugfs();
 	if (ret)
-		return ret;
+		goto out1;
 
 	init_feature_attrs();
 	ret = sysfs_create_group(&btrfs_kset->kobj, &btrfs_feature_attr_group);
+	if (ret)
+		goto out2;
+
+	return 0;
+out2:
+	debugfs_remove_recursive(btrfs_debugfs_root_dentry);
+out1:
+	kset_unregister(btrfs_kset);
 
 	return ret;
 }

@@ -95,6 +95,12 @@
 #define CRYPTO_ALG_KERN_DRIVER_ONLY	0x00001000
 
 /*
+ * Mark a cipher as a service implementation only usable by another
+ * cipher and never by a normal user of the kernel crypto API
+ */
+#define CRYPTO_ALG_INTERNAL		0x00002000
+
+/*
  * Transform masks and values (for crt_flags).
  */
 #define CRYPTO_TFM_REQ_MASK		0x000fff00
@@ -1147,7 +1153,7 @@ static inline void ablkcipher_request_free(struct ablkcipher_request *req)
  * cipher operation completes.
  *
  * The callback function is registered with the ablkcipher_request handle and
- * must comply with the following template:
+ * must comply with the following template
  *
  *	void callback_function(struct crypto_async_request *req, int error)
  */
@@ -1174,7 +1180,7 @@ static inline void ablkcipher_request_set_callback(
  *
  * For encryption, the source is treated as the plaintext and the
  * destination is the ciphertext. For a decryption operation, the use is
- * reversed: the source is the ciphertext and the destination is the plaintext.
+ * reversed - the source is the ciphertext and the destination is the plaintext.
  */
 static inline void ablkcipher_request_set_crypt(
 	struct ablkcipher_request *req,
@@ -1412,6 +1418,9 @@ static inline int crypto_aead_encrypt(struct aead_request *req)
  */
 static inline int crypto_aead_decrypt(struct aead_request *req)
 {
+	if (req->cryptlen < crypto_aead_authsize(crypto_aead_reqtfm(req)))
+		return -EINVAL;
+
 	return crypto_aead_crt(crypto_aead_reqtfm(req))->decrypt(req);
 }
 
@@ -1506,7 +1515,7 @@ static inline void aead_request_free(struct aead_request *req)
  * completes
  *
  * The callback function is registered with the aead_request handle and
- * must comply with the following template:
+ * must comply with the following template
  *
  *	void callback_function(struct crypto_async_request *req, int error)
  */
@@ -1533,7 +1542,7 @@ static inline void aead_request_set_callback(struct aead_request *req,
  *
  * For encryption, the source is treated as the plaintext and the
  * destination is the ciphertext. For a decryption operation, the use is
- * reversed: the source is the ciphertext and the destination is the plaintext.
+ * reversed - the source is the ciphertext and the destination is the plaintext.
  *
  * IMPORTANT NOTE AEAD requires an authentication tag (MAC). For decryption,
  *		  the caller must concatenate the ciphertext followed by the

@@ -334,7 +334,7 @@ struct tracer_flags {
 
 
 /**
- * struct tracer - a specific tracer and its callbacks to interact with debugfs
+ * struct tracer - a specific tracer and its callbacks to interact with tracefs
  * @name: the name chosen to select it on the available_tracers file
  * @init: called when one switches to this tracer (echo name > current_tracer)
  * @reset: called when one switches to another tracer
@@ -388,6 +388,7 @@ struct tracer {
 	struct tracer		*next;
 	struct tracer_flags	*flags;
 	int			enabled;
+	int			ref;
 	bool			print_max;
 	bool			allow_instances;
 #ifdef CONFIG_TRACER_MAX_TRACE
@@ -541,7 +542,6 @@ struct dentry *trace_create_file(const char *name,
 				 void *data,
 				 const struct file_operations *fops);
 
-struct dentry *tracing_init_dentry_tr(struct trace_array *tr);
 struct dentry *tracing_init_dentry(void);
 
 struct ring_buffer_event;
@@ -1309,8 +1309,10 @@ static inline void init_ftrace_syscalls(void) { }
 
 #ifdef CONFIG_EVENT_TRACING
 void trace_event_init(void);
+void trace_event_enum_update(struct trace_enum_map **map, int len);
 #else
 static inline void __init trace_event_init(void) { }
+static inlin void trace_event_enum_update(struct trace_enum_map **map, int len) { }
 #endif
 
 extern struct trace_iterator *tracepoint_print_iter;

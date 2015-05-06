@@ -43,17 +43,16 @@
 #include "../include/obd_class.h"
 #include "../include/lprocfs_status.h"
 
-extern struct list_head obd_types;
 spinlock_t obd_types_lock;
 
 struct kmem_cache *obd_device_cachep;
 struct kmem_cache *obdo_cachep;
 EXPORT_SYMBOL(obdo_cachep);
-struct kmem_cache *import_cachep;
+static struct kmem_cache *import_cachep;
 
-struct list_head      obd_zombie_imports;
-struct list_head      obd_zombie_exports;
-spinlock_t  obd_zombie_impexp_lock;
+static struct list_head      obd_zombie_imports;
+static struct list_head      obd_zombie_exports;
+static spinlock_t  obd_zombie_impexp_lock;
 static void obd_zombie_impexp_notify(void);
 static void obd_zombie_export_add(struct obd_export *exp);
 static void obd_zombie_import_add(struct obd_import *imp);
@@ -930,7 +929,7 @@ void class_unlink_export(struct obd_export *exp)
 EXPORT_SYMBOL(class_unlink_export);
 
 /* Import management functions */
-void class_import_destroy(struct obd_import *imp)
+static void class_import_destroy(struct obd_import *imp)
 {
 	CDEBUG(D_IOCTL, "destroying import %p for %s\n", imp,
 		imp->imp_obd->obd_name);
@@ -1127,7 +1126,7 @@ int class_connect(struct lustre_handle *conn, struct obd_device *obd,
 EXPORT_SYMBOL(class_connect);
 
 /* if export is involved in recovery then clean up related things */
-void class_export_recovery_cleanup(struct obd_export *exp)
+static void class_export_recovery_cleanup(struct obd_export *exp)
 {
 	struct obd_device *obd = exp->exp_obd;
 
@@ -1151,22 +1150,24 @@ void class_export_recovery_cleanup(struct obd_export *exp)
 			exp->exp_obd->obd_stale_clients++;
 	}
 	spin_unlock(&obd->obd_recovery_task_lock);
+
+	spin_lock(&exp->exp_lock);
 	/** Cleanup req replay fields */
 	if (exp->exp_req_replay_needed) {
-		spin_lock(&exp->exp_lock);
 		exp->exp_req_replay_needed = 0;
-		spin_unlock(&exp->exp_lock);
+
 		LASSERT(atomic_read(&obd->obd_req_replay_clients));
 		atomic_dec(&obd->obd_req_replay_clients);
 	}
+
 	/** Cleanup lock replay data */
 	if (exp->exp_lock_replay_needed) {
-		spin_lock(&exp->exp_lock);
 		exp->exp_lock_replay_needed = 0;
-		spin_unlock(&exp->exp_lock);
+
 		LASSERT(atomic_read(&obd->obd_lock_replay_clients));
 		atomic_dec(&obd->obd_lock_replay_clients);
 	}
+	spin_unlock(&exp->exp_lock);
 }
 
 /* This function removes 1-3 references from the export:
@@ -1219,7 +1220,7 @@ int class_connected_export(struct obd_export *exp)
 	if (exp) {
 		int connected;
 		spin_lock(&exp->exp_lock);
-		connected = (exp->exp_conn_cnt > 0);
+		connected = exp->exp_conn_cnt > 0;
 		spin_unlock(&exp->exp_lock);
 		return connected;
 	}
@@ -1557,7 +1558,7 @@ void obd_exports_barrier(struct obd_device *obd)
 EXPORT_SYMBOL(obd_exports_barrier);
 
 /* Total amount of zombies to be destroyed */
-static int zombies_count = 0;
+static int zombies_count;
 
 /**
  * kill zombie imports and exports

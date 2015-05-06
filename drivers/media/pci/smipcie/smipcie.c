@@ -16,7 +16,7 @@
 
 #include "smipcie.h"
 #include "m88ds3103.h"
-#include "m88ts2022.h"
+#include "ts2020.h"
 #include "m88rs6000t.h"
 #include "si2168.h"
 #include "si2157.h"
@@ -448,16 +448,19 @@ static void smi_port_exit(struct smi_port *port)
 	port->enable = 0;
 }
 
-static void smi_port_irq(struct smi_port *port, u32 int_status)
+static int smi_port_irq(struct smi_port *port, u32 int_status)
 {
 	u32 port_req_irq = port->_dmaInterruptCH0 | port->_dmaInterruptCH1;
+	int handled = 0;
 
 	if (int_status & port_req_irq) {
 		smi_port_disableInterrupt(port);
 		port->_int_status = int_status;
 		smi_port_clearInterrupt(port);
 		tasklet_schedule(&port->tasklet);
+		handled = 1;
 	}
+	return handled;
 }
 
 static irqreturn_t smi_irq_handler(int irq, void *dev_id)
@@ -465,18 +468,19 @@ static irqreturn_t smi_irq_handler(int irq, void *dev_id)
 	struct smi_dev *dev = dev_id;
 	struct smi_port *port0 = &dev->ts_port[0];
 	struct smi_port *port1 = &dev->ts_port[1];
+	int handled = 0;
 
 	u32 intr_status = smi_read(MSI_INT_STATUS);
 
 	/* ts0 interrupt.*/
 	if (dev->info->ts_0)
-		smi_port_irq(port0, intr_status);
+		handled += smi_port_irq(port0, intr_status);
 
 	/* ts1 interrupt.*/
 	if (dev->info->ts_1)
-		smi_port_irq(port1, intr_status);
+		handled += smi_port_irq(port1, intr_status);
 
-	return IRQ_HANDLED;
+	return IRQ_RETVAL(handled);
 }
 
 static struct i2c_client *smi_add_i2c_client(struct i2c_adapter *adapter,
@@ -528,9 +532,7 @@ static int smi_dvbsky_m88ds3103_fe_attach(struct smi_port *port)
 	struct i2c_adapter *tuner_i2c_adapter;
 	struct i2c_client *tuner_client;
 	struct i2c_board_info tuner_info;
-	struct m88ts2022_config m88ts2022_config = {
-		.clock = 27000000,
-	};
+	struct ts2020_config ts2020_config = {};
 	memset(&tuner_info, 0, sizeof(struct i2c_board_info));
 	i2c = (port->idx == 0) ? &dev->i2c_bus[0] : &dev->i2c_bus[1];
 
@@ -542,10 +544,10 @@ static int smi_dvbsky_m88ds3103_fe_attach(struct smi_port *port)
 		return ret;
 	}
 	/* attach tuner */
-	m88ts2022_config.fe = port->fe;
-	strlcpy(tuner_info.type, "m88ts2022", I2C_NAME_SIZE);
+	ts2020_config.fe = port->fe;
+	strlcpy(tuner_info.type, "ts2020", I2C_NAME_SIZE);
 	tuner_info.addr = 0x60;
-	tuner_info.platform_data = &m88ts2022_config;
+	tuner_info.platform_data = &ts2020_config;
 	tuner_client = smi_add_i2c_client(tuner_i2c_adapter, &tuner_info);
 	if (!tuner_client) {
 		ret = -ENODEV;

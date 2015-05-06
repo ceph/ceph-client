@@ -318,6 +318,7 @@ struct bcma_bus {
 	const struct bcma_host_ops *ops;
 
 	enum bcma_hosttype hosttype;
+	bool host_is_pcie2; /* Used for BCMA_HOSTTYPE_PCI only */
 	union {
 		/* Pointer to the PCI bus (only for BCMA_HOSTTYPE_PCI) */
 		struct pci_dev *host_pci;
@@ -432,6 +433,27 @@ static inline struct bcma_device *bcma_find_core(struct bcma_bus *bus,
 {
 	return bcma_find_core_unit(bus, coreid, 0);
 }
+
+#ifdef CONFIG_BCMA_HOST_PCI
+extern void bcma_host_pci_up(struct bcma_bus *bus);
+extern void bcma_host_pci_down(struct bcma_bus *bus);
+extern int bcma_host_pci_irq_ctl(struct bcma_bus *bus,
+				 struct bcma_device *core, bool enable);
+#else
+static inline void bcma_host_pci_up(struct bcma_bus *bus)
+{
+}
+static inline void bcma_host_pci_down(struct bcma_bus *bus)
+{
+}
+static inline int bcma_host_pci_irq_ctl(struct bcma_bus *bus,
+					struct bcma_device *core, bool enable)
+{
+	if (bus->hosttype == BCMA_HOSTTYPE_PCI)
+		return -ENOTSUPP;
+	return 0;
+}
+#endif
 
 extern bool bcma_core_is_enabled(struct bcma_device *core);
 extern void bcma_core_disable(struct bcma_device *core, u32 flags);

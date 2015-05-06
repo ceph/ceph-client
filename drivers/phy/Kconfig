@@ -35,6 +35,13 @@ config ARMADA375_USBCLUSTER_PHY
 	depends on OF
 	select GENERIC_PHY
 
+config PHY_DM816X_USB
+	tristate "TI dm816x USB PHY driver"
+	depends on ARCH_OMAP2PLUS
+	select GENERIC_PHY
+	help
+	  Enable this for dm816x USB to work.
+
 config PHY_EXYNOS_MIPI_VIDEO
 	tristate "S5P/EXYNOS SoC series MIPI CSI-2/DSI PHY driver"
 	depends on HAS_IOMEM
@@ -174,6 +181,17 @@ config PHY_SUN4I_USB
 	  This driver controls the entire USB PHY block, both the USB OTG
 	  parts, as well as the 2 regular USB 2 host PHYs.
 
+config PHY_SUN9I_USB
+	tristate "Allwinner sun9i SoC USB PHY driver"
+	depends on ARCH_SUNXI && HAS_IOMEM && OF
+	depends on RESET_CONTROLLER
+	select GENERIC_PHY
+	help
+	  Enable this to support the transceiver that is part of Allwinner
+	  sun9i SoCs.
+
+	  This driver controls each individual USB 2 host PHY.
+
 config PHY_SAMSUNG_USB2
 	tristate "Samsung USB 2.0 PHY driver"
 	depends on HAS_IOMEM
@@ -239,6 +257,13 @@ config PHY_QCOM_IPQ806X_SATA
 	depends on OF
 	select GENERIC_PHY
 
+config PHY_ROCKCHIP_USB
+	tristate "Rockchip USB2 PHY Driver"
+	depends on ARCH_ROCKCHIP && OF
+	select GENERIC_PHY
+	help
+	  Enable this to support the Rockchip USB 2.0 PHY.
+
 config PHY_ST_SPEAR1310_MIPHY
 	tristate "ST SPEAR1310-MIPHY driver"
 	select GENERIC_PHY
@@ -276,5 +301,12 @@ config PHY_STIH41X_USB
 	help
 	  Enable this to support the USB transceiver that is part of
 	  STMicroelectronics STiH41x SoC series.
+
+config PHY_QCOM_UFS
+	tristate "Qualcomm UFS PHY driver"
+	depends on OF && ARCH_MSM
+	select GENERIC_PHY
+	help
+	  Support for UFS PHY on QCOM chipsets.
 
 endmenu

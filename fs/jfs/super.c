@@ -102,7 +102,7 @@ void jfs_error(struct super_block *sb, const char *fmt, ...)
 	vaf.fmt = fmt;
 	vaf.va = &args;
 
-	pr_err("ERROR: (device %s): %pf: %pV\n",
+	pr_err("ERROR: (device %s): %ps: %pV\n",
 	       sb->s_id, __builtin_return_address(0), &vaf);
 
 	va_end(args);
@@ -619,8 +619,7 @@ out_mount_failed:
 	iput(sbi->direct_inode);
 	sbi->direct_inode = NULL;
 out_unload:
-	if (sbi->nls_tab)
-		unload_nls(sbi->nls_tab);
+	unload_nls(sbi->nls_tab);
 out_kfree:
 	kfree(sbi);
 	return ret;

@@ -68,6 +68,7 @@
 #include <net/mac80211.h>
 
 #include "iwl-fw-file.h"
+#include "iwl-fw-error-dump.h"
 
 /**
  * enum iwl_ucode_type
@@ -152,9 +153,13 @@ struct iwl_fw_cscheme_list {
  * @mvm_fw: indicates this is MVM firmware
  * @cipher_scheme: optional external cipher scheme.
  * @human_readable: human readable version
+ * @sdio_adma_addr: the default address to set for the ADMA in SDIO mode until
+ *	we get the ALIVE from the uCode
  * @dbg_dest_tlv: points to the destination TLV for debug
  * @dbg_conf_tlv: array of pointers to configuration TLVs for debug
  * @dbg_conf_tlv_len: lengths of the @dbg_conf_tlv entries
+ * @dbg_trigger_tlv: array of pointers to triggers TLVs
+ * @dbg_trigger_tlv_len: lengths of the @dbg_trigger_tlv entries
  * @dbg_dest_reg_num: num of reg_ops in %dbg_dest_tlv
  */
 struct iwl_fw {
@@ -181,10 +186,13 @@ struct iwl_fw {
 	struct ieee80211_cipher_scheme cs[IWL_UCODE_MAX_CS];
 	u8 human_readable[FW_VER_HUMAN_READABLE_SZ];
 
-	struct iwl_fw_dbg_dest_tlv *dbg_dest_tlv;
-	struct iwl_fw_dbg_conf_tlv *dbg_conf_tlv[FW_DBG_MAX];
-	size_t dbg_conf_tlv_len[FW_DBG_MAX];
+	u32 sdio_adma_addr;
 
+	struct iwl_fw_dbg_dest_tlv *dbg_dest_tlv;
+	struct iwl_fw_dbg_conf_tlv *dbg_conf_tlv[FW_DBG_CONF_MAX];
+	size_t dbg_conf_tlv_len[FW_DBG_CONF_MAX];
+	struct iwl_fw_dbg_trigger_tlv *dbg_trigger_tlv[FW_DBG_TRIGGER_MAX];
+	size_t dbg_trigger_tlv_len[FW_DBG_TRIGGER_MAX];
 	u8 dbg_dest_reg_num;
 };
 
@@ -202,37 +210,6 @@ static inline const char *get_fw_dbg_mode_string(int mode)
 	}
 }
 
-static inline const struct iwl_fw_dbg_trigger *
-iwl_fw_dbg_conf_get_trigger(const struct iwl_fw *fw, u8 id)
-{
-	const struct iwl_fw_dbg_conf_tlv *conf_tlv = fw->dbg_conf_tlv[id];
-	u8 *ptr;
-	int i;
-
-	if (!conf_tlv)
-		return NULL;
-
-	ptr = (void *)&conf_tlv->hcmd;
-	for (i = 0; i < conf_tlv->num_of_hcmds; i++) {
-		ptr += sizeof(conf_tlv->hcmd);
-		ptr += le16_to_cpu(conf_tlv->hcmd.len);
-	}
-
-	return (const struct iwl_fw_dbg_trigger *)ptr;
-}
-
-static inline bool
-iwl_fw_dbg_conf_enabled(const struct iwl_fw *fw, u8 id)
-{
-	const struct iwl_fw_dbg_trigger *trigger =
-		iwl_fw_dbg_conf_get_trigger(fw, id);
-
-	if (!trigger)
-		return false;
-
-	return trigger->enabled;
-}
-
 static inline bool
 iwl_fw_dbg_conf_usniffer(const struct iwl_fw *fw, u8 id)
 {
@@ -242,6 +219,20 @@ iwl_fw_dbg_conf_usniffer(const struct iwl_fw *fw, u8 id)
 		return false;
 
 	return conf_tlv->usniffer;
+}
+
+#define iwl_fw_dbg_trigger_enabled(fw, id) ({			\
+	void *__dbg_trigger = (fw)->dbg_trigger_tlv[(id)];	\
+	unlikely(__dbg_trigger);				\
+})
+
+static inline struct iwl_fw_dbg_trigger_tlv*
+iwl_fw_dbg_get_trigger(const struct iwl_fw *fw, u8 id)
+{
+	if (WARN_ON(id >= ARRAY_SIZE(fw->dbg_trigger_tlv)))
+		return NULL;
+
+	return fw->dbg_trigger_tlv[id];
 }
 
 #endif  /* __iwl_fw_h__ */

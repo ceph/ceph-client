@@ -260,6 +260,12 @@ struct ceph_mds_request {
 	int r_num_caps;
 };
 
+struct ceph_pool_perm {
+	struct rb_node node;
+	u32 pool;
+	int perm;
+};
+
 /*
  * mds client state
  */
@@ -284,6 +290,7 @@ struct ceph_mds_client {
 	 * references (implying they contain no inodes with caps) that
 	 * should be destroyed.
 	 */
+	u64			last_snap_seq;
 	struct rw_semaphore     snap_rwsem;
 	struct rb_root          snap_realms;
 	struct list_head        snap_empty;
@@ -328,6 +335,9 @@ struct ceph_mds_client {
 	spinlock_t	  dentry_lru_lock;
 	struct list_head  dentry_lru;
 	int		  num_dentry;
+
+	struct rw_semaphore     pool_perm_rwsem;
+	struct rb_root		pool_perm_tree;
 };
 
 extern const char *ceph_mds_op_name(int op);

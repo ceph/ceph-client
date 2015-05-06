@@ -54,7 +54,7 @@ static const struct snd_pcm_hardware atmel_pcm_dma_hardware = {
 	.period_bytes_max	= 2 * 0xffff,	/* if 2 bytes format */
 	.periods_min		= 8,
 	.periods_max		= 1024,		/* no limit */
-	.buffer_bytes_max	= ATMEL_SSC_DMABUF_SIZE,
+	.buffer_bytes_max	= 512 * 1024,
 };
 
 /**
@@ -105,13 +105,11 @@ static int atmel_pcm_configure_dma(struct snd_pcm_substream *substream,
 		return ret;
 	}
 
-	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
-		slave_config->dst_addr = ssc->phybase + SSC_THR;
-		slave_config->dst_maxburst = 1;
-	} else {
-		slave_config->src_addr = ssc->phybase + SSC_RHR;
-		slave_config->src_maxburst = 1;
-	}
+	slave_config->dst_addr = ssc->phybase + SSC_THR;
+	slave_config->dst_maxburst = 1;
+
+	slave_config->src_addr = ssc->phybase + SSC_RHR;
+	slave_config->src_maxburst = 1;
 
 	prtd->dma_intr_handler = atmel_pcm_dma_irq;
 
@@ -121,7 +119,7 @@ static int atmel_pcm_configure_dma(struct snd_pcm_substream *substream,
 static const struct snd_dmaengine_pcm_config atmel_dmaengine_pcm_config = {
 	.prepare_slave_config = atmel_pcm_configure_dma,
 	.pcm_hardware = &atmel_pcm_dma_hardware,
-	.prealloc_buffer_size = ATMEL_SSC_DMABUF_SIZE,
+	.prealloc_buffer_size = 64 * 1024,
 };
 
 int atmel_pcm_dma_platform_register(struct device *dev)

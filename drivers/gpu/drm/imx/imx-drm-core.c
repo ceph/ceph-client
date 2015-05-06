@@ -25,6 +25,7 @@
 #include <drm/drm_gem_cma_helper.h>
 #include <drm/drm_fb_cma_helper.h>
 #include <drm/drm_plane_helper.h>
+#include <drm/drm_of.h>
 
 #include "imx-drm.h"
 
@@ -46,7 +47,6 @@ struct imx_drm_crtc {
 	struct drm_crtc				*crtc;
 	int					pipe;
 	struct imx_drm_crtc_helper_funcs	imx_drm_helper_funcs;
-	struct device_node			*port;
 };
 
 static int legacyfb_depth = 16;
@@ -103,8 +103,8 @@ static struct imx_drm_crtc *imx_drm_find_crtc(struct drm_crtc *crtc)
 	return NULL;
 }
 
-int imx_drm_panel_format_pins(struct drm_encoder *encoder,
-		u32 interface_pix_fmt, int hsync_pin, int vsync_pin)
+int imx_drm_set_bus_format_pins(struct drm_encoder *encoder, u32 bus_format,
+		int hsync_pin, int vsync_pin)
 {
 	struct imx_drm_crtc_helper_funcs *helper;
 	struct imx_drm_crtc *imx_crtc;
@@ -116,17 +116,16 @@ int imx_drm_panel_format_pins(struct drm_encoder *encoder,
 	helper = &imx_crtc->imx_drm_helper_funcs;
 	if (helper->set_interface_pix_fmt)
 		return helper->set_interface_pix_fmt(encoder->crtc,
-				encoder->encoder_type, interface_pix_fmt,
-				hsync_pin, vsync_pin);
+					bus_format, hsync_pin, vsync_pin);
 	return 0;
 }
-EXPORT_SYMBOL_GPL(imx_drm_panel_format_pins);
+EXPORT_SYMBOL_GPL(imx_drm_set_bus_format_pins);
 
-int imx_drm_panel_format(struct drm_encoder *encoder, u32 interface_pix_fmt)
+int imx_drm_set_bus_format(struct drm_encoder *encoder, u32 bus_format)
 {
-	return imx_drm_panel_format_pins(encoder, interface_pix_fmt, 2, 3);
+	return imx_drm_set_bus_format_pins(encoder, bus_format, 2, 3);
 }
-EXPORT_SYMBOL_GPL(imx_drm_panel_format);
+EXPORT_SYMBOL_GPL(imx_drm_set_bus_format);
 
 int imx_drm_crtc_vblank_get(struct imx_drm_crtc *imx_drm_crtc)
 {
@@ -365,8 +364,9 @@ int imx_drm_add_crtc(struct drm_device *drm, struct drm_crtc *crtc,
 
 	imx_drm_crtc->imx_drm_helper_funcs = *imx_drm_helper_funcs;
 	imx_drm_crtc->pipe = imxdrm->pipes++;
-	imx_drm_crtc->port = port;
 	imx_drm_crtc->crtc = crtc;
+
+	crtc->port = port;
 
 	imxdrm->crtc[imx_drm_crtc->pipe] = imx_drm_crtc;
 
@@ -408,75 +408,19 @@ int imx_drm_remove_crtc(struct imx_drm_crtc *imx_drm_crtc)
 }
 EXPORT_SYMBOL_GPL(imx_drm_remove_crtc);
 
-/*
- * Find the DRM CRTC possible mask for the connected endpoint.
- *
- * The encoder possible masks are defined by their position in the
- * mode_config crtc_list.  This means that CRTCs must not be added
- * or removed once the DRM device has been fully initialised.
- */
-static uint32_t imx_drm_find_crtc_mask(struct imx_drm_device *imxdrm,
-	struct device_node *endpoint)
-{
-	struct device_node *port;
-	unsigned i;
-
-	port = of_graph_get_remote_port(endpoint);
-	if (!port)
-		return 0;
-	of_node_put(port);
-
-	for (i = 0; i < MAX_CRTC; i++) {
-		struct imx_drm_crtc *imx_drm_crtc = imxdrm->crtc[i];
-
-		if (imx_drm_crtc && imx_drm_crtc->port == port)
-			return drm_crtc_mask(imx_drm_crtc->crtc);
-	}
-
-	return 0;
-}
-
-static struct device_node *imx_drm_of_get_next_endpoint(
-		const struct device_node *parent, struct device_node *prev)
-{
-	struct device_node *node = of_graph_get_next_endpoint(parent, prev);
-
-	of_node_put(prev);
-	return node;
-}
-
 int imx_drm_encoder_parse_of(struct drm_device *drm,
 	struct drm_encoder *encoder, struct device_node *np)
 {
-	struct imx_drm_device *imxdrm = drm->dev_private;
-	struct device_node *ep = NULL;
-	uint32_t crtc_mask = 0;
-	int i;
+	uint32_t crtc_mask = drm_of_find_possible_crtcs(drm, np);
 
-	for (i = 0; ; i++) {
-		u32 mask;
-
-		ep = imx_drm_of_get_next_endpoint(np, ep);
-		if (!ep)
-			break;
-
-		mask = imx_drm_find_crtc_mask(imxdrm, ep);
-
-		/*
-		 * If we failed to find the CRTC(s) which this encoder is
-		 * supposed to be connected to, it's because the CRTC has
-		 * not been registered yet.  Defer probing, and hope that
-		 * the required CRTC is added later.
-		 */
-		if (mask == 0)
-			return -EPROBE_DEFER;
-
-		crtc_mask |= mask;
-	}
-
-	of_node_put(ep);
-	if (i == 0)
-		return -ENOENT;
+	/*
+	 * If we failed to find the CRTC(s) which this encoder is
+	 * supposed to be connected to, it's because the CRTC has
+	 * not been registered yet.  Defer probing, and hope that
+	 * the required CRTC is added later.
+	 */
+	if (crtc_mask == 0)
+		return -EPROBE_DEFER;
 
 	encoder->possible_crtcs = crtc_mask;
 
@@ -495,7 +439,7 @@ int imx_drm_encoder_get_mux_id(struct device_node *node,
 			       struct drm_encoder *encoder)
 {
 	struct imx_drm_crtc *imx_crtc = imx_drm_find_crtc(encoder->crtc);
-	struct device_node *ep = NULL;
+	struct device_node *ep;
 	struct of_endpoint endpoint;
 	struct device_node *port;
 	int ret;
@@ -503,18 +447,15 @@ int imx_drm_encoder_get_mux_id(struct device_node *node,
 	if (!node || !imx_crtc)
 		return -EINVAL;
 
-	do {
-		ep = imx_drm_of_get_next_endpoint(node, ep);
-		if (!ep)
-			break;
-
+	for_each_endpoint_of_node(node, ep) {
 		port = of_graph_get_remote_port(ep);
 		of_node_put(port);
-		if (port == imx_crtc->port) {
+		if (port == imx_crtc->crtc->port) {
 			ret = of_graph_parse_endpoint(ep, &endpoint);
+			of_node_put(ep);
 			return ret ? ret : endpoint.port;
 		}
-	} while (ep);
+	}
 
 	return -EINVAL;
 }

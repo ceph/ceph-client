@@ -689,7 +689,7 @@ static const struct v4l2_ctrl_config vivid_ctrl_max_edid_blocks = {
 
 static const char * const vivid_ctrl_colorspace_strings[] = {
 	"SMPTE 170M",
-	"REC 709",
+	"Rec. 709",
 	"sRGB",
 	"AdobeRGB",
 	"BT.2020",
@@ -716,7 +716,7 @@ static const char * const vivid_ctrl_ycbcr_enc_strings[] = {
 	"xvYCC 601",
 	"xvYCC 709",
 	"sYCC",
-	"BT.2020 Non-Constant Luminance",
+	"BT.2020",
 	"BT.2020 Constant Luminance",
 	"SMPTE 240M",
 	NULL,
@@ -818,7 +818,7 @@ static int vivid_vid_out_s_ctrl(struct v4l2_ctrl *ctrl)
 		dev->dvi_d_out = ctrl->val == V4L2_DV_TX_MODE_DVI_D;
 		if (!vivid_is_hdmi_out(dev))
 			break;
-		if (!dev->dvi_d_out && (bt->standards & V4L2_DV_BT_STD_CEA861)) {
+		if (!dev->dvi_d_out && (bt->flags & V4L2_DV_FL_IS_CE_VIDEO)) {
 			if (bt->width == 720 && bt->height <= 576)
 				dev->colorspace_out = V4L2_COLORSPACE_SMPTE170M;
 			else

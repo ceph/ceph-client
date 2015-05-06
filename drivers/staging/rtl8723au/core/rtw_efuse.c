@@ -304,8 +304,7 @@ EFUSE_Read1Byte23a(struct rtw_adapter *Adapter, u16 Address)
 		}
 		data = rtl8723au_read8(Adapter, EFUSE_CTRL);
 		return data;
-	}
-	else
+	} else
 		return 0xFF;
 }/* EFUSE_Read1Byte23a */
 
@@ -327,22 +326,15 @@ EFUSE_Read1Byte23a(struct rtw_adapter *Adapter, u16 Address)
  *---------------------------------------------------------------------------*/
 
 void
-EFUSE_Write1Byte(
-	struct rtw_adapter *	Adapter,
-	u16		Address,
-	u8		Value);
+EFUSE_Write1Byte(struct rtw_adapter *Adapter, u16 Address, u8 Value);
 void
-EFUSE_Write1Byte(
-	struct rtw_adapter *	Adapter,
-	u16		Address,
-	u8		Value)
+EFUSE_Write1Byte(struct rtw_adapter *Adapter, u16 Address, u8 Value)
 {
 	u8	Bytetemp = {0x00};
 	u8	temp = {0x00};
 	u32	k = 0;
 	u16	contentLen = 0;
 
-	/* RT_TRACE(COMP_EFUSE, DBG_LOUD, ("Addr =%x Data =%x\n", Address, Value)); */
 	EFUSE_GetEfuseDefinition23a(Adapter, EFUSE_WIFI,
 				 TYPE_EFUSE_REAL_CONTENT_LEN,
 				 (void *)&contentLen);
@@ -410,8 +402,6 @@ efuse_OneByteWrite23a(struct rtw_adapter *pAdapter, u16 addr, u8 data)
 {
 	u8	tmpidx = 0;
 	int	bResult;
-
-	/* RT_TRACE(COMP_EFUSE, DBG_LOUD, ("Addr = %x Data =%x\n", addr, data)); */
 
 	/* return	0; */
 
@@ -635,10 +625,7 @@ Efuse_ReadAllMap(struct rtw_adapter *pAdapter, u8 efuseType, u8 *Efuse)
  *
  *---------------------------------------------------------------------------*/
 static void
-efuse_ShadowRead1Byte(
-	struct rtw_adapter *	pAdapter,
-	u16		Offset,
-	u8		*Value)
+efuse_ShadowRead1Byte(struct rtw_adapter *pAdapter, u16 Offset, u8 *Value)
 {
 	struct eeprom_priv *pEEPROM = GET_EEPROM_EFUSE_PRIV(pAdapter);
 
@@ -647,10 +634,7 @@ efuse_ShadowRead1Byte(
 
 /* Read Two Bytes */
 static void
-efuse_ShadowRead2Byte(
-	struct rtw_adapter *	pAdapter,
-	u16		Offset,
-	u16		*Value)
+efuse_ShadowRead2Byte(struct rtw_adapter *pAdapter, u16 Offset, u16 *Value)
 {
 	struct eeprom_priv *pEEPROM = GET_EEPROM_EFUSE_PRIV(pAdapter);
 
@@ -660,10 +644,7 @@ efuse_ShadowRead2Byte(
 
 /* Read Four Bytes */
 static void
-efuse_ShadowRead4Byte(
-	struct rtw_adapter *	pAdapter,
-	u16		Offset,
-	u32		*Value)
+efuse_ShadowRead4Byte(struct rtw_adapter *pAdapter, u16 Offset, u32 *Value)
 {
 	struct eeprom_priv *pEEPROM = GET_EEPROM_EFUSE_PRIV(pAdapter);
 
@@ -722,11 +703,8 @@ void EFUSE_ShadowMapUpdate23a(struct rtw_adapter *pAdapter, u8 efuseType)
  *
  *---------------------------------------------------------------------------*/
 void
-EFUSE_ShadowRead23a(
-	struct rtw_adapter *	pAdapter,
-	u8		Type,
-	u16		Offset,
-	u32		*Value)
+EFUSE_ShadowRead23a(struct rtw_adapter *pAdapter,
+		    u8 Type, u16 Offset, u32 *Value)
 {
 	if (Type == 1)
 		efuse_ShadowRead1Byte(pAdapter, Offset, (u8 *)Value);

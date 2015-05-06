@@ -48,7 +48,6 @@
 #include <linux/stat.h>
 #include <linux/cdrom.h>
 #include <linux/nls.h>
-#include <linux/buffer_head.h>
 #include <linux/vfs.h>
 #include <linux/vmalloc.h>
 #include <linux/errno.h>
@@ -1599,7 +1598,7 @@ static noinline int udf_process_sequence(
 	struct udf_vds_record *curr;
 	struct generic_desc *gd;
 	struct volDescPtr *vdp;
-	int done = 0;
+	bool done = false;
 	uint32_t vdsn;
 	uint16_t ident;
 	long next_s = 0, next_e = 0;
@@ -1680,7 +1679,7 @@ static noinline int udf_process_sequence(
 				lastblock = next_e;
 				next_s = next_e = 0;
 			} else
-				done = 1;
+				done = true;
 			break;
 		}
 		brelse(bh);
@@ -2300,6 +2299,7 @@ static void udf_put_super(struct super_block *sb)
 		udf_close_lvid(sb);
 	brelse(sbi->s_lvid_bh);
 	udf_sb_free_partitions(sb);
+	mutex_destroy(&sbi->s_alloc_mutex);
 	kfree(sb->s_fs_info);
 	sb->s_fs_info = NULL;
 }

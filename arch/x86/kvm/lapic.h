@@ -1,7 +1,7 @@
 #ifndef __KVM_X86_LAPIC_H
 #define __KVM_X86_LAPIC_H
 
-#include "iodev.h"
+#include <kvm/iodev.h>
 
 #include <linux/kvm_host.h>
 
@@ -14,6 +14,7 @@ struct kvm_timer {
 	u32 timer_mode;
 	u32 timer_mode_mask;
 	u64 tscdeadline;
+	u64 expired_tscdeadline;
 	atomic_t pending;			/* accumulated triggered timers */
 };
 
@@ -56,9 +57,8 @@ u64 kvm_lapic_get_base(struct kvm_vcpu *vcpu);
 void kvm_apic_set_version(struct kvm_vcpu *vcpu);
 
 void kvm_apic_update_tmr(struct kvm_vcpu *vcpu, u32 *tmr);
+void __kvm_apic_update_irr(u32 *pir, void *regs);
 void kvm_apic_update_irr(struct kvm_vcpu *vcpu, u32 *pir);
-int kvm_apic_match_physical_addr(struct kvm_lapic *apic, u32 dest);
-int kvm_apic_match_logical_addr(struct kvm_lapic *apic, u32 mda);
 int kvm_apic_set_irq(struct kvm_vcpu *vcpu, struct kvm_lapic_irq *irq,
 		unsigned long *dest_map);
 int kvm_apic_local_deliver(struct kvm_lapic *apic, int lvt_type);
@@ -148,26 +148,13 @@ static inline bool kvm_apic_vid_enabled(struct kvm *kvm)
 	return kvm_x86_ops->vm_has_apicv(kvm);
 }
 
-static inline u16 apic_cluster_id(struct kvm_apic_map *map, u32 ldr)
-{
-	u16 cid;
-	ldr >>= 32 - map->ldr_bits;
-	cid = (ldr >> map->cid_shift) & map->cid_mask;
-
-	return cid;
-}
-
-static inline u16 apic_logical_id(struct kvm_apic_map *map, u32 ldr)
-{
-	ldr >>= (32 - map->ldr_bits);
-	return ldr & map->lid_mask;
-}
-
 static inline bool kvm_apic_has_events(struct kvm_vcpu *vcpu)
 {
 	return vcpu->arch.apic->pending_events;
 }
 
 bool kvm_apic_pending_eoi(struct kvm_vcpu *vcpu, int vector);
+
+void wait_lapic_expire(struct kvm_vcpu *vcpu);
 
 #endif

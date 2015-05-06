@@ -732,7 +732,7 @@ static int cx8802_probe(struct pci_dev *pci_dev,
 	dev->alloc_ctx = vb2_dma_sg_init_ctx(&pci_dev->dev);
 	if (IS_ERR(dev->alloc_ctx)) {
 		err = PTR_ERR(dev->alloc_ctx);
-		goto fail_core;
+		goto fail_dev;
 	}
 	dev->core = core;
 
@@ -754,6 +754,7 @@ static int cx8802_probe(struct pci_dev *pci_dev,
 
  fail_free:
 	vb2_dma_sg_cleanup_ctx(dev->alloc_ctx);
+ fail_dev:
 	kfree(dev);
  fail_core:
 	core->dvbdev = NULL;
@@ -833,10 +834,3 @@ EXPORT_SYMBOL(cx8802_start_dma);
 EXPORT_SYMBOL(cx8802_register_driver);
 EXPORT_SYMBOL(cx8802_unregister_driver);
 EXPORT_SYMBOL(cx8802_get_driver);
-/* ----------------------------------------------------------- */
-/*
- * Local variables:
- * c-basic-offset: 8
- * End:
- * kate: eol "unix"; indent-width 3; remove-trailing-space on; replace-trailing-space-save on; tab-width 8; replace-tabs off; space-indent off; mixed-indent off
- */

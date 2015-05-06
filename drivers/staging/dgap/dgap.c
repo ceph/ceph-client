@@ -978,8 +978,8 @@ static int dgap_parsefile(char **in)
 				brd->u.board.conc1++;
 
 			conc_type = dgap_gettok(in);
-			if (conc_type == 0 || conc_type != CX ||
-			    conc_type != EPC) {
+			if (conc_type == 0 || (conc_type != CX &&
+			    conc_type != EPC)) {
 				pr_err("failed to set a type of concentratros");
 				return -1;
 			}
@@ -1019,8 +1019,8 @@ static int dgap_parsefile(char **in)
 				brd->u.board.module1++;
 
 			module_type = dgap_gettok(in);
-			if (module_type == 0 || module_type != PORTS ||
-			    module_type != MODEM) {
+			if (module_type == 0 || (module_type != PORTS &&
+			    module_type != MODEM)) {
 				pr_err("failed to set a type of module");
 				return -1;
 			}
@@ -1361,7 +1361,6 @@ static uint dgap_get_custom_baud(struct channel_t *ch)
 {
 	u8 __iomem *vaddr;
 	ulong offset;
-	uint value;
 
 	if (!ch || ch->magic != DGAP_CHANNEL_MAGIC)
 		return 0;
@@ -1384,8 +1383,7 @@ static uint dgap_get_custom_baud(struct channel_t *ch)
 	offset = (ioread16(vaddr + ECS_SEG) << 4) + (ch->ch_portnum * 0x28)
 	       + LINE_SPEED;
 
-	value = readw(vaddr + offset);
-	return value;
+	return readw(vaddr + offset);
 }
 
 /*
@@ -1400,27 +1398,27 @@ static int dgap_remap(struct board_t *brd)
 		return -ENOMEM;
 
 	if (!request_mem_region(brd->membase + PCI_IO_OFFSET, 0x200000,
-					"dgap")) {
-		release_mem_region(brd->membase, 0x200000);
-		return -ENOMEM;
-	}
+					"dgap"))
+		goto err_req_mem;
 
 	brd->re_map_membase = ioremap(brd->membase, 0x200000);
-	if (!brd->re_map_membase) {
-		release_mem_region(brd->membase, 0x200000);
-		release_mem_region(brd->membase + PCI_IO_OFFSET, 0x200000);
-		return -ENOMEM;
-	}
+	if (!brd->re_map_membase)
+		goto err_remap_mem;
 
 	brd->re_map_port = ioremap((brd->membase + PCI_IO_OFFSET), 0x200000);
-	if (!brd->re_map_port) {
-		release_mem_region(brd->membase, 0x200000);
-		release_mem_region(brd->membase + PCI_IO_OFFSET, 0x200000);
-		iounmap(brd->re_map_membase);
-		return -ENOMEM;
-	}
+	if (!brd->re_map_port)
+		goto err_remap_port;
 
 	return 0;
+
+err_remap_port:
+	iounmap(brd->re_map_membase);
+err_remap_mem:
+	release_mem_region(brd->membase + PCI_IO_OFFSET, 0x200000);
+err_req_mem:
+	release_mem_region(brd->membase, 0x200000);
+
+	return -ENOMEM;
 }
 
 static void dgap_unmap(struct board_t *brd)
@@ -2196,7 +2194,7 @@ static struct board_t *dgap_found_board(struct pci_dev *pdev, int id,
 	 * will be mapped into the low 2MB of the 4MB memory space
 	 */
 	brd->port = brd->membase + PCI_IO_OFFSET;
-	brd->port_end = brd->port + PCI_IO_SIZE;
+	brd->port_end = brd->port + PCI_IO_SIZE_DGAP;
 
 	/*
 	 * Special initialization for non-PLX boards
@@ -3979,7 +3977,6 @@ static int dgap_get_modem_info(struct channel_t *ch, unsigned int __user *value)
 	int result;
 	u8 mstat;
 	ulong lock_flags;
-	int rc;
 
 	spin_lock_irqsave(&ch->ch_lock, lock_flags);
 
@@ -4004,9 +4001,7 @@ static int dgap_get_modem_info(struct channel_t *ch, unsigned int __user *value)
 	if (mstat & D_CD(ch))
 		result |= TIOCM_CD;
 
-	rc = put_user(result, value);
-
-	return rc;
+	return put_user(result, value);
 }
 
 /*
@@ -7044,8 +7039,7 @@ static int dgap_start(void)
 
 	/* Start the poller */
 	spin_lock_irqsave(&dgap_poll_lock, flags);
-	init_timer(&dgap_poll_timer);
-	dgap_poll_timer.function = dgap_poll_handler;
+	setup_timer(&dgap_poll_timer, dgap_poll_handler, 0);
 	dgap_poll_timer.data = 0;
 	dgap_poll_time = jiffies + dgap_jiffies_from_ms(dgap_poll_tick);
 	dgap_poll_timer.expires = dgap_poll_time;
