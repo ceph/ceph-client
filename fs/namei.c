@@ -2617,8 +2617,7 @@ static int may_open(struct path *path, int acc_mode, int flag)
 			return -EPERM;
 	}
 
-	/* O_NOATIME can only be set by the owner or superuser */
-	if (flag & O_NOATIME && !inode_owner_or_capable(inode))
+	if (forbid_o_notime(inode, path->mnt, flag))
 		return -EPERM;
 
 	return 0;

@@ -22,12 +22,30 @@
 #include <linux/pid_namespace.h>
 #include <linux/user_namespace.h>
 #include <linux/shmem_fs.h>
+#include <linux/mount.h>
 
 #include <asm/poll.h>
 #include <asm/siginfo.h>
 #include <asm/uaccess.h>
 
-#define SETFL_MASK (O_APPEND | O_NONBLOCK | O_NDELAY | O_DIRECT | O_NOATIME)
+#define SETFL_MASK (O_APPEND | O_NONBLOCK | O_NDELAY | O_DIRECT | O_NOATIME | \
+		    O_NOCMTIME)
+
+/*
+ * O_NOATIME and O_NOCMTIME can only be set by the ownder or superuser.
+ * And O_NOCMTIME requires MNT_NOCMTIME.
+ */
+bool forbid_o_notime(struct inode *inode, struct vfsmount *mnt,
+		     unsigned long flags)
+{
+	if ((flags & (O_NOATIME|O_NOCMTIME)) && !inode_owner_or_capable(inode))
+		return true;
+
+	if ((flags & O_NOCMTIME) && !(mnt->mnt_flags & MNT_NOCMTIME))
+		return true;
+
+	return false;
+}
 
 static int setfl(int fd, struct file * filp, unsigned long arg)
 {
@@ -41,10 +59,8 @@ static int setfl(int fd, struct file * filp, unsigned long arg)
 	if (((arg ^ filp->f_flags) & O_APPEND) && IS_APPEND(inode))
 		return -EPERM;
 
-	/* O_NOATIME can only be set by the owner or superuser */
-	if ((arg & O_NOATIME) && !(filp->f_flags & O_NOATIME))
-		if (!inode_owner_or_capable(inode))
-			return -EPERM;
+	if (forbid_o_notime(inode, filp->f_path.mnt, arg & ~filp->f_flags))
+		return -EPERM;
 
 	/* required for strict SunOS emulation */
 	if (O_NONBLOCK != O_NDELAY)
@@ -740,7 +756,7 @@ static int __init fcntl_init(void)
 	 * Exceptions: O_NONBLOCK is a two bit define on parisc; O_NDELAY
 	 * is defined as O_NONBLOCK on some platforms and not on others.
 	 */
-	BUILD_BUG_ON(21 - 1 /* for O_RDONLY being 0 */ != HWEIGHT32(
+	BUILD_BUG_ON(22 - 1 /* for O_RDONLY being 0 */ != HWEIGHT32(
 		O_RDONLY	| O_WRONLY	| O_RDWR	|
 		O_CREAT		| O_EXCL	| O_NOCTTY	|
 		O_TRUNC		| O_APPEND	| /* O_NONBLOCK	| */
@@ -748,7 +764,7 @@ static int __init fcntl_init(void)
 		O_DIRECT	| O_LARGEFILE	| O_DIRECTORY	|
 		O_NOFOLLOW	| O_NOATIME	| O_CLOEXEC	|
 		__FMODE_EXEC	| O_PATH	| __O_TMPFILE	|
-		__FMODE_NONOTIFY
+		__FMODE_NONOTIFY| O_NOCMTIME
 		));
 
 	fasync_cache = kmem_cache_create("fasync_cache",

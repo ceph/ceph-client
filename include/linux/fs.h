@@ -1471,6 +1471,8 @@ static inline void sb_start_intwrite(struct super_block *sb)
 
 
 extern bool inode_owner_or_capable(const struct inode *inode);
+extern bool forbid_o_notime(struct inode *inode, struct vfsmount *mnt,
+			    unsigned long flags);
 
 /*
  * VFS helper functions..
@@ -2948,6 +2950,11 @@ static inline void inode_has_no_xattr(struct inode *inode)
 static inline bool is_root_inode(struct inode *inode)
 {
 	return inode == inode->i_sb->s_root->d_inode;
+}
+
+static inline bool file_is_nocmtime(struct file *file)
+{
+	return IS_NOCMTIME(file_inode(file)) || (file->f_flags & O_NOCMTIME);
 }
 
 static inline bool dir_emit(struct dir_context *ctx,

@@ -1721,7 +1721,7 @@ int file_update_time(struct file *file)
 	int ret;
 
 	/* First try to exhaust all avenues to not sync */
-	if (IS_NOCMTIME(inode))
+	if (file_is_nocmtime(file))
 		return 0;
 
 	now = current_fs_time(inode->i_sb);
