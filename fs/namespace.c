@@ -2652,6 +2652,8 @@ long do_mount(const char *dev_name, const char __user *dir_name,
 		mnt_flags |= MNT_NOEXEC;
 	if (flags & MS_NOATIME)
 		mnt_flags |= MNT_NOATIME;
+	if (flags & MS_NOCMTIME)
+		mnt_flags |= MNT_NOCMTIME;
 	if (flags & MS_NODIRATIME)
 		mnt_flags |= MNT_NODIRATIME;
 	if (flags & MS_STRICTATIME)

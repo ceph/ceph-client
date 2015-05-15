@@ -28,6 +28,7 @@ struct mnt_namespace;
 #define MNT_NODIRATIME	0x10
 #define MNT_RELATIME	0x20
 #define MNT_READONLY	0x40	/* does the user want this to be r/o? */
+#define MNT_NOCMTIME	0x80	/* allow O_NOCMTIME to stop cmtime updates */
 
 #define MNT_SHRINKABLE	0x100
 #define MNT_WRITE_HOLD	0x200

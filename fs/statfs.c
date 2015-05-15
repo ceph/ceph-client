@@ -23,6 +23,8 @@ static int flags_by_mnt(int mnt_flags)
 		flags |= ST_NOEXEC;
 	if (mnt_flags & MNT_NOATIME)
 		flags |= ST_NOATIME;
+	if (mnt_flags & MNT_NOCMTIME)
+		flags |= ST_NOCMTIME;
 	if (mnt_flags & MNT_NODIRATIME)
 		flags |= ST_NODIRATIME;
 	if (mnt_flags & MNT_RELATIME)

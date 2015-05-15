@@ -39,5 +39,6 @@ struct kstatfs {
 #define ST_NOATIME	0x0400	/* do not update access times */
 #define ST_NODIRATIME	0x0800	/* do not update directory access times */
 #define ST_RELATIME	0x1000	/* update atime relative to mtime/ctime */
+#define ST_NOCMTIME	0x2000	/* allow O_NOCMTIME to stop cmtime updates */
 
 #endif
