@@ -609,7 +609,7 @@ retry:
 		if (r->entropy_total > 128) {
 			r->initialized = 1;
 			if (r == &nonblocking_pool)
-				wake_up_interruptible(&urandom_init_wait);
+				wake_up_all(&urandom_init_wait);
 		}
 	}
 
