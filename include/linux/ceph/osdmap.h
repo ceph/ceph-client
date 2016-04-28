@@ -187,11 +187,6 @@ static inline int ceph_osd_is_down(struct ceph_osdmap *map, int osd)
 	return !ceph_osd_is_up(map, osd);
 }
 
-static inline bool ceph_osdmap_flag(struct ceph_osdmap *map, int flag)
-{
-	return map && (map->flags & flag);
-}
-
 extern char *ceph_osdmap_state_str(char *str, int len, int state);
 extern u32 ceph_get_primary_affinity(struct ceph_osdmap *map, int osd);
 

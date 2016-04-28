@@ -1255,9 +1255,9 @@ static bool target_should_be_paused(struct ceph_osd_client *osdc,
 				    const struct ceph_osd_request_target *t,
 				    struct ceph_pg_pool_info *pi)
 {
-	bool pauserd = ceph_osdmap_flag(osdc->osdmap, CEPH_OSDMAP_PAUSERD);
-	bool pausewr = ceph_osdmap_flag(osdc->osdmap, CEPH_OSDMAP_PAUSEWR) ||
-		       ceph_osdmap_flag(osdc->osdmap, CEPH_OSDMAP_FULL) ||
+	bool pauserd = ceph_osdmap_flag(osdc, CEPH_OSDMAP_PAUSERD);
+	bool pausewr = ceph_osdmap_flag(osdc, CEPH_OSDMAP_PAUSEWR) ||
+		       ceph_osdmap_flag(osdc, CEPH_OSDMAP_FULL) ||
 		       __pool_full(pi);
 
 	WARN_ON(pi->id != t->base_oloc.pool);
@@ -1282,8 +1282,7 @@ static enum calc_target_result calc_target(struct ceph_osd_client *osdc,
 	bool force_resend = false;
 	bool need_check_tiering = false;
 	bool need_resend = false;
-	bool sort_bitwise = ceph_osdmap_flag(osdc->osdmap,
-					     CEPH_OSDMAP_SORTBITWISE);
+	bool sort_bitwise = ceph_osdmap_flag(osdc, CEPH_OSDMAP_SORTBITWISE);
 	enum calc_target_result ct_res;
 	int ret;
 
@@ -2264,7 +2263,7 @@ void ceph_osdc_handle_map(struct ceph_osd_client *osdc, struct ceph_msg *msg)
 
 	down_write(&osdc->map_sem);
 
-	was_full = ceph_osdmap_flag(osdc->osdmap, CEPH_OSDMAP_FULL);
+	was_full = ceph_osdmap_flag(osdc, CEPH_OSDMAP_FULL);
 
 	/* incremental maps */
 	ceph_decode_32_safe(&p, end, nr_maps, bad);
@@ -2290,8 +2289,7 @@ void ceph_osdc_handle_map(struct ceph_osd_client *osdc, struct ceph_msg *msg)
 				osdc->osdmap = newmap;
 			}
 			was_full = was_full ||
-				ceph_osdmap_flag(osdc->osdmap,
-						 CEPH_OSDMAP_FULL);
+				ceph_osdmap_flag(osdc, CEPH_OSDMAP_FULL);
 			kick_requests(osdc, 0, was_full);
 		} else {
 			dout("ignoring incremental map %u len %d\n",
@@ -2336,8 +2334,7 @@ void ceph_osdc_handle_map(struct ceph_osd_client *osdc, struct ceph_msg *msg)
 				ceph_osdmap_destroy(oldmap);
 			}
 			was_full = was_full ||
-				ceph_osdmap_flag(osdc->osdmap,
-						 CEPH_OSDMAP_FULL);
+				ceph_osdmap_flag(osdc, CEPH_OSDMAP_FULL);
 			kick_requests(osdc, skipped_map, was_full);
 		}
 		p += maplen;
@@ -2354,9 +2351,9 @@ done:
 	 * we find out when we are no longer full and stop returning
 	 * ENOSPC.
 	 */
-	if (ceph_osdmap_flag(osdc->osdmap, CEPH_OSDMAP_FULL) ||
-		ceph_osdmap_flag(osdc->osdmap, CEPH_OSDMAP_PAUSERD) ||
-		ceph_osdmap_flag(osdc->osdmap, CEPH_OSDMAP_PAUSEWR))
+	if (ceph_osdmap_flag(osdc, CEPH_OSDMAP_FULL) ||
+		ceph_osdmap_flag(osdc, CEPH_OSDMAP_PAUSERD) ||
+		ceph_osdmap_flag(osdc, CEPH_OSDMAP_PAUSEWR))
 		ceph_monc_request_next_osdmap(&osdc->client->monc);
 
 	mutex_lock(&osdc->request_mutex);
