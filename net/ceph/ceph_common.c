@@ -253,7 +253,7 @@ enum {
 
 static match_table_t opt_tokens = {
 	{Opt_osdtimeout, "osdtimeout=%d"},
-	{Opt_osdkeepalivetimeout, "osdkeepalive=%d"},
+	{Opt_osdkeepalivetimeout, "osdkeepalivetimeout=%d"},
 	{Opt_mount_timeout, "mount_timeout=%d"},
 	{Opt_osd_idle_ttl, "osd_idle_ttl=%d"},
 	/* int args above */
