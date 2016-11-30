@@ -1260,13 +1260,20 @@ retry_lookup:
 		 * mknod symlink mkdir  : null -> new inode
 		 * unlink               : linked -> null
 		 */
-		struct inode *dir = req->r_locked_dir;
+		struct inode *parent, *dir = req->r_locked_dir;
 		struct dentry *dn = req->r_dentry;
 		bool have_dir_cap, have_lease;
 
 		BUG_ON(!dn);
 		BUG_ON(!dir);
-		BUG_ON(d_inode(dn->d_parent) != dir);
+		parent = d_inode(dn->d_parent);
+
+		if (unlikely(parent != dir)) {
+			pr_err("%s: dir=%p parent=%p op=%d\n", __func__, dir,
+					parent, req->r_op);
+			BUG();
+		}
+
 		BUG_ON(ceph_ino(dir) !=
 		       le64_to_cpu(rinfo->diri.in->ino));
 		BUG_ON(ceph_snap(dir) !=
