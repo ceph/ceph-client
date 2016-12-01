@@ -209,7 +209,7 @@ maintainer="$name <$email>"
 
 # Generate a simple changelog template
 cat <<EOF > debian/changelog
-linux-upstream ($packageversion) unstable; urgency=low
+linux-$version ($packageversion) unstable; urgency=low
 
   * Custom built Linux kernel.
 
@@ -238,7 +238,7 @@ EOF
 
 # Generate a control file
 cat <<EOF > debian/control
-Source: linux-upstream
+Source: linux-$version
 Section: kernel
 Priority: optional
 Maintainer: $maintainer
