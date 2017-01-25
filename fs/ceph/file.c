@@ -67,72 +67,6 @@ static __le32 ceph_flags_sys2wire(u32 flags)
  */
 
 /*
- * Calculate the length sum of direct io vectors that can
- * be combined into one page vector.
- */
-static size_t dio_get_pagev_size(const struct iov_iter *it)
-{
-    const struct iovec *iov = it->iov;
-    const struct iovec *iovend = iov + it->nr_segs;
-    size_t size;
-
-    size = iov->iov_len - it->iov_offset;
-    /*
-     * An iov can be page vectored when both the current tail
-     * and the next base are page aligned.
-     */
-    while (PAGE_ALIGNED((iov->iov_base + iov->iov_len)) &&
-           (++iov < iovend && PAGE_ALIGNED((iov->iov_base)))) {
-        size += iov->iov_len;
-    }
-    dout("dio_get_pagevlen len = %zu\n", size);
-    return size;
-}
-
-/*
- * Allocate a page vector based on (@it, @nbytes).
- * The return value is the tuple describing a page vector,
- * that is (@pages, @page_align, @num_pages).
- */
-static struct page **
-dio_get_pages_alloc(const struct iov_iter *it, size_t nbytes,
-		    size_t *page_align, int *num_pages)
-{
-	struct iov_iter tmp_it = *it;
-	size_t align;
-	struct page **pages;
-	int ret = 0, idx, npages;
-
-	align = (unsigned long)(it->iov->iov_base + it->iov_offset) &
-		(PAGE_SIZE - 1);
-	npages = calc_pages_for(align, nbytes);
-	pages = kvmalloc(sizeof(*pages) * npages, GFP_KERNEL);
-	if (!pages)
-		return ERR_PTR(-ENOMEM);
-
-	for (idx = 0; idx < npages; ) {
-		size_t start;
-		ret = iov_iter_get_pages(&tmp_it, pages + idx, nbytes,
-					 npages - idx, &start);
-		if (ret < 0)
-			goto fail;
-
-		iov_iter_advance(&tmp_it, ret);
-		nbytes -= ret;
-		idx += (ret + start + PAGE_SIZE - 1) / PAGE_SIZE;
-	}
-
-	BUG_ON(nbytes != 0);
-	*num_pages = npages;
-	*page_align = align;
-	dout("dio_get_pages_alloc: got %d pages align %zu\n", npages, align);
-	return pages;
-fail:
-	ceph_put_page_vector(pages, idx, false);
-	return ERR_PTR(ret);
-}
-
-/*
  * Prepare an open request.  Preallocate ceph_cap to avoid an
  * inopportune ENOMEM later.
  */
@@ -867,7 +801,7 @@ ceph_direct_read_write(struct kiocb *iocb, struct iov_iter *iter,
 	}
 
 	while (iov_iter_count(iter) > 0) {
-		u64 size = dio_get_pagev_size(iter);
+		u64 size = iov_iter_count(iter);
 		size_t start = 0;
 		ssize_t len;
 
@@ -887,13 +821,13 @@ ceph_direct_read_write(struct kiocb *iocb, struct iov_iter *iter,
 			break;
 		}
 
-		len = size;
-		pages = dio_get_pages_alloc(iter, len, &start, &num_pages);
-		if (IS_ERR(pages)) {
+		len = iov_iter_get_pages_alloc(iter, &pages, size, &start);
+		if (len < 0) {
 			ceph_osdc_put_request(req);
-			ret = PTR_ERR(pages);
+			ret = len;
 			break;
 		}
+		num_pages = DIV_ROUND_UP(len + start, PAGE_SIZE);
 
 		/*
 		 * To simplify error handling, allow AIO when IO within i_size
