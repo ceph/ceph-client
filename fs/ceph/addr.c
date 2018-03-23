@@ -15,6 +15,7 @@
 #include "mds_client.h"
 #include "cache.h"
 #include <linux/ceph/osd_client.h>
+#include <linux/ceph/striper.h>
 
 /*
  * Ceph address space ops.
@@ -945,19 +946,15 @@ get_more_pages:
 			if (locked_pages == 0) {
 				u64 objnum;
 				u64 objoff;
+				u32 xlen;
 
 				/* prepare async write request */
 				offset = (u64)page_offset(page);
-				len = wsize;
-
-				rc = ceph_calc_file_object_mapping(&ci->i_layout,
-								offset, len,
-								&objnum, &objoff,
-								&len);
-				if (rc < 0) {
-					unlock_page(page);
-					break;
-				}
+				ceph_calc_file_object_mapping(&ci->i_layout,
+							      offset, wsize,
+							      &objnum, &objoff,
+							      &xlen);
+				len = xlen;
 
 				num_ops = 1;
 				strip_unit_end = page->index +
