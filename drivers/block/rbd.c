@@ -3491,18 +3491,27 @@ static void rbd_reregister_watch(struct work_struct *work)
 	ret = __rbd_register_watch(rbd_dev);
 	if (ret) {
 		rbd_warn(rbd_dev, "failed to reregister watch: %d", ret);
-		if (ret == -EBLACKLISTED || ret == -ENOENT) {
+		if (ret == -ENOENT) {
 			set_bit(RBD_DEV_FLAG_BLACKLISTED, &rbd_dev->flags);
 			wake_requests(rbd_dev, true);
-		} else {
+		} 
+		else if(ret == -EBLACKLISTED) {
+			set_bit(RBD_DEV_FLAG_BLACKLISTED, &rbd_dev->flags);
+			wake_requests(rbd_dev, true);
 			queue_delayed_work(rbd_dev->task_wq,
 					   &rbd_dev->watch_dwork,
 					   RBD_RETRY_DELAY);
-		}
-		mutex_unlock(&rbd_dev->watch_mutex);
-		return;
+	        }
+	        else {
+			queue_delayed_work(rbd_dev->task_wq,
+					   &rbd_dev->watch_dwork,
+					   RBD_RETRY_DELAY);
+			}
+			mutex_unlock(&rbd_dev->watch_mutex);
+			return;
 	}
-
+	clear_bit(RBD_DEV_FLAG_BLACKLISTED, &rbd_dev->flags)
+    
 	rbd_dev->watch_state = RBD_WATCH_STATE_REGISTERED;
 	rbd_dev->watch_cookie = rbd_dev->watch_handle->linger_id;
 	mutex_unlock(&rbd_dev->watch_mutex);
