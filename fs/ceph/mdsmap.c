@@ -70,7 +70,7 @@ int ceph_mdsmap_get_random_mds(struct ceph_mdsmap *m)
 	} while (0)
 
 
-static int __decode_and_drop_compat_set(void **p, void* end)
+static int __decode_and_drop_compat_set(void **p, void *end)
 {
 	int i;
 	/* compat, ro_compat, incompat*/
