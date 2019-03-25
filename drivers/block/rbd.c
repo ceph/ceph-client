@@ -34,7 +34,7 @@
 #include <linux/ceph/cls_lock_client.h>
 #include <linux/ceph/striper.h>
 #include <linux/ceph/decode.h>
-#include <linux/parser.h>
+#include <linux/fs_parser.h>
 #include <linux/bsearch.h>
 
 #include <linux/kernel.h>
@@ -823,34 +823,12 @@ enum {
 	Opt_queue_depth,
 	Opt_alloc_size,
 	Opt_lock_timeout,
-	Opt_last_int,
-	/* int args above */
 	Opt_pool_ns,
-	Opt_last_string,
-	/* string args above */
 	Opt_read_only,
 	Opt_read_write,
 	Opt_lock_on_read,
 	Opt_exclusive,
 	Opt_notrim,
-	Opt_err
-};
-
-static match_table_t rbd_opts_tokens = {
-	{Opt_queue_depth, "queue_depth=%d"},
-	{Opt_alloc_size, "alloc_size=%d"},
-	{Opt_lock_timeout, "lock_timeout=%d"},
-	/* int args above */
-	{Opt_pool_ns, "_pool_ns=%s"},
-	/* string args above */
-	{Opt_read_only, "read_only"},
-	{Opt_read_only, "ro"},		/* Alternate spelling */
-	{Opt_read_write, "read_write"},
-	{Opt_read_write, "rw"},		/* Alternate spelling */
-	{Opt_lock_on_read, "lock_on_read"},
-	{Opt_exclusive, "exclusive"},
-	{Opt_notrim, "notrim"},
-	{Opt_err, NULL}
 };
 
 struct rbd_options {
@@ -871,85 +849,88 @@ struct rbd_options {
 #define RBD_EXCLUSIVE_DEFAULT	false
 #define RBD_TRIM_DEFAULT	true
 
-struct parse_rbd_opts_ctx {
-	struct rbd_spec		*spec;
-	struct rbd_options	*opts;
+static const struct fs_parameter_spec rbd_param_specs[] = {
+	fsparam_u32	("alloc_size",			Opt_alloc_size),
+	fsparam_flag	("exclusive",			Opt_exclusive),
+	fsparam_flag	("lock_on_read",		Opt_lock_on_read),
+	fsparam_u32	("lock_timeout",		Opt_lock_timeout),
+	fsparam_flag	("notrim",			Opt_notrim),
+	fsparam_string	("_pool_ns",			Opt_pool_ns),
+	fsparam_u32	("queue_depth",			Opt_queue_depth),
+	fsparam_flag	("read_only",			Opt_read_only),
+	fsparam_flag	("read_write",			Opt_read_write),
+	fsparam_flag	("ro",				Opt_read_only),
+	fsparam_flag	("rw",				Opt_read_write),
+	{}
 };
 
-static int parse_rbd_opts_token(char *c, void *private)
+static const struct fs_parameter_description rbd_parameters = {
+	.name		= "rbd",
+	.specs		= rbd_param_specs,
+};
+
+static int rbd_parse_param(struct ceph_config_context *ctx, struct fs_parameter *param)
 {
-	struct parse_rbd_opts_ctx *pctx = private;
-	substring_t argstr[MAX_OPT_ARGS];
-	int token, intval, ret;
+	struct rbd_options *opts = ctx->rbd_opts;
+	struct rbd_spec *spec = ctx->rbd_spec;
+	struct fs_parse_result result;
+	int ret, opt;
 
-	token = match_token(c, rbd_opts_tokens, argstr);
-	if (token < Opt_last_int) {
-		ret = match_int(&argstr[0], &intval);
-		if (ret < 0) {
-			pr_err("bad option arg (not int) at '%s'\n", c);
-			return ret;
-		}
-		dout("got int token %d val %d\n", token, intval);
-	} else if (token > Opt_last_int && token < Opt_last_string) {
-		dout("got string token %d val %s\n", token, argstr[0].from);
-	} else {
-		dout("got token %d\n", token);
-	}
+	ret = ceph_parse_option(ctx->opt, NULL, param);
+	if (ret != -ENOPARAM)
+		return ret;
 
-	switch (token) {
+	opt = fs_parse(NULL, &rbd_parameters, param, &result);
+	if (opt < 0)
+		return opt == -ENOPARAM ? -EINVAL : opt;
+
+	switch (opt) {
 	case Opt_queue_depth:
-		if (intval < 1) {
-			pr_err("queue_depth out of range\n");
-			return -EINVAL;
-		}
-		pctx->opts->queue_depth = intval;
+		if (result.uint_32 < 1)
+			goto out_of_range;
+		opts->queue_depth = result.uint_32;
 		break;
 	case Opt_alloc_size:
-		if (intval < SECTOR_SIZE) {
-			pr_err("alloc_size out of range\n");
-			return -EINVAL;
-		}
-		if (!is_power_of_2(intval)) {
-			pr_err("alloc_size must be a power of 2\n");
-			return -EINVAL;
-		}
-		pctx->opts->alloc_size = intval;
+		if (result.uint_32 < SECTOR_SIZE)
+			goto out_of_range;
+		if (!is_power_of_2(result.uint_32))
+			return invalf(NULL, "alloc_size must be a power of 2\n");
+		opts->alloc_size = result.uint_32;
 		break;
 	case Opt_lock_timeout:
 		/* 0 is "wait forever" (i.e. infinite timeout) */
-		if (intval < 0 || intval > INT_MAX / 1000) {
-			pr_err("lock_timeout out of range\n");
-			return -EINVAL;
-		}
-		pctx->opts->lock_timeout = msecs_to_jiffies(intval * 1000);
+		if (result.uint_32 > INT_MAX / 1000)
+			goto out_of_range;
+		opts->lock_timeout = msecs_to_jiffies(result.uint_32 * 1000);
 		break;
 	case Opt_pool_ns:
-		kfree(pctx->spec->pool_ns);
-		pctx->spec->pool_ns = match_strdup(argstr);
-		if (!pctx->spec->pool_ns)
-			return -ENOMEM;
+		kfree(spec->pool_ns);
+		spec->pool_ns = param->string;
+		param->string = NULL;
 		break;
 	case Opt_read_only:
-		pctx->opts->read_only = true;
+		opts->read_only = true;
 		break;
 	case Opt_read_write:
-		pctx->opts->read_only = false;
+		opts->read_only = false;
 		break;
 	case Opt_lock_on_read:
-		pctx->opts->lock_on_read = true;
+		opts->lock_on_read = true;
 		break;
 	case Opt_exclusive:
-		pctx->opts->exclusive = true;
+		opts->exclusive = true;
 		break;
 	case Opt_notrim:
-		pctx->opts->trim = false;
+		opts->trim = false;
 		break;
 	default:
-		/* libceph prints "bad option" msg */
 		return -EINVAL;
 	}
 
 	return 0;
+
+out_of_range:
+	return invalf(NULL, "rbd: %s out of range", param->key);
 }
 
 static char* obj_op_name(enum obj_operation_type op_type)
@@ -1001,11 +982,13 @@ static void rbd_put_client(struct rbd_client *rbdc)
  * not exist create it.  Either way, ceph_opts is consumed by this
  * function.
  */
-static struct rbd_client *rbd_get_client(struct ceph_options *ceph_opts)
+static struct rbd_client *rbd_get_client(struct ceph_config_context *ctx)
 {
 	struct rbd_client *rbdc;
+	struct ceph_options *ceph_opts = ctx->opt;
 	int ret;
 
+	ctx->opt = NULL;
 	mutex_lock(&client_mutex);
 	rbdc = rbd_client_find(ceph_opts);
 	if (rbdc) {
@@ -6438,22 +6421,85 @@ static inline size_t next_token(const char **buf)
  *
  * Note: uses GFP_KERNEL for allocation.
  */
-static inline char *dup_token(const char **buf, size_t *lenp)
+static inline char *dup_token(const char **buf)
 {
 	char *dup;
 	size_t len;
 
 	len = next_token(buf);
-	dup = kmemdup(*buf, len + 1, GFP_KERNEL);
-	if (!dup)
-		return NULL;
-	*(dup + len) = '\0';
-	*buf += len;
-
-	if (lenp)
-		*lenp = len;
-
+	dup = kmemdup_nul(*buf, len, GFP_KERNEL);
+	if (dup)
+		*buf += len;
 	return dup;
+}
+
+/*
+ * Parse the parameter string.
+ */
+static int rbd_parse_monolithic(struct ceph_config_context *ctx, size_t len,
+				const char *data)
+{
+	const char *sep, *key, *eq, *value;
+	char key_buf[32];
+	size_t size, klen;
+	int ret = 0;
+
+	struct fs_parameter param = {
+		.key	= key_buf,
+		.type	= fs_value_is_string,
+	};
+
+	do {
+		key = data;
+		sep = strchr(data, ',');
+		if (sep) {
+			data = sep + 1;
+			size = sep - key;
+			len -= size + 1;
+		} else {
+			data = NULL;
+			size = len;
+			len -= size;
+		}
+
+		if (!size)
+			continue;
+
+		eq = memchr(key, '=', size);
+		if (eq) {
+			klen = eq - key;
+			if (klen == 0)
+				return invalf(NULL, "Invalid option \"\"");
+			value = eq + 1;
+			param.size = size - klen - 1;
+		} else {
+			klen = size;
+			value = NULL;
+			param.size = 0;
+		}
+
+		if (klen >= sizeof(key_buf))
+			return invalf(NULL, "Unknown option %*.*s",
+				      (int)klen, (int)klen, key);
+		memcpy(key_buf, key, klen);
+		key_buf[klen] = 0;
+
+		if (param.size > 0) {
+			param.string = kmemdup_nul(value, param.size,
+						   GFP_KERNEL);
+			if (!param.string)
+				return -ENOMEM;
+		} else {
+			param.string = NULL;
+		}
+
+		ret = rbd_parse_param(ctx, &param);
+		kfree(param.string);
+		if (ret < 0)
+			break;
+	} while (data);
+
+	return ret;
 }
 
 /*
@@ -6497,18 +6543,11 @@ static inline char *dup_token(const char **buf, size_t *lenp)
  *      created.  The image head is used if no snapshot id is
  *      provided.  Snapshot mappings are always read-only.
  */
-static int rbd_add_parse_args(const char *buf,
-				struct ceph_options **ceph_opts,
-				struct rbd_options **opts,
-				struct rbd_spec **rbd_spec)
+static int rbd_add_parse_args(const char *buf, struct ceph_config_context *ctx)
 {
-	size_t len;
-	char *options;
-	const char *mon_addrs;
+	const char *options, *mon_addrs;
+	size_t len, options_len, mon_addrs_size;
 	char *snap_name;
-	size_t mon_addrs_size;
-	struct parse_rbd_opts_ctx pctx = { 0 };
-	struct ceph_options *copts;
 	int ret;
 
 	/* The first four tokens are required */
@@ -6519,36 +6558,35 @@ static int rbd_add_parse_args(const char *buf,
 		return -EINVAL;
 	}
 	mon_addrs = buf;
-	mon_addrs_size = len + 1;
+	mon_addrs_size = len;
 	buf += len;
 
-	ret = -EINVAL;
-	options = dup_token(&buf, NULL);
-	if (!options)
-		return -ENOMEM;
-	if (!*options) {
+	options_len = next_token(&buf);
+	if (options_len == 0) {
 		rbd_warn(NULL, "no options provided");
-		goto out_err;
+		return -EINVAL;
 	}
+	options = buf;
+	buf += options_len;
 
-	pctx.spec = rbd_spec_alloc();
-	if (!pctx.spec)
-		goto out_mem;
+	ctx->rbd_spec = rbd_spec_alloc();
+	if (!ctx->rbd_spec)
+		return -ENOMEM;
 
-	pctx.spec->pool_name = dup_token(&buf, NULL);
-	if (!pctx.spec->pool_name)
-		goto out_mem;
-	if (!*pctx.spec->pool_name) {
+	ctx->rbd_spec->pool_name = dup_token(&buf);
+	if (!ctx->rbd_spec->pool_name)
+		return -ENOMEM;
+	if (!*ctx->rbd_spec->pool_name) {
 		rbd_warn(NULL, "no pool name provided");
-		goto out_err;
+		return -EINVAL;
 	}
 
-	pctx.spec->image_name = dup_token(&buf, NULL);
-	if (!pctx.spec->image_name)
-		goto out_mem;
-	if (!*pctx.spec->image_name) {
+	ctx->rbd_spec->image_name = dup_token(&buf);
+	if (!ctx->rbd_spec->image_name)
+		return -ENOMEM;
+	if (!*ctx->rbd_spec->image_name) {
 		rbd_warn(NULL, "no image name provided");
-		goto out_err;
+		return -EINVAL;
 	}
 
 	/*
@@ -6560,51 +6598,37 @@ static int rbd_add_parse_args(const char *buf,
 		buf = RBD_SNAP_HEAD_NAME; /* No snapshot supplied */
 		len = sizeof (RBD_SNAP_HEAD_NAME) - 1;
 	} else if (len > RBD_MAX_SNAP_NAME_LEN) {
-		ret = -ENAMETOOLONG;
-		goto out_err;
+		return -ENAMETOOLONG;
 	}
-	snap_name = kmemdup(buf, len + 1, GFP_KERNEL);
+
+	snap_name = kmemdup_nul(buf, len, GFP_KERNEL);
 	if (!snap_name)
-		goto out_mem;
-	*(snap_name + len) = '\0';
-	pctx.spec->snap_name = snap_name;
+		return -ENOMEM;
+	ctx->rbd_spec->snap_name = snap_name;
 
 	/* Initialize all rbd options to the defaults */
 
-	pctx.opts = kzalloc(sizeof(*pctx.opts), GFP_KERNEL);
-	if (!pctx.opts)
-		goto out_mem;
+	ctx->rbd_opts = kzalloc(sizeof(*ctx->rbd_opts), GFP_KERNEL);
+	if (!ctx->rbd_opts)
+		return -ENOMEM;
 
-	pctx.opts->read_only = RBD_READ_ONLY_DEFAULT;
-	pctx.opts->queue_depth = RBD_QUEUE_DEPTH_DEFAULT;
-	pctx.opts->alloc_size = RBD_ALLOC_SIZE_DEFAULT;
-	pctx.opts->lock_timeout = RBD_LOCK_TIMEOUT_DEFAULT;
-	pctx.opts->lock_on_read = RBD_LOCK_ON_READ_DEFAULT;
-	pctx.opts->exclusive = RBD_EXCLUSIVE_DEFAULT;
-	pctx.opts->trim = RBD_TRIM_DEFAULT;
+	ctx->rbd_opts->read_only = RBD_READ_ONLY_DEFAULT;
+	ctx->rbd_opts->queue_depth = RBD_QUEUE_DEPTH_DEFAULT;
+	ctx->rbd_opts->alloc_size = RBD_ALLOC_SIZE_DEFAULT;
+	ctx->rbd_opts->lock_timeout = RBD_LOCK_TIMEOUT_DEFAULT;
+	ctx->rbd_opts->lock_on_read = RBD_LOCK_ON_READ_DEFAULT;
+	ctx->rbd_opts->exclusive = RBD_EXCLUSIVE_DEFAULT;
+	ctx->rbd_opts->trim = RBD_TRIM_DEFAULT;
 
-	copts = ceph_parse_options(options, mon_addrs,
-				   mon_addrs + mon_addrs_size - 1,
-				   parse_rbd_opts_token, &pctx);
-	if (IS_ERR(copts)) {
-		ret = PTR_ERR(copts);
-		goto out_err;
-	}
-	kfree(options);
+	ctx->opt = ceph_alloc_options();
+	if (!ctx->opt)
+		return -ENOMEM;
 
-	*ceph_opts = copts;
-	*opts = pctx.opts;
-	*rbd_spec = pctx.spec;
+	ret = ceph_parse_server_specs(ctx->opt, NULL, mon_addrs, mon_addrs_size);
+	if (ret < 0)
+		return ret;
 
-	return 0;
-out_mem:
-	ret = -ENOMEM;
-out_err:
-	kfree(pctx.opts);
-	rbd_spec_put(pctx.spec);
-	kfree(options);
-
-	return ret;
+	return rbd_parse_monolithic(ctx, options_len, options);
 }
 
 static void rbd_dev_image_unlock(struct rbd_device *rbd_dev)
@@ -7037,10 +7061,8 @@ static ssize_t do_rbd_add(struct bus_type *bus,
 			  const char *buf,
 			  size_t count)
 {
+	struct ceph_config_context ctx = {};
 	struct rbd_device *rbd_dev = NULL;
-	struct ceph_options *ceph_opts = NULL;
-	struct rbd_options *rbd_opts = NULL;
-	struct rbd_spec *spec = NULL;
 	struct rbd_client *rbdc;
 	int rc;
 
@@ -7048,33 +7070,34 @@ static ssize_t do_rbd_add(struct bus_type *bus,
 		return -ENODEV;
 
 	/* parse add command */
-	rc = rbd_add_parse_args(buf, &ceph_opts, &rbd_opts, &spec);
+	rc = rbd_add_parse_args(buf, &ctx);
 	if (rc < 0)
 		goto out;
 
-	rbdc = rbd_get_client(ceph_opts);
+	rbdc = rbd_get_client(&ctx);
 	if (IS_ERR(rbdc)) {
 		rc = PTR_ERR(rbdc);
 		goto err_out_args;
 	}
 
 	/* pick the pool */
-	rc = ceph_pg_poolid_by_name(rbdc->client->osdc.osdmap, spec->pool_name);
+	rc = ceph_pg_poolid_by_name(rbdc->client->osdc.osdmap,
+				    ctx.rbd_spec->pool_name);
 	if (rc < 0) {
 		if (rc == -ENOENT)
-			pr_info("pool %s does not exist\n", spec->pool_name);
+			pr_info("pool %s does not exist\n", ctx.rbd_spec->pool_name);
 		goto err_out_client;
 	}
-	spec->pool_id = (u64)rc;
+	ctx.rbd_spec->pool_id = (u64)rc;
 
-	rbd_dev = rbd_dev_create(rbdc, spec, rbd_opts);
+	rbd_dev = rbd_dev_create(rbdc, ctx.rbd_spec, ctx.rbd_opts);
 	if (!rbd_dev) {
 		rc = -ENOMEM;
 		goto err_out_client;
 	}
 	rbdc = NULL;		/* rbd_dev now owns this */
-	spec = NULL;		/* rbd_dev now owns this */
-	rbd_opts = NULL;	/* rbd_dev now owns this */
+	ctx.rbd_spec = NULL;	/* rbd_dev now owns this */
+	ctx.rbd_opts = NULL;	/* rbd_dev now owns this */
 
 	rbd_dev->config_info = kstrdup(buf, GFP_KERNEL);
 	if (!rbd_dev->config_info) {
@@ -7139,8 +7162,9 @@ err_out_rbd_dev:
 err_out_client:
 	rbd_put_client(rbdc);
 err_out_args:
-	rbd_spec_put(spec);
-	kfree(rbd_opts);
+	rbd_spec_put(ctx.rbd_spec);
+	kfree(ctx.rbd_opts);
+	ceph_destroy_options(ctx.opt);
 	goto out;
 }
 

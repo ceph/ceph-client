@@ -66,6 +66,13 @@ struct ceph_options {
 	struct ceph_crypto_key *key;
 };
 
+struct ceph_config_context {
+	struct ceph_options		*opt;
+	struct ceph_mount_options	*mount_options;
+	struct rbd_spec			*rbd_spec;
+	struct rbd_options		*rbd_opts;
+};
+
 /*
  * defaults
  */
@@ -280,10 +287,12 @@ extern const char *ceph_msg_type_name(int type);
 extern int ceph_check_fsid(struct ceph_client *client, struct ceph_fsid *fsid);
 extern void *ceph_kvmalloc(size_t size, gfp_t flags);
 
-extern struct ceph_options *ceph_parse_options(char *options,
-			      const char *dev_name, const char *dev_name_end,
-			      int (*parse_extra_token)(char *c, void *private),
-			      void *private);
+struct fs_parameter;
+extern struct ceph_options *ceph_alloc_options(void);
+extern int ceph_parse_server_specs(struct ceph_options *opt, struct fs_context *fc,
+				   const char *data, size_t size);
+extern int ceph_parse_option(struct ceph_options *opt, struct fs_context *fc,
+			     struct fs_parameter *param);
 int ceph_print_client_options(struct seq_file *m, struct ceph_client *client,
 			      bool show_all);
 extern void ceph_destroy_options(struct ceph_options *opt);
