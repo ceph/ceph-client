@@ -1036,6 +1036,47 @@ static int ceph_link(struct dentry *old_dentry, struct inode *dir,
 	return err;
 }
 
+static void ceph_async_unlink_cb(struct ceph_mds_client *mdsc,
+				 struct ceph_mds_request *req)
+{
+	/* If op failed, set error on parent directory */
+	mapping_set_error(req->r_parent->i_mapping, req->r_err);
+	if (req->r_err)
+		printk("%s: req->r_err = %d\n", __func__, req->r_err);
+	ceph_put_cap_refs(ceph_inode(req->r_parent),
+			  CEPH_CAP_FILE_EXCL | CEPH_CAP_DIR_UNLINK);
+	iput(req->r_old_inode);
+}
+
+static bool get_caps_for_async_unlink(struct inode *dir, struct dentry *dentry)
+{
+	struct ceph_inode_info *ci = ceph_inode(dir);
+	struct ceph_dentry_info *di;
+	int ret, want, got;
+
+	want = CEPH_CAP_FILE_EXCL | CEPH_CAP_DIR_UNLINK;
+	ret = ceph_try_get_caps(dir, 0, want, true, &got);
+	dout("Fx on %p ret=%d got=%d\n", dir, ret, got);
+	if (ret != 1 || got != want)
+		return false;
+
+        spin_lock(&dentry->d_lock);
+        di = ceph_dentry(dentry);
+	/* - We are holding CEPH_CAP_FILE_EXCL, which implies
+	 * CEPH_CAP_FILE_SHARED.
+	 * - Only support async unlink for primary linkage */
+	if (atomic_read(&ci->i_shared_gen) != di->lease_shared_gen ||
+	    !(di->flags & CEPH_DENTRY_PRIMARY_LINK))
+		ret = 0;
+        spin_unlock(&dentry->d_lock);
+
+	if (!ret) {
+		ceph_put_cap_refs(ci, got);
+		return false;
+	}
+	return true;
+}
+
 /*
  * rmdir and unlink are differ only by the metadata op code
  */
@@ -1067,13 +1108,33 @@ static int ceph_unlink(struct inode *dir, struct dentry *dentry)
 	req->r_dentry = dget(dentry);
 	req->r_num_caps = 2;
 	req->r_parent = dir;
-	set_bit(CEPH_MDS_R_PARENT_LOCKED, &req->r_req_flags);
 	req->r_dentry_drop = CEPH_CAP_FILE_SHARED;
 	req->r_dentry_unless = CEPH_CAP_FILE_EXCL;
 	req->r_inode_drop = ceph_drop_caps_for_unlink(inode);
-	err = ceph_mdsc_do_request(mdsc, dir, req);
-	if (!err && !req->r_reply_info.head->is_dentry)
-		d_delete(dentry);
+
+	if (enable_async_dirops && op == CEPH_MDS_OP_UNLINK &&
+	    get_caps_for_async_unlink(dir, dentry)) {
+		dout("ceph: Async unlink on %lu/%.*s", dir->i_ino,
+		     dentry->d_name.len, dentry->d_name.name);
+		req->r_callback = ceph_async_unlink_cb;
+		req->r_old_inode = d_inode(dentry);
+		ihold(req->r_old_inode);
+		err = ceph_mdsc_submit_request(mdsc, dir, req);
+		if (!err) {
+			/*
+			 * We have enough caps, so we assume that the unlink
+			 * will succeed. Fix up the target inode and dcache.
+			 */
+			drop_nlink(inode);
+			d_delete(dentry);
+		}
+	} else {
+		set_bit(CEPH_MDS_R_PARENT_LOCKED, &req->r_req_flags);
+		err = ceph_mdsc_do_request(mdsc, dir, req);
+		if (!err && !req->r_reply_info.head->is_dentry)
+			d_delete(dentry);
+	}
+
 	ceph_mdsc_put_request(req);
 out:
 	return err;
@@ -1411,6 +1472,7 @@ void ceph_invalidate_dentry_lease(struct dentry *dentry)
 	spin_lock(&dentry->d_lock);
 	di->time = jiffies;
 	di->lease_shared_gen = 0;
+	di->flags &= ~CEPH_DENTRY_PRIMARY_LINK;
 	__dentry_lease_unlist(di);
 	spin_unlock(&dentry->d_lock);
 }

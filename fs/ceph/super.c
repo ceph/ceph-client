@@ -1324,6 +1324,10 @@ static void __exit exit_ceph(void)
 	destroy_caches();
 }
 
+bool enable_async_dirops;
+module_param(enable_async_dirops, bool, 0644);
+MODULE_PARM_DESC(enable_async_dirops, "Asynchronous directory operations enabled");
+
 module_init(init_ceph);
 module_exit(exit_ceph);
 
