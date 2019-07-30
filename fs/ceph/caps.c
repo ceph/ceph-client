@@ -13,6 +13,7 @@
 #include "super.h"
 #include "mds_client.h"
 #include "cache.h"
+#include "trace.h"
 #include <linux/ceph/decode.h>
 #include <linux/ceph/messenger.h>
 
@@ -756,6 +757,8 @@ void ceph_add_cap(struct inode *inode,
 
 	if (fmode >= 0)
 		__ceph_get_fmode(ci, fmode);
+
+	trace_ceph_add_cap(cap);
 }
 
 /*
@@ -1074,6 +1077,7 @@ void __ceph_remove_cap(struct ceph_cap *cap, bool queue_release)
 	int removed = 0;
 
 	dout("__ceph_remove_cap %p from %p\n", cap, &ci->vfs_inode);
+	trace_ceph_remove_cap(cap);
 
 	/* remove from inode's cap rbtree, and clear auth cap */
 	rb_erase(&cap->ci_node, &ci->i_caps);
@@ -3382,7 +3386,10 @@ static void handle_cap_grant(struct inode *inode,
 					      * pending revocation */
 		wake = true;
 	}
+
 	BUG_ON(cap->issued & ~cap->implemented);
+
+	trace_ceph_handle_cap_grant(cap);
 
 	if (extra_info->inline_version > 0 &&
 	    extra_info->inline_version >= ci->i_inline_version) {
