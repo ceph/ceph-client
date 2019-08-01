@@ -9,6 +9,7 @@
 
 #include "super.h"
 #include "mds_client.h"
+#include "trace.h"
 
 /*
  * Directory operations: readdir, lookup, create, link, unlink,
@@ -1116,6 +1117,7 @@ static int ceph_unlink(struct inode *dir, struct dentry *dentry)
 	    get_caps_for_async_unlink(dir, dentry)) {
 		dout("ceph: Async unlink on %lu/%.*s", dir->i_ino,
 		     dentry->d_name.len, dentry->d_name.name);
+		trace_ceph_async_unlink(dir, dentry);
 		req->r_callback = ceph_async_unlink_cb;
 		req->r_old_inode = d_inode(dentry);
 		ihold(req->r_old_inode);
@@ -1129,6 +1131,7 @@ static int ceph_unlink(struct inode *dir, struct dentry *dentry)
 			d_delete(dentry);
 		}
 	} else {
+		trace_ceph_sync_unlink(dir, dentry);
 		set_bit(CEPH_MDS_R_PARENT_LOCKED, &req->r_req_flags);
 		err = ceph_mdsc_do_request(mdsc, dir, req);
 		if (!err && !req->r_reply_info.head->is_dentry)

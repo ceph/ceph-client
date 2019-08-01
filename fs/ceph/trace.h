@@ -49,6 +49,37 @@ DEFINE_CEPH_CAP_EVENT(add_cap);
 DEFINE_CEPH_CAP_EVENT(remove_cap);
 DEFINE_CEPH_CAP_EVENT(handle_cap_grant);
 
+DECLARE_EVENT_CLASS(ceph_directory_class,
+		TP_PROTO(
+			const struct inode *dir,
+			const struct dentry *dentry
+		),
+		TP_ARGS(dir, dentry),
+		TP_STRUCT__entry(
+			__field(u64, ino)
+			__field(u64, snap)
+			__string(name, dentry->d_name.name)
+		),
+		TP_fast_assign(
+			__entry->ino = ceph_inode(dir)->i_vino.ino;
+			__entry->snap = ceph_inode(dir)->i_vino.snap;
+			__assign_str(name, dentry->d_name.name);
+		),
+		TP_printk(
+			"name=%s:0x%llx/%s",
+			show_snapid(__entry->snap), __entry->ino,
+			__get_str(name)
+		)
+);
+
+#define DEFINE_CEPH_DIRECTORY_EVENT(name)				\
+DEFINE_EVENT(ceph_directory_class, ceph_##name,				\
+	TP_PROTO(const struct inode *dir, const struct dentry *dentry),	\
+	TP_ARGS(dir, dentry))
+
+DEFINE_CEPH_DIRECTORY_EVENT(async_unlink);
+DEFINE_CEPH_DIRECTORY_EVENT(sync_unlink);
+
 #endif /* _CEPH_TRACE_H */
 
 #define TRACE_INCLUDE_PATH .
