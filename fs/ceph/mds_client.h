@@ -23,8 +23,10 @@ enum ceph_feature_type {
 	CEPHFS_FEATURE_RECLAIM_CLIENT,
 	CEPHFS_FEATURE_LAZY_CAP_WANTED,
 	CEPHFS_FEATURE_MULTI_RECONNECT,
+	CEPHFS_FEATURE_NAUTILUS = CEPHFS_FEATURE_MULTI_RECONNECT,
+	CEPHFS_FEATURE_OCTOPUS,
 
-	CEPHFS_FEATURE_MAX = CEPHFS_FEATURE_MULTI_RECONNECT,
+	CEPHFS_FEATURE_MAX = CEPHFS_FEATURE_OCTOPUS,
 };
 
 /*
@@ -201,6 +203,7 @@ struct ceph_mds_session {
 
 	struct list_head  s_waiting;  /* waiting requests */
 	struct list_head  s_unsafe;   /* unsafe requests */
+	struct xarray	  s_delegated_inos;
 };
 
 /*
