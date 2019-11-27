@@ -2620,14 +2620,16 @@ static int __prepare_send_request(struct ceph_mds_client *mdsc,
 		flags |= CEPH_MDS_FLAG_REPLAY;
 	if (req->r_parent)
 		flags |= CEPH_MDS_FLAG_WANT_DENTRY;
+	if (test_bit(CEPH_MDS_R_DELEG_INO, &req->r_req_flags)) {
+		rhead->ino = cpu_to_le64(req->r_deleg_ino);
+		flags |= CEPH_MDS_FLAG_ASYNC;
+	} else {
+		rhead->ino = 0;
+	}
+
 	rhead->flags = cpu_to_le32(flags);
 	rhead->num_fwd = req->r_num_fwd;
 	rhead->num_retry = req->r_attempts - 1;
-	if (test_bit(CEPH_MDS_R_DELEG_INO, &req->r_req_flags))
-		rhead->ino = cpu_to_le64(req->r_deleg_ino);
-	else
-		rhead->ino = 0;
-
 	dout(" r_parent = %p\n", req->r_parent);
 	return 0;
 }

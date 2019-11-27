@@ -136,7 +136,6 @@ struct ceph_fs_client {
 #endif
 };
 
-
 /*
  * File i/o capability.  This tracks shared state with the metadata
  * server that allows us to cache or writeback attributes or to read
