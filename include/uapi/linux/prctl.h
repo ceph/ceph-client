@@ -149,4 +149,6 @@
 
 #define PR_GET_TID_ADDRESS	40
 
+#define PR_SET_THP_DISABLE	41
+
 #endif /* _LINUX_PRCTL_H */
