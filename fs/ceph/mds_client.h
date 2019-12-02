@@ -234,6 +234,7 @@ struct ceph_mds_request {
 	struct rb_node r_node;
 	struct ceph_mds_client *r_mdsc;
 
+	struct kref       r_kref;
 	int r_op;                    /* mds op code */
 
 	/* operation on what? */
@@ -304,7 +305,6 @@ struct ceph_mds_request {
 	int               r_resend_mds; /* mds to resend to next, if any*/
 	u32               r_sent_on_mseq; /* cap mseq request was sent at*/
 
-	struct kref       r_kref;
 	struct list_head  r_wait;
 	struct completion r_completion;
 	struct completion r_safe_completion;
