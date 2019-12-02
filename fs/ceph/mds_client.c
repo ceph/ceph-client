@@ -2623,7 +2623,10 @@ static int __prepare_send_request(struct ceph_mds_client *mdsc,
 	rhead->flags = cpu_to_le32(flags);
 	rhead->num_fwd = req->r_num_fwd;
 	rhead->num_retry = req->r_attempts - 1;
-	rhead->ino = 0;
+	if (test_bit(CEPH_MDS_R_DELEG_INO, &req->r_req_flags))
+		rhead->ino = cpu_to_le64(req->r_deleg_ino);
+	else
+		rhead->ino = 0;
 
 	dout(" r_parent = %p\n", req->r_parent);
 	return 0;
@@ -2734,6 +2737,20 @@ static void __do_request(struct ceph_mds_client *mdsc,
 		}
 		list_add(&req->r_wait, &session->s_waiting);
 		goto out_session;
+	}
+
+	if (test_bit(CEPH_MDS_R_DELEG_INO, &req->r_req_flags) &&
+	    !req->r_deleg_ino) {
+		req->r_deleg_ino = get_delegated_ino(req->r_session);
+
+		if (!req->r_deleg_ino) {
+			/*
+			 * If we can't get a deleg ino, exit with -ECHILD,
+			 * so the caller can reissue a sync request
+			 */
+			err = -ECHILD;
+			goto out_session;
+		}
 	}
 
 	/* send request */

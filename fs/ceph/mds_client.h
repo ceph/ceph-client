@@ -258,6 +258,7 @@ struct ceph_mds_request {
 #define CEPH_MDS_R_GOT_RESULT		(5) /* got a result */
 #define CEPH_MDS_R_DID_PREPOPULATE	(6) /* prepopulated readdir */
 #define CEPH_MDS_R_PARENT_LOCKED	(7) /* is r_parent->i_rwsem wlocked? */
+#define CEPH_MDS_R_DELEG_INO		(8) /* attempt to get r_deleg_ino */
 	unsigned long	r_req_flags;
 
 	struct mutex r_fill_mutex;
@@ -307,6 +308,7 @@ struct ceph_mds_request {
 	int               r_num_fwd;    /* number of forward attempts */
 	int               r_resend_mds; /* mds to resend to next, if any*/
 	u32               r_sent_on_mseq; /* cap mseq request was sent at*/
+	unsigned long	  r_deleg_ino;
 
 	struct list_head  r_wait;
 	struct completion r_completion;
