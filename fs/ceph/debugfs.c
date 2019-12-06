@@ -126,11 +126,27 @@ static int mdsc_show(struct seq_file *s, void *p)
 
 static int caps_show_cb(struct inode *inode, struct ceph_cap *cap, void *p)
 {
+	int inuse = 0;
 	struct seq_file *s = p;
+	struct ceph_inode_info *ci = ceph_inode(inode);
 
-	seq_printf(s, "0x%-17lx%-17s%-17s\n", inode->i_ino,
-		   ceph_cap_string(cap->issued),
-		   ceph_cap_string(cap->implemented));
+	if (ci->i_pin_ref)
+		inuse |= CEPH_CAP_PIN;
+	if (ci->i_rd_ref)
+		inuse |= CEPH_CAP_FILE_RD;
+	if (ci->i_rdcache_ref)
+		inuse |= CEPH_CAP_FILE_CACHE;
+	if (ci->i_fx_ref)
+		inuse |= CEPH_CAP_FILE_EXCL;
+	if (ci->i_wb_ref)
+		inuse |= CEPH_CAP_FILE_BUFFER;
+	if (ci->i_wr_ref)
+		inuse |= CEPH_CAP_FILE_WR;
+
+	seq_printf(s, "(%c)0x%-14lx0x%-17llx%-17s%-17s%-17s\n",
+		   S_ISDIR(inode->i_mode) ? 'd' : 'f', inode->i_ino,
+		   cap->cap_id, ceph_cap_string(cap->issued),
+		   ceph_cap_string(cap->implemented), ceph_cap_string(inuse));
 	return 0;
 }
 
@@ -148,8 +164,8 @@ static int caps_show(struct seq_file *s, void *p)
 		   "reserved\t%d\n"
 		   "min\t\t%d\n\n",
 		   total, avail, used, reserved, min);
-	seq_printf(s, "ino                issued           implemented\n");
-	seq_printf(s, "-----------------------------------------------\n");
+	seq_printf(s, "ino                cap_id             issued           implemented      in use\n");
+	seq_printf(s, "----------------------------------------------------------------------------------------\n");
 
 	mutex_lock(&mdsc->mutex);
 	for (i = 0; i < mdsc->max_sessions; i++) {
