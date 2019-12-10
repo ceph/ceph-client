@@ -16,6 +16,7 @@
 #include "mds_client.h"
 #include "cache.h"
 #include "io.h"
+#include "trace.h"
 
 static __le32 ceph_flags_sys2wire(u32 flags)
 {
@@ -653,6 +654,7 @@ retry:
 				/* set up inode, dentry and return */
 				err = ceph_finish_async_open(dir, dentry, file,
 							mode, req, &as_ctx);
+				trace_ceph_async_create(dir, dentry);
 				goto out_req;
 			case -ECHILD:
 				/* do a sync create */
@@ -707,6 +709,7 @@ retry:
 out_fmode:
 	if (!req->r_err && req->r_target_inode)
 		ceph_put_fmode(ceph_inode(req->r_target_inode), req->r_fmode);
+	trace_ceph_sync_create(dir, dentry);
 out_req:
 	ceph_mdsc_put_request(req);
 out_ctx:

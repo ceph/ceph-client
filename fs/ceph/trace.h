@@ -56,19 +56,21 @@ DECLARE_EVENT_CLASS(ceph_directory_class,
 		),
 		TP_ARGS(dir, dentry),
 		TP_STRUCT__entry(
-			__field(u64, ino)
+			__field(u64, pino)
 			__field(u64, snap)
+			__field(u64, ino)
 			__string(name, dentry->d_name.name)
 		),
 		TP_fast_assign(
-			__entry->ino = ceph_inode(dir)->i_vino.ino;
+			__entry->pino = ceph_inode(dir)->i_vino.ino;
 			__entry->snap = ceph_inode(dir)->i_vino.snap;
+			__entry->ino = d_inode(dentry) ? ceph_inode(d_inode(dentry))->i_vino.ino : 0;
 			__assign_str(name, dentry->d_name.name);
 		),
 		TP_printk(
-			"name=%s:0x%llx/%s",
-			show_snapid(__entry->snap), __entry->ino,
-			__get_str(name)
+			"name=%s:0x%llx/%s(0x%llx)",
+			show_snapid(__entry->snap), __entry->pino,
+			__get_str(name), __entry->ino
 		)
 );
 
@@ -79,6 +81,8 @@ DEFINE_EVENT(ceph_directory_class, ceph_##name,				\
 
 DEFINE_CEPH_DIRECTORY_EVENT(async_unlink);
 DEFINE_CEPH_DIRECTORY_EVENT(sync_unlink);
+DEFINE_CEPH_DIRECTORY_EVENT(async_create);
+DEFINE_CEPH_DIRECTORY_EVENT(sync_create);
 
 #endif /* _CEPH_TRACE_H */
 
