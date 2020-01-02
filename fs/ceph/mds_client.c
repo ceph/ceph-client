@@ -897,7 +897,7 @@ static int __choose_mds(struct ceph_mds_client *mdsc,
 	if (req->r_resend_mds >= 0 &&
 	    (__have_session(mdsc, req->r_resend_mds) ||
 	     ceph_mdsmap_get_state(mdsc->mdsmap, req->r_resend_mds) > 0)) {
-		dout("choose_mds using resend_mds mds%d\n",
+		dout("%s using resend_mds mds%d\n", __func__,
 		     req->r_resend_mds);
 		return req->r_resend_mds;
 	}
@@ -915,7 +915,7 @@ static int __choose_mds(struct ceph_mds_client *mdsc,
 			rcu_read_lock();
 			inode = get_nonsnap_parent(req->r_dentry);
 			rcu_read_unlock();
-			dout("__choose_mds using snapdir's parent %p\n", inode);
+			dout("%s using snapdir's parent %p\n", __func__, inode);
 		}
 	} else if (req->r_dentry) {
 		/* ignore race with rename; old or new d_parent is okay */
@@ -935,7 +935,7 @@ static int __choose_mds(struct ceph_mds_client *mdsc,
 			/* direct snapped/virtual snapdir requests
 			 * based on parent dir inode */
 			inode = get_nonsnap_parent(parent);
-			dout("__choose_mds using nonsnap parent %p\n", inode);
+			dout("%s using nonsnap parent %p\n", __func__, inode);
 		} else {
 			/* dentry target */
 			inode = d_inode(req->r_dentry);
@@ -951,8 +951,8 @@ static int __choose_mds(struct ceph_mds_client *mdsc,
 		rcu_read_unlock();
 	}
 
-	dout("__choose_mds %p is_hash=%d (%d) mode %d\n", inode, (int)is_hash,
-	     (int)hash, mode);
+	dout("%s %p is_hash=%d (0x%x) mode %d\n", __func__, inode, (int)is_hash,
+	     hash, mode);
 	if (!inode)
 		goto random;
 	ci = ceph_inode(inode);
@@ -970,11 +970,9 @@ static int __choose_mds(struct ceph_mds_client *mdsc,
 				get_random_bytes(&r, 1);
 				r %= frag.ndist;
 				mds = frag.dist[r];
-				dout("choose_mds %p %llx.%llx "
-				     "frag %u mds%d (%d/%d)\n",
-				     inode, ceph_vinop(inode),
-				     frag.frag, mds,
-				     (int)r, frag.ndist);
+				dout("%s %p %llx.%llx frag %u mds%d (%d/%d)\n",
+				     __func__, inode, ceph_vinop(inode),
+				     frag.frag, mds, (int)r, frag.ndist);
 				if (ceph_mdsmap_get_state(mdsc->mdsmap, mds) >=
 				    CEPH_MDS_STATE_ACTIVE &&
 				    !ceph_mdsmap_is_laggy(mdsc->mdsmap, mds))
@@ -987,9 +985,9 @@ static int __choose_mds(struct ceph_mds_client *mdsc,
 			if (frag.mds >= 0) {
 				/* choose auth mds */
 				mds = frag.mds;
-				dout("choose_mds %p %llx.%llx "
-				     "frag %u mds%d (auth)\n",
-				     inode, ceph_vinop(inode), frag.frag, mds);
+				dout("%s %p %llx.%llx frag %u mds%d (auth)\n",
+				     __func__, inode, ceph_vinop(inode),
+				     frag.frag, mds);
 				if (ceph_mdsmap_get_state(mdsc->mdsmap, mds) >=
 				    CEPH_MDS_STATE_ACTIVE) {
 					if (mode == USE_ANY_MDS &&
@@ -1014,7 +1012,7 @@ static int __choose_mds(struct ceph_mds_client *mdsc,
 		goto random;
 	}
 	mds = cap->session->s_mds;
-	dout("choose_mds %p %llx.%llx mds%d (%scap %p)\n",
+	dout("%s %p %llx.%llx mds%d (%scap %p)\n", __func__,
 	     inode, ceph_vinop(inode), mds,
 	     cap == ci->i_auth_cap ? "auth " : "", cap);
 	spin_unlock(&ci->i_ceph_lock);
@@ -1029,7 +1027,7 @@ random:
 		*random = true;
 
 	mds = ceph_mdsmap_get_random_mds(mdsc->mdsmap);
-	dout("choose_mds chose random mds%d\n", mds);
+	dout("%s chose random mds%d\n", __func__, mds);
 	return mds;
 }
 
