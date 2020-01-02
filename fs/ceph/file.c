@@ -430,6 +430,25 @@ out:
 	return err;
 }
 
+/* Clone the layout from a synchronous create, if the dir now has Dc caps */
+static void
+copy_file_layout(struct inode *dst, struct inode *src)
+{
+	struct ceph_inode_info *cdst = ceph_inode(dst);
+	struct ceph_inode_info *csrc = ceph_inode(src);
+
+	spin_lock(&cdst->i_ceph_lock);
+	if ((__ceph_caps_issued(cdst, NULL) & CEPH_CAP_DIR_CREATE) &&
+	    !ceph_file_layout_is_valid(&cdst->i_layout)) {
+		memcpy(&cdst->i_layout, &csrc->i_layout,
+			sizeof(cdst->i_layout));
+		rcu_assign_pointer(cdst->i_layout.pool_ns,
+				   ceph_try_get_string(csrc->i_layout.pool_ns));
+		cdst->i_max_size = csrc->i_max_size;
+		cdst->i_truncate_size = csrc->i_truncate_size;
+	}
+	spin_unlock(&cdst->i_ceph_lock);
+}
 
 /*
  * Do a lookup + open with a single request.  If we get a non-existent
@@ -518,7 +537,10 @@ int ceph_atomic_open(struct inode *dir, struct dentry *dentry,
 	} else {
 		dout("atomic_open finish_open on dn %p\n", dn);
 		if (req->r_op == CEPH_MDS_OP_CREATE && req->r_reply_info.has_create_ino) {
-			ceph_init_inode_acls(d_inode(dentry), &as_ctx);
+			struct inode *newino = d_inode(dentry);
+
+			copy_file_layout(dir, newino);
+			ceph_init_inode_acls(newino, &as_ctx);
 			file->f_mode |= FMODE_CREATED;
 		}
 		err = finish_open(file, dentry, ceph_open);

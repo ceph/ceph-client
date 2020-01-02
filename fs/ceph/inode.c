@@ -848,8 +848,8 @@ int ceph_fill_inode(struct inode *inode, struct page *locked_page,
 		ci->i_subdirs = le64_to_cpu(info->subdirs);
 	}
 
-	if (new_version ||
-	    (new_issued & (CEPH_CAP_ANY_FILE_RD | CEPH_CAP_ANY_FILE_WR))) {
+	if (!S_ISDIR(inode->i_mode) && (new_version ||
+	    (new_issued & (CEPH_CAP_ANY_FILE_RD | CEPH_CAP_ANY_FILE_WR)))) {
 		s64 old_pool = ci->i_layout.pool_id;
 		struct ceph_string *old_ns;
 

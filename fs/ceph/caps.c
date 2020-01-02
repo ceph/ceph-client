@@ -2847,7 +2847,7 @@ int ceph_get_caps(struct file *filp, int need, int want,
 			return ret;
 		}
 
-		if (S_ISREG(ci->vfs_inode.i_mode) &&
+		if (!S_ISDIR(ci->vfs_inode.i_mode) &&
 		    ci->i_inline_version != CEPH_INLINE_NONE &&
 		    (_got & (CEPH_CAP_FILE_CACHE|CEPH_CAP_FILE_LAZYIO)) &&
 		    i_size_read(inode) > 0) {
@@ -2944,9 +2944,17 @@ void ceph_put_cap_refs(struct ceph_inode_info *ci, int had)
 	if (had & CEPH_CAP_FILE_RD)
 		if (--ci->i_rd_ref == 0)
 			last++;
-	if (had & CEPH_CAP_FILE_CACHE)
-		if (--ci->i_rdcache_ref == 0)
+	if (had & CEPH_CAP_FILE_CACHE) {
+		if (--ci->i_rdcache_ref == 0) {
 			last++;
+			/* Zero out layout if we lost CREATE caps */
+			if (S_ISDIR(inode->i_mode) &&
+			    !(__ceph_caps_issued(ci, NULL) & CEPH_CAP_DIR_CREATE)) {
+				ceph_put_string(rcu_dereference_raw(ci->i_layout.pool_ns));
+				memset(&ci->i_layout, 0, sizeof(ci->i_layout));
+			}
+		}
+	}
 	if (had & CEPH_CAP_FILE_EXCL)
 		if (--ci->i_fx_ref == 0)
 			last++;
@@ -3264,7 +3272,8 @@ static void handle_cap_grant(struct inode *inode,
 		ci->i_subdirs = extra_info->nsubdirs;
 	}
 
-	if (newcaps & (CEPH_CAP_ANY_FILE_RD | CEPH_CAP_ANY_FILE_WR)) {
+	if (!S_ISDIR(inode->i_mode) &&
+	    (newcaps & (CEPH_CAP_ANY_FILE_RD | CEPH_CAP_ANY_FILE_WR))) {
 		/* file layout may have changed */
 		s64 old_pool = ci->i_layout.pool_id;
 		struct ceph_string *old_ns;
@@ -3336,6 +3345,13 @@ static void handle_cap_grant(struct inode *inode,
 		     ceph_cap_string(cap->issued),
 		     ceph_cap_string(newcaps),
 		     ceph_cap_string(revoking));
+
+		if (S_ISDIR(inode->i_mode) &&
+		    (revoking & CEPH_CAP_DIR_CREATE) && !ci->i_rdcache_ref) {
+			ceph_put_string(rcu_dereference_raw(ci->i_layout.pool_ns));
+			memset(&ci->i_layout, 0, sizeof(ci->i_layout));
+		}
+
 		if (S_ISREG(inode->i_mode) &&
 		    (revoking & used & CEPH_CAP_FILE_BUFFER))
 			writeback = true;  /* initiate writeback; will delay ack */
