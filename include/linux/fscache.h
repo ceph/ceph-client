@@ -37,6 +37,7 @@ struct pagevec;
 struct fscache_cache_tag;
 struct fscache_cookie;
 struct fscache_netfs;
+struct netfs_read_request;
 
 typedef void (*fscache_rw_complete_t)(struct page *page,
 				      void *context,
@@ -217,6 +218,7 @@ extern void __fscache_readpages_cancel(struct fscache_cookie *cookie,
 extern void __fscache_disable_cookie(struct fscache_cookie *, const void *, bool);
 extern void __fscache_enable_cookie(struct fscache_cookie *, const void *, loff_t,
 				    bool (*)(void *), void *);
+extern int __fscache_begin_read_operation(struct netfs_read_request *, struct fscache_cookie *);
 
 /**
  * fscache_register_netfs - Register a filesystem as desiring caching services
@@ -829,6 +831,21 @@ void fscache_enable_cookie(struct fscache_cookie *cookie,
 	if (fscache_cookie_valid(cookie) && !fscache_cookie_enabled(cookie))
 		__fscache_enable_cookie(cookie, aux_data, object_size,
 					can_enable, data);
+}
+
+/**
+ * fscache_begin_read_operation - Begin a read operation for the netfs lib
+ * @rreq: The read request being undertaken
+ * @cookie: The cookie representing the cache object
+ */
+static inline
+int fscache_begin_read_operation(struct netfs_read_request *rreq,
+				 struct fscache_cookie *cookie)
+{
+	if (fscache_cookie_valid(cookie) && fscache_cookie_enabled(cookie))
+		return __fscache_begin_read_operation(rreq, cookie);
+	else
+		return -ENOBUFS;
 }
 
 #endif /* _LINUX_FSCACHE_H */
