@@ -1,0 +1,108 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Network filesystem support services.
+ *
+ * Copyright (C) 2021 Red Hat, Inc. All Rights Reserved.
+ * Written by David Howells (dhowells@redhat.com)
+ *
+ * See: Documentation/filesystems/caching/netfs-support.rst
+ *
+ * for a description of the network filesystem interface declared here.
+ */
+
+#ifndef _LINUX_NETFS_H
+#define _LINUX_NETFS_H
+
+#include <linux/workqueue.h>
+#include <linux/fs.h>
+
+/*
+ * Overload PG_private_2 to give us PG_fscache - this is used to indicate that
+ * a page is currently backed by a local disk cache
+ */
+#define PageFsCache(page)		PagePrivate2((page))
+#define SetPageFsCache(page)		SetPagePrivate2((page))
+#define ClearPageFsCache(page)		ClearPagePrivate2((page))
+#define TestSetPageFsCache(page)	TestSetPagePrivate2((page))
+#define TestClearPageFsCache(page)	TestClearPagePrivate2((page))
+
+enum netfs_read_source {
+	NETFS_FILL_WITH_ZEROES,
+	NETFS_DOWNLOAD_FROM_SERVER,
+	NETFS_READ_FROM_CACHE,
+	NETFS_INVALID_READ,
+} __mode(byte);
+
+/*
+ * Descriptor for a single component subrequest.
+ */
+struct netfs_read_subrequest {
+	struct netfs_read_request *rreq;	/* Supervising read request */
+	struct list_head	rreq_link;	/* Link in rreq->subrequests */
+	loff_t			start;		/* Where to start the I/O */
+	size_t			len;		/* Size of the I/O */
+	size_t			transferred;	/* Amount of data transferred */
+	refcount_t		usage;
+	short			error;		/* 0 or error that occurred */
+	unsigned short		debug_index;	/* Index in list (for debugging output) */
+	enum netfs_read_source	source;		/* Where to read from */
+	unsigned long		flags;
+#define NETFS_SREQ_WRITE_TO_CACHE	0	/* Set if should write to cache */
+#define NETFS_SREQ_CLEAR_TAIL		1	/* Set if the rest of the read should be cleared */
+#define NETFS_SREQ_SHORT_READ		2	/* Set if there was a short read from the cache */
+#define NETFS_SREQ_SEEK_DATA_READ	3	/* Set if ->read() should SEEK_DATA first */
+#define NETFS_SREQ_NO_PROGRESS		4	/* Set if we didn't manage to read any data */
+};
+
+/*
+ * Descriptor for a read helper request.  This is used to make multiple I/O
+ * requests on a variety of sources and then stitch the result together.
+ */
+struct netfs_read_request {
+	struct work_struct	work;
+	struct inode		*inode;		/* The file being accessed */
+	struct address_space	*mapping;	/* The mapping being accessed */
+	struct list_head	subrequests;	/* Requests to fetch I/O from disk or net */
+	void			*netfs_priv;	/* Private data for the netfs */
+	atomic_t		nr_rd_ops;	/* Number of read ops in progress */
+	size_t			submitted;	/* Amount submitted for I/O so far */
+	size_t			len;		/* Length of the request */
+	short			error;		/* 0 or error that occurred */
+	loff_t			i_size;		/* Size of the file */
+	loff_t			start;		/* Start position */
+	pgoff_t			no_unlock_page;	/* Don't unlock this page after read */
+	refcount_t		usage;
+	unsigned long		flags;
+#define NETFS_RREQ_INCOMPLETE_IO	0	/* Some ioreqs terminated short or with error */
+#define NETFS_RREQ_WRITE_TO_CACHE	1	/* Need to write to the cache */
+#define NETFS_RREQ_NO_UNLOCK_PAGE	2	/* Don't unlock no_unlock_page on completion */
+#define NETFS_RREQ_DONT_UNLOCK_PAGES	3	/* Don't unlock the pages on completion */
+#define NETFS_RREQ_FAILED		4	/* The request failed */
+#define NETFS_RREQ_IN_PROGRESS		5	/* Unlocked when the request completes */
+	const struct netfs_read_request_ops *netfs_ops;
+};
+
+/*
+ * Operations the network filesystem can/must provide to the helpers.
+ */
+struct netfs_read_request_ops {
+	void (*init_rreq)(struct netfs_read_request *rreq, struct file *file);
+	void (*expand_readahead)(struct netfs_read_request *rreq);
+	bool (*clamp_length)(struct netfs_read_subrequest *subreq);
+	void (*issue_op)(struct netfs_read_subrequest *subreq);
+	bool (*is_still_valid)(struct netfs_read_request *rreq);
+	void (*done)(struct netfs_read_request *rreq);
+	void (*cleanup)(struct address_space *mapping, void *netfs_priv);
+};
+
+struct readahead_control;
+extern void netfs_readahead(struct readahead_control *,
+			    const struct netfs_read_request_ops *,
+			    void *);
+extern int netfs_readpage(struct file *,
+			  struct page *,
+			  const struct netfs_read_request_ops *,
+			  void *);
+
+extern void netfs_subreq_terminated(struct netfs_read_subrequest *, ssize_t);
+
+#endif /* _LINUX_NETFS_H */
