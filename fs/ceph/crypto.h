@@ -19,6 +19,7 @@ struct ceph_fname {
 	unsigned char	*ctext;		// binary crypttext (if any)
 	u32		name_len;	// length of name buffer
 	u32		ctext_len;	// length of crypttext
+	bool		no_copy;
 };
 
 struct ceph_fscrypt_auth {
