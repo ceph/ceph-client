@@ -306,7 +306,7 @@ int ceph_fname_to_usr(const struct ceph_fname *fname, struct fscrypt_str *tname,
 			tname = &_tname;
 		}
 
-		declen = fscrypt_base64url_decode(fname->name, fname->name_len, tname->name);
+		declen = ceph_base64_decode(fname->name, fname->name_len, tname->name);
 		if (declen <= 0) {
 			ret = -EIO;
 			goto out;
