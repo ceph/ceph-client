@@ -1801,6 +1801,13 @@ bool ceph_inode_set_size(struct inode *inode, loff_t size)
 	return ret;
 }
 
+static bool queue_inode_work(struct inode *inode)
+{
+	struct ceph_fs_client *fsc = ceph_inode_to_client(inode);
+
+	return queue_work(fsc->inode_wq, &ceph_inode(inode)->i_work);
+}
+
 /*
  * Put reference to inode, but avoid calling iput_final() in current thread.
  * iput_final() may wait for reahahead pages. The wait can cause deadlock in
@@ -1813,8 +1820,7 @@ void ceph_async_iput(struct inode *inode)
 	for (;;) {
 		if (atomic_add_unless(&inode->i_count, -1, 1))
 			break;
-		if (queue_work(ceph_inode_to_client(inode)->inode_wq,
-			       &ceph_inode(inode)->i_work))
+		if (queue_inode_work(inode))
 			break;
 		/* queue work failed, i_count must be at least 2 */
 	}
@@ -1830,8 +1836,7 @@ void ceph_queue_writeback(struct inode *inode)
 	set_bit(CEPH_I_WORK_WRITEBACK, &ci->i_work_mask);
 
 	ihold(inode);
-	if (queue_work(ceph_inode_to_client(inode)->inode_wq,
-		       &ci->i_work)) {
+	if (queue_inode_work(inode)) {
 		dout("ceph_queue_writeback %p\n", inode);
 	} else {
 		dout("ceph_queue_writeback %p already queued, mask=%lx\n",
@@ -1849,8 +1854,7 @@ void ceph_queue_invalidate(struct inode *inode)
 	set_bit(CEPH_I_WORK_INVALIDATE_PAGES, &ci->i_work_mask);
 
 	ihold(inode);
-	if (queue_work(ceph_inode_to_client(inode)->inode_wq,
-		       &ceph_inode(inode)->i_work)) {
+	if (queue_inode_work(inode)) {
 		dout("ceph_queue_invalidate %p\n", inode);
 	} else {
 		dout("ceph_queue_invalidate %p already queued, mask=%lx\n",
@@ -1869,8 +1873,7 @@ void ceph_queue_vmtruncate(struct inode *inode)
 	set_bit(CEPH_I_WORK_VMTRUNCATE, &ci->i_work_mask);
 
 	ihold(inode);
-	if (queue_work(ceph_inode_to_client(inode)->inode_wq,
-		       &ci->i_work)) {
+	if (queue_inode_work(inode)) {
 		dout("ceph_queue_vmtruncate %p\n", inode);
 	} else {
 		dout("ceph_queue_vmtruncate %p already queued, mask=%lx\n",
