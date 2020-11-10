@@ -339,6 +339,16 @@ static void dump_backoffs(struct seq_file *s, struct ceph_osd *osd)
 	mutex_unlock(&osd->lock);
 }
 
+static void dump_op_metric(struct seq_file *s, struct ceph_osd_client *osdc)
+{
+	struct ceph_osd_metric *m = &osdc->metric;
+
+	seq_printf(s, "  op_ops: %lld\n", percpu_counter_sum(&m->op_ops));
+	seq_printf(s, "  op_rmw: %lld\n", percpu_counter_sum(&m->op_rmw));
+	seq_printf(s, "  op_r:   %lld\n", percpu_counter_sum(&m->op_r));
+	seq_printf(s, "  op_w:   %lld\n", percpu_counter_sum(&m->op_w));
+}
+
 static int osdc_show(struct seq_file *s, void *pp)
 {
 	struct ceph_client *client = s->private;
@@ -372,6 +382,9 @@ static int osdc_show(struct seq_file *s, void *pp)
 	}
 
 	up_read(&osdc->lock);
+
+	seq_puts(s, "OP METRIC:\n");
+	dump_op_metric(s, osdc);
 	return 0;
 }
 
