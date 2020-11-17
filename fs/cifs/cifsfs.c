@@ -396,6 +396,8 @@ static void
 cifs_evict_inode(struct inode *inode)
 {
 	truncate_inode_pages_final(&inode->i_data);
+	if (inode->i_state & I_PINNING_FSCACHE_WB)
+		cifs_fscache_unuse_inode_cookie(inode, true);
 	clear_inode(inode);
 }
 
@@ -1624,13 +1626,9 @@ init_cifs(void)
 		goto out_destroy_cifsoplockd_wq;
 	}
 
-	rc = cifs_fscache_register();
-	if (rc)
-		goto out_destroy_deferredclose_wq;
-
 	rc = cifs_init_inodecache();
 	if (rc)
-		goto out_unreg_fscache;
+		goto out_destroy_deferredclose_wq;
 
 	rc = cifs_init_mids();
 	if (rc)
@@ -1692,8 +1690,6 @@ out_destroy_mids:
 	cifs_destroy_mids();
 out_destroy_inodecache:
 	cifs_destroy_inodecache();
-out_unreg_fscache:
-	cifs_fscache_unregister();
 out_destroy_deferredclose_wq:
 	destroy_workqueue(deferredclose_wq);
 out_destroy_cifsoplockd_wq:
@@ -1729,7 +1725,6 @@ exit_cifs(void)
 	cifs_destroy_request_bufs();
 	cifs_destroy_mids();
 	cifs_destroy_inodecache();
-	cifs_fscache_unregister();
 	destroy_workqueue(deferredclose_wq);
 	destroy_workqueue(cifsoplockd_wq);
 	destroy_workqueue(decrypt_wq);

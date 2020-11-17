@@ -1398,10 +1398,6 @@ cifs_put_tcp_session(struct TCP_Server_Info *server, int from_reconnect)
 
 	cifs_crypto_secmech_release(server);
 
-	/* fscache server cookies are based on primary channel only */
-	if (!CIFS_SERVER_IS_CHAN(server))
-		cifs_fscache_release_client_cookie(server);
-
 	kfree(server->session_key.response);
 	server->session_key.response = NULL;
 	server->session_key.len = 0;
@@ -1557,10 +1553,6 @@ smbd_connected:
 	spin_lock(&cifs_tcp_ses_lock);
 	list_add(&tcp_ses->tcp_ses_list, &cifs_tcp_ses_list);
 	spin_unlock(&cifs_tcp_ses_lock);
-
-	/* fscache server cookies are based on primary channel only */
-	if (!CIFS_SERVER_IS_CHAN(tcp_ses))
-		cifs_fscache_get_client_cookie(tcp_ses);
 
 	/* queue echo request delayed work */
 	queue_delayed_work(cifsiod_wq, &tcp_ses->echo, tcp_ses->echo_interval);
