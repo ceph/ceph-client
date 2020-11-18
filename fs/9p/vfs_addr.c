@@ -76,7 +76,9 @@ static void v9fs_req_cleanup(struct address_space *mapping, void *priv)
  */
 static bool v9fs_is_cache_enabled(struct inode *inode)
 {
-	return fscache_cookie_enabled(v9fs_inode_cookie(V9FS_I(inode)));
+	struct fscache_cookie *cookie = v9fs_inode_cookie(V9FS_I(inode));
+
+	return fscache_cookie_enabled(cookie) && cookie->cache_priv;
 }
 
 /**
@@ -88,7 +90,7 @@ static int v9fs_begin_cache_operation(struct netfs_read_request *rreq)
 #ifdef CONFIG_9P_FSCACHE
 	struct fscache_cookie *cookie = v9fs_inode_cookie(V9FS_I(rreq->inode));
 
-	return fscache_begin_read_operation(rreq, cookie);
+	return fscache_begin_read_operation(&rreq->cache_resources, cookie);
 #else
 	return -ENOBUFS;
 #endif
