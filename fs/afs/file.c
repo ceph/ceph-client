@@ -288,10 +288,8 @@ static void afs_req_issue_op(struct netfs_read_subrequest *subreq)
 	int ret;
 
 	fsreq = afs_alloc_read(GFP_NOFS);
-	if (!fsreq) {
-		subreq->error = -ENOMEM;
-		return;
-	}
+	if (!fsreq)
+		return netfs_subreq_terminated(subreq, -ENOMEM);
 
 	fsreq->subreq	= subreq;
 	fsreq->pos	= subreq->start + subreq->transferred;
@@ -306,7 +304,7 @@ static void afs_req_issue_op(struct netfs_read_subrequest *subreq)
 
 	ret = afs_fetch_data(fsreq->vnode, fsreq);
 	if (ret < 0)
-		subreq->error = ret;
+		return netfs_subreq_terminated(subreq, ret);
 }
 
 static int afs_symlink_readpage(struct page *page)
