@@ -234,7 +234,7 @@ static void ceph_netfs_issue_op(struct netfs_read_subrequest *subreq)
 	struct inode *inode = rreq->mapping->host;
 	struct ceph_inode_info *ci = ceph_inode(inode);
 	struct ceph_fs_client *fsc = ceph_inode_to_client(inode);
-	struct ceph_osd_request *req = NULL;
+	struct ceph_osd_request *req;
 	struct ceph_vino vino = ceph_vino(inode);
 	struct iov_iter iter;
 	struct page **pages;
@@ -248,6 +248,7 @@ static void ceph_netfs_issue_op(struct netfs_read_subrequest *subreq)
 			NULL, ci->i_truncate_seq, ci->i_truncate_size, false);
 	if (IS_ERR(req)) {
 		err = PTR_ERR(req);
+		req = NULL;
 		goto out;
 	}
 
@@ -273,8 +274,7 @@ static void ceph_netfs_issue_op(struct netfs_read_subrequest *subreq)
 	if (err)
 		iput(inode);
 out:
-	if (req)
-		ceph_osdc_put_request(req);
+	ceph_osdc_put_request(req);
 	if (err)
 		netfs_subreq_terminated(subreq, err);
 	dout("%s: result %d\n", __func__, err);
