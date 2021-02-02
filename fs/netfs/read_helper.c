@@ -118,6 +118,7 @@ static struct netfs_read_subrequest *netfs_alloc_subrequest(
 		INIT_LIST_HEAD(&subreq->rreq_link);
 		refcount_set(&subreq->usage, 2);
 		subreq->rreq = rreq;
+		netfs_get_read_request(rreq);
 		netfs_stat(&netfs_n_rh_sreq);
 	}
 
@@ -398,6 +399,10 @@ static void netfs_rreq_unlock(struct netfs_read_request *rreq)
 		bool pg_failed = false;
 
 		for (;;) {
+			if (!subreq) {
+				pg_failed = true;
+				break;
+			}
 			if (test_bit(NETFS_SREQ_WRITE_TO_CACHE, &subreq->flags))
 				SetPageFsCache(page);
 			pg_failed |= subreq_failed;
@@ -417,7 +422,7 @@ static void netfs_rreq_unlock(struct netfs_read_request *rreq)
 				break;
 		}
 
-		if (!subreq_failed) {
+		if (!pg_failed) {
 			for (i = 0; i < thp_nr_pages(page); i++)
 				flush_dcache_page(page);
 			SetPageUptodate(page);
@@ -744,6 +749,7 @@ static bool netfs_rreq_submit_slice(struct netfs_read_request *rreq,
 	subreq->len		= rreq->len   - rreq->submitted;
 
 	_debug("slice %llx,%zx,%zx", subreq->start, subreq->len, rreq->submitted);
+	list_add_tail(&subreq->rreq_link, &rreq->subrequests);
 
 	/* Call out to the cache to find out what it can do with the remaining
 	 * subset.  It tells us in subreq->flags what it decided should be done
@@ -757,9 +763,7 @@ static bool netfs_rreq_submit_slice(struct netfs_read_request *rreq,
 	if (source == NETFS_INVALID_READ)
 		goto subreq_failed;
 
-	netfs_get_read_request(rreq);
 	atomic_inc(&rreq->nr_rd_ops);
-	list_add_tail(&subreq->rreq_link, &rreq->subrequests);
 
 	rreq->submitted += subreq->len;
 
@@ -781,7 +785,7 @@ static bool netfs_rreq_submit_slice(struct netfs_read_request *rreq,
 	return true;
 
 subreq_failed:
-	netfs_put_subrequest(subreq);
+	rreq->error = subreq->error;
 	netfs_put_subrequest(subreq);
 	return false;
 }
@@ -971,8 +975,6 @@ int netfs_readpage(struct file *file,
 
 	} while (rreq->submitted < rreq->len);
 
-	// TODO: If we didn't submit enough readage, we need to clean up
-
 	/* Keep nr_rd_ops incremented so that the ref always belongs to us, and
 	 * the service code isn't punted off to a random thread pool to
 	 * process.
@@ -983,6 +985,8 @@ int netfs_readpage(struct file *file,
 	} while (test_bit(NETFS_RREQ_IN_PROGRESS, &rreq->flags));
 
 	ret = rreq->error;
+	if (ret == 0 && rreq->submitted < rreq->len)
+		ret = -EIO;
 out:
 	netfs_put_read_request(rreq);
 	return ret;
@@ -1116,8 +1120,6 @@ retry:
 
 	} while (rreq->submitted < rreq->len);
 
-	// TODO: If we didn't submit enough readage, we need to clean up
-
 	/* Keep nr_rd_ops incremented so that the ref always belongs to us, and
 	 * the service code isn't punted off to a random thread pool to
 	 * process.
@@ -1131,6 +1133,8 @@ retry:
 	}
 
 	ret = rreq->error;
+	if (ret == 0 && rreq->submitted < rreq->len)
+		ret = -EIO;
 	netfs_put_read_request(rreq);
 	if (ret < 0)
 		goto error;
