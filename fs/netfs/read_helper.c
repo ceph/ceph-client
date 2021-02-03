@@ -580,14 +580,16 @@ static void netfs_rreq_terminated(struct netfs_read_request *rreq)
 /**
  * netfs_subreq_terminated - Note the termination of an I/O operation.
  * @subreq: The I/O request that has terminated.
+ * @transferred_or_error: The amount of data transferred or an error code.
  *
  * This tells the read helper that a contributory I/O operation has terminated,
  * one way or another, and that it should integrate the results.
  *
- * The caller must have set @subreq->transferred, @subreq->error and
- * @subreq->flags as appropriate for the outcome of the operation.  The helper
- * will look after reissuing I/O operations as appropriate and writing
- * downloaded data to the cache.
+ * The caller indicates in @transferred_or_error the outcome of the operation,
+ * supplying a positive value to indicate the number of bytes transferred, 0 to
+ * indicate a failure to transfer anything that should be retried or a negative
+ * error code.  The helper will look after reissuing I/O operations as
+ * appropriate and writing downloaded data to the cache.
  *
  * This may be called from a softirq handler, so we want to avoid taking the
  * spinlock if we can.
