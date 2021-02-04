@@ -418,7 +418,7 @@ int fscache_pin_cookie(struct fscache_cookie *cookie)
 }
 
 /**
- * fscache_pin_cookie - Unpin a data-storage cache object in its cache
+ * fscache_unpin_cookie - Unpin a data-storage cache object in its cache
  * @cookie: The cookie representing the cache object
  *
  * Permit data-storage cache objects to be unpinned from the cache.
@@ -490,7 +490,7 @@ void fscache_wait_on_invalidate(struct fscache_cookie *cookie)
 /**
  * fscache_reserve_space - Reserve data space for a cached object
  * @cookie: The cookie representing the cache object
- * @i_size: The amount of space to be reserved
+ * @size: The amount of space to be reserved
  *
  * Reserve an amount of space in the cache for the cache object attached to a
  * cookie so that a write to that object within the space can always be
