@@ -11,6 +11,7 @@ cachefiles-y := \
 	main.o \
 	namei.o \
 	rdwr.o \
+	rdwr2.o \
 	security.o \
 	xattr.o
 

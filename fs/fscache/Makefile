@@ -11,7 +11,8 @@ fscache-y := \
 	netfs.o \
 	object.o \
 	operation.o \
-	page.o
+	page.o \
+	page2.o
 
 fscache-$(CONFIG_PROC_FS) += proc.o
 fscache-$(CONFIG_FSCACHE_STATS) += stats.o
