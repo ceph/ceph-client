@@ -172,6 +172,7 @@ struct ceph_cap {
 	};
 	u32 seq, issue_seq, mseq;
 	u32 cap_gen;      /* active/stale cycle */
+	atomic_t ref;
 	unsigned long last_used;
 	struct list_head caps_item;
 };
@@ -1133,8 +1134,20 @@ extern void ceph_handle_caps(struct ceph_mds_session *session,
 			     struct ceph_msg *msg);
 extern struct ceph_cap *ceph_cap_alloc(struct ceph_mds_client *mdsc,
 				     struct ceph_cap_reservation *ctx);
-extern void ceph_cap_free(struct ceph_mds_client *mdsc,
-			 struct ceph_cap *cap);
+extern void ceph_cap_free(struct ceph_mds_client *mdsc, struct ceph_cap *cap);
+
+static inline struct ceph_cap *ceph_cap_get(struct ceph_mds_client *mdsc, struct ceph_cap *cap)
+{
+	atomic_inc(&cap->ref);
+	return cap;
+}
+
+static inline void ceph_cap_put(struct ceph_mds_client *mdsc, struct ceph_cap *cap)
+{
+	if (atomic_dec_and_test(&cap->ref))
+		ceph_cap_free(mdsc, cap);
+}
+
 extern void ceph_add_cap(struct inode *inode,
 			 struct ceph_mds_session *session, u64 cap_id,
 			 unsigned issued, unsigned wanted,

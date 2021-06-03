@@ -1473,7 +1473,7 @@ static void dispose_cap_releases(struct ceph_mds_client *mdsc,
 		/* zero out the in-progress message */
 		cap = list_first_entry(dispose, struct ceph_cap, session_caps);
 		list_del(&cap->session_caps);
-		ceph_cap_free(mdsc, cap);
+		ceph_cap_put(mdsc, cap);
 	}
 }
 
@@ -1551,7 +1551,7 @@ int ceph_iterate_session_caps(struct ceph_mds_session *session,
 			last_inode = NULL;
 		}
 		if (old_cap) {
-			ceph_cap_free(session->s_mdsc, old_cap);
+			ceph_cap_put(session->s_mdsc, old_cap);
 			old_cap = NULL;
 		}
 
@@ -1583,7 +1583,7 @@ out:
 
 	ceph_async_iput(last_inode);
 	if (old_cap)
-		ceph_cap_free(session->s_mdsc, old_cap);
+		ceph_cap_put(session->s_mdsc, old_cap);
 
 	return ret;
 }
@@ -2112,7 +2112,7 @@ again:
 		item->seq = cpu_to_le32(cap->issue_seq);
 		msg->front.iov_len += sizeof(*item);
 
-		ceph_cap_free(mdsc, cap);
+		ceph_cap_put(mdsc, cap);
 
 		if (le32_to_cpu(head->num) == CEPH_CAPS_PER_RELEASE) {
 			// Append cap_barrier field

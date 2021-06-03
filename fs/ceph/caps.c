@@ -178,6 +178,7 @@ static void __ceph_unreserve_caps(struct ceph_mds_client *mdsc, int nr_caps)
 				cap = list_first_entry(&mdsc->caps_list,
 					struct ceph_cap, caps_item);
 				list_del(&cap->caps_item);
+				WARN_ON_ONCE(atomic_read(&cap->ref));
 				kmem_cache_free(ceph_cap_cachep, cap);
 			}
 		} else {
@@ -231,6 +232,7 @@ int ceph_reserve_caps(struct ceph_mds_client *mdsc,
 			list_add(&cap->caps_item, &newcaps);
 			alloc++;
 			i++;
+			atomic_set(&cap->ref, 0);
 			continue;
 		}
 
@@ -331,6 +333,7 @@ struct ceph_cap *ceph_cap_alloc(struct ceph_mds_client *mdsc,
 	if (!ctx) {
 		cap = kmem_cache_alloc(ceph_cap_cachep, GFP_NOFS);
 		if (cap) {
+			atomic_set(&cap->ref, 0);
 			spin_lock(&mdsc->caps_list_lock);
 			mdsc->caps_use_count++;
 			mdsc->caps_total_count++;
@@ -345,13 +348,14 @@ struct ceph_cap *ceph_cap_alloc(struct ceph_mds_client *mdsc,
 				cap = list_first_entry(&mdsc->caps_list,
 						struct ceph_cap, caps_item);
 				list_del(&cap->caps_item);
+				WARN_ON_ONCE(atomic_read(&cap->ref));
 
 				BUG_ON(mdsc->caps_total_count != mdsc->caps_use_count +
 				       mdsc->caps_reserve_count + mdsc->caps_avail_count);
 			}
 			spin_unlock(&mdsc->caps_list_lock);
 		}
-
+		ceph_cap_get(mdsc, cap);
 		return cap;
 	}
 
@@ -370,6 +374,7 @@ struct ceph_cap *ceph_cap_alloc(struct ceph_mds_client *mdsc,
 
 	cap = list_first_entry(&mdsc->caps_list, struct ceph_cap, caps_item);
 	list_del(&cap->caps_item);
+	ceph_cap_get(mdsc, cap);
 
 	BUG_ON(mdsc->caps_total_count != mdsc->caps_use_count +
 	       mdsc->caps_reserve_count + mdsc->caps_avail_count);
@@ -379,6 +384,7 @@ struct ceph_cap *ceph_cap_alloc(struct ceph_mds_client *mdsc,
 
 void ceph_cap_free(struct ceph_mds_client *mdsc, struct ceph_cap *cap)
 {
+	WARN_ON(atomic_read(&cap->ref));
 	spin_lock(&mdsc->caps_list_lock);
 	dout("put_cap %p %d = %d used + %d resv + %d avail\n",
 	     cap, mdsc->caps_total_count, mdsc->caps_use_count,
@@ -1195,7 +1201,7 @@ void __ceph_remove_cap(struct ceph_cap *cap, bool queue_release)
 	spin_unlock(&session->s_cap_lock);
 
 	if (removed)
-		ceph_cap_free(mdsc, cap);
+		ceph_cap_put(mdsc, cap);
 
 	if (!__ceph_is_any_real_caps(ci)) {
 		/* when reconnect denied, we remove session caps forcibly,
@@ -3898,7 +3904,7 @@ out_unlock:
 		ceph_put_mds_session(tsession);
 	}
 	if (new_cap)
-		ceph_cap_free(mdsc, new_cap);
+		ceph_cap_put(mdsc, new_cap);
 }
 
 /*
@@ -3947,7 +3953,7 @@ retry:
 		cap = new_cap;
 	} else {
 		if (new_cap) {
-			ceph_cap_free(mdsc, new_cap);
+			ceph_cap_put(mdsc, new_cap);
 			new_cap = NULL;
 		}
 	}
