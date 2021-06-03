@@ -323,12 +323,11 @@ void ceph_unreserve_caps(struct ceph_mds_client *mdsc,
 		ceph_reclaim_caps_nr(mdsc, ctx->used);
 }
 
-struct ceph_cap *ceph_get_cap(struct ceph_mds_client *mdsc,
+struct ceph_cap *ceph_cap_alloc(struct ceph_mds_client *mdsc,
 			      struct ceph_cap_reservation *ctx)
 {
 	struct ceph_cap *cap = NULL;
 
-	/* temporary, until we do something about cap import/export */
 	if (!ctx) {
 		cap = kmem_cache_alloc(ceph_cap_cachep, GFP_NOFS);
 		if (cap) {
@@ -378,7 +377,7 @@ struct ceph_cap *ceph_get_cap(struct ceph_mds_client *mdsc,
 	return cap;
 }
 
-void ceph_put_cap(struct ceph_mds_client *mdsc, struct ceph_cap *cap)
+void ceph_cap_free(struct ceph_mds_client *mdsc, struct ceph_cap *cap)
 {
 	spin_lock(&mdsc->caps_list_lock);
 	dout("put_cap %p %d = %d used + %d resv + %d avail\n",
@@ -1196,7 +1195,7 @@ void __ceph_remove_cap(struct ceph_cap *cap, bool queue_release)
 	spin_unlock(&session->s_cap_lock);
 
 	if (removed)
-		ceph_put_cap(mdsc, cap);
+		ceph_cap_free(mdsc, cap);
 
 	if (!__ceph_is_any_real_caps(ci)) {
 		/* when reconnect denied, we remove session caps forcibly,
@@ -3882,7 +3881,7 @@ retry:
 			mutex_lock_nested(&session->s_mutex,
 					  SINGLE_DEPTH_NESTING);
 		}
-		new_cap = ceph_get_cap(mdsc, NULL);
+		new_cap = ceph_cap_alloc(mdsc, NULL);
 	} else {
 		WARN_ON(1);
 		tsession = NULL;
@@ -3899,7 +3898,7 @@ out_unlock:
 		ceph_put_mds_session(tsession);
 	}
 	if (new_cap)
-		ceph_put_cap(mdsc, new_cap);
+		ceph_cap_free(mdsc, new_cap);
 }
 
 /*
@@ -3941,14 +3940,14 @@ retry:
 	if (!cap) {
 		if (!new_cap) {
 			spin_unlock(&ci->i_ceph_lock);
-			new_cap = ceph_get_cap(mdsc, NULL);
+			new_cap = ceph_cap_alloc(mdsc, NULL);
 			spin_lock(&ci->i_ceph_lock);
 			goto retry;
 		}
 		cap = new_cap;
 	} else {
 		if (new_cap) {
-			ceph_put_cap(mdsc, new_cap);
+			ceph_cap_free(mdsc, new_cap);
 			new_cap = NULL;
 		}
 	}
@@ -4114,7 +4113,7 @@ void ceph_handle_caps(struct ceph_mds_session *session,
 		dout(" i don't have ino %llx\n", vino.ino);
 
 		if (op == CEPH_CAP_OP_IMPORT) {
-			cap = ceph_get_cap(mdsc, NULL);
+			cap = ceph_cap_alloc(mdsc, NULL);
 			cap->cap_ino = vino.ino;
 			cap->queue_release = 1;
 			cap->cap_id = le64_to_cpu(h->cap_id);

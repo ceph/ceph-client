@@ -806,7 +806,7 @@ int ceph_fill_inode(struct inode *inode, struct page *locked_page,
 
 	/* prealloc new cap struct */
 	if (info_caps && ceph_snap(inode) == CEPH_NOSNAP) {
-		new_cap = ceph_get_cap(mdsc, caps_reservation);
+		new_cap = ceph_cap_alloc(mdsc, caps_reservation);
 		if (!new_cap)
 			return -ENOMEM;
 	}
@@ -1084,7 +1084,7 @@ int ceph_fill_inode(struct inode *inode, struct page *locked_page,
 	err = 0;
 out:
 	if (new_cap)
-		ceph_put_cap(mdsc, new_cap);
+		ceph_cap_free(mdsc, new_cap);
 	ceph_buffer_put(old_blob);
 	ceph_buffer_put(xattr_blob);
 	ceph_put_string(pool_ns);

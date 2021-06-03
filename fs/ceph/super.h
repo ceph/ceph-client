@@ -1131,8 +1131,10 @@ static inline void ceph_forget_all_cached_acls(struct inode *inode)
 extern const char *ceph_cap_string(int c);
 extern void ceph_handle_caps(struct ceph_mds_session *session,
 			     struct ceph_msg *msg);
-extern struct ceph_cap *ceph_get_cap(struct ceph_mds_client *mdsc,
+extern struct ceph_cap *ceph_cap_alloc(struct ceph_mds_client *mdsc,
 				     struct ceph_cap_reservation *ctx);
+extern void ceph_cap_free(struct ceph_mds_client *mdsc,
+			 struct ceph_cap *cap);
 extern void ceph_add_cap(struct inode *inode,
 			 struct ceph_mds_session *session, u64 cap_id,
 			 unsigned issued, unsigned wanted,
@@ -1140,8 +1142,6 @@ extern void ceph_add_cap(struct inode *inode,
 			 struct ceph_cap **new_cap);
 extern void __ceph_remove_cap(struct ceph_cap *cap, bool queue_release);
 extern void __ceph_remove_caps(struct ceph_inode_info *ci);
-extern void ceph_put_cap(struct ceph_mds_client *mdsc,
-			 struct ceph_cap *cap);
 extern int ceph_is_any_caps(struct inode *inode);
 
 extern int ceph_write_inode(struct inode *inode, struct writeback_control *wbc);
