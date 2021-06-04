@@ -826,13 +826,13 @@ void ceph_mdsc_release_request(struct kref *kref)
 	if (req->r_inode) {
 		ceph_put_cap_refs(ceph_inode(req->r_inode), CEPH_CAP_PIN);
 		/* avoid calling iput_final() in mds dispatch threads */
-		ceph_async_iput(req->r_inode);
+		iput(req->r_inode);
 	}
 	if (req->r_parent) {
 		ceph_put_cap_refs(ceph_inode(req->r_parent), CEPH_CAP_PIN);
-		ceph_async_iput(req->r_parent);
+		iput(req->r_parent);
 	}
-	ceph_async_iput(req->r_target_inode);
+	iput(req->r_target_inode);
 	if (req->r_dentry)
 		dput(req->r_dentry);
 	if (req->r_old_dentry)
@@ -846,7 +846,7 @@ void ceph_mdsc_release_request(struct kref *kref)
 		 */
 		ceph_put_cap_refs(ceph_inode(req->r_old_dentry_dir),
 				  CEPH_CAP_PIN);
-		ceph_async_iput(req->r_old_dentry_dir);
+		iput(req->r_old_dentry_dir);
 	}
 	kfree(req->r_path1);
 	kfree(req->r_path2);
@@ -962,7 +962,7 @@ static void __unregister_request(struct ceph_mds_client *mdsc,
 
 	if (req->r_unsafe_dir) {
 		/* avoid calling iput_final() in mds dispatch threads */
-		ceph_async_iput(req->r_unsafe_dir);
+		iput(req->r_unsafe_dir);
 		req->r_unsafe_dir = NULL;
 	}
 
@@ -1133,7 +1133,7 @@ static int __choose_mds(struct ceph_mds_client *mdsc,
 		cap = rb_entry(rb_first(&ci->i_caps), struct ceph_cap, ci_node);
 	if (!cap) {
 		spin_unlock(&ci->i_ceph_lock);
-		ceph_async_iput(inode);
+		iput(inode);
 		goto random;
 	}
 	mds = cap->session->s_mds;
@@ -1144,7 +1144,7 @@ static int __choose_mds(struct ceph_mds_client *mdsc,
 out:
 	/* avoid calling iput_final() while holding mdsc->mutex or
 	 * in mds dispatch threads */
-	ceph_async_iput(inode);
+	iput(inode);
 	return mds;
 
 random:
@@ -1549,7 +1549,7 @@ int ceph_iterate_session_caps(struct ceph_mds_session *session,
 		if (last_inode) {
 			/* avoid calling iput_final() while holding
 			 * s_mutex or in mds dispatch threads */
-			ceph_async_iput(last_inode);
+			iput(last_inode);
 			last_inode = NULL;
 		}
 		if (old_cap) {
@@ -1584,7 +1584,7 @@ out:
 	session->s_cap_iterator = NULL;
 	spin_unlock(&session->s_cap_lock);
 
-	ceph_async_iput(last_inode);
+	iput(last_inode);
 	if (old_cap)
 		ceph_cap_put(session->s_mdsc, old_cap);
 
@@ -1725,7 +1725,7 @@ static void remove_session_caps(struct ceph_mds_session *session)
 
 			inode = ceph_find_inode(sb, vino);
 			 /* avoid calling iput_final() while holding s_mutex */
-			ceph_async_iput(inode);
+			iput(inode);
 
 			spin_lock(&session->s_cap_lock);
 		}
@@ -4376,7 +4376,7 @@ release:
 out:
 	mutex_unlock(&session->s_mutex);
 	/* avoid calling iput_final() in mds dispatch threads */
-	ceph_async_iput(inode);
+	iput(inode);
 	return;
 
 bad:

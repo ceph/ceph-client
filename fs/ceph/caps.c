@@ -3189,7 +3189,7 @@ void ceph_put_wrbuffer_cap_refs(struct ceph_inode_info *ci, int nr,
 		wake_up_all(&ci->i_cap_wq);
 	while (put-- > 0) {
 		/* avoid calling iput_final() in osd dispatch threads */
-		ceph_async_iput(inode);
+		iput(inode);
 	}
 }
 
@@ -4178,7 +4178,7 @@ done:
 done_unlocked:
 	ceph_put_string(extra_info.pool_ns);
 	/* avoid calling iput_final() in mds dispatch threads */
-	ceph_async_iput(inode);
+	iput(inode);
 	return;
 
 flush_cap_releases:
@@ -4221,7 +4221,7 @@ void ceph_check_delayed_caps(struct ceph_mds_client *mdsc)
 			dout("check_delayed_caps on %p\n", inode);
 			ceph_check_caps(ci, 0, NULL);
 			/* avoid calling iput_final() in tick thread */
-			ceph_async_iput(inode);
+			iput(inode);
 			spin_lock(&mdsc->cap_delay_lock);
 		}
 	}

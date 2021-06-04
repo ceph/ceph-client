@@ -679,13 +679,13 @@ static void queue_realm_cap_snaps(struct ceph_snap_realm *realm)
 		spin_unlock(&realm->inodes_with_caps_lock);
 		/* avoid calling iput_final() while holding
 		 * mdsc->snap_rwsem or in mds dispatch threads */
-		ceph_async_iput(lastinode);
+		iput(lastinode);
 		lastinode = inode;
 		ceph_queue_cap_snap(ci);
 		spin_lock(&realm->inodes_with_caps_lock);
 	}
 	spin_unlock(&realm->inodes_with_caps_lock);
-	ceph_async_iput(lastinode);
+	iput(lastinode);
 
 	dout("queue_realm_cap_snaps %p %llx done\n", realm, realm->ino);
 }
@@ -841,7 +841,7 @@ static void flush_snaps(struct ceph_mds_client *mdsc)
 		ceph_flush_snaps(ci, &session);
 		/* avoid calling iput_final() while holding
 		 * session->s_mutex or in mds dispatch threads */
-		ceph_async_iput(inode);
+		iput(inode);
 		spin_lock(&mdsc->snap_flush_lock);
 	}
 	spin_unlock(&mdsc->snap_flush_lock);
@@ -987,12 +987,12 @@ void ceph_handle_snap(struct ceph_mds_client *mdsc,
 
 			/* avoid calling iput_final() while holding
 			 * mdsc->snap_rwsem or mds in dispatch threads */
-			ceph_async_iput(inode);
+			iput(inode);
 			continue;
 
 skip_inode:
 			spin_unlock(&ci->i_ceph_lock);
-			ceph_async_iput(inode);
+			iput(inode);
 		}
 
 		/* we may have taken some of the old realm's children. */
