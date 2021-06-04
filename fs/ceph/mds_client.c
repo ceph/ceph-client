@@ -1518,8 +1518,6 @@ static void cleanup_session_requests(struct ceph_mds_client *mdsc,
 /*
  * Helper to safely iterate over all caps associated with a session, with
  * special care taken to handle a racing __ceph_remove_cap().
- *
- * Caller must hold session s_mutex.
  */
 int ceph_iterate_session_caps(struct ceph_mds_session *session,
 			      int (*cb)(struct inode *, struct ceph_cap *,
@@ -1529,6 +1527,7 @@ int ceph_iterate_session_caps(struct ceph_mds_session *session,
 	struct ceph_cap *cap;
 	struct inode *inode, *last_inode = NULL;
 	struct ceph_cap *old_cap = NULL;
+	struct ceph_mds_client *mdsc = session->s_mdsc;
 	int ret;
 
 	dout("iterate_session_caps %p mds%d\n", session, session->s_mds);
@@ -1542,6 +1541,7 @@ int ceph_iterate_session_caps(struct ceph_mds_session *session,
 			continue;
 		}
 		session->s_cap_iterator = cap;
+		ceph_cap_get(mdsc, cap);
 		spin_unlock(&session->s_cap_lock);
 
 		if (last_inode) {
@@ -1551,7 +1551,7 @@ int ceph_iterate_session_caps(struct ceph_mds_session *session,
 			last_inode = NULL;
 		}
 		if (old_cap) {
-			ceph_cap_put(session->s_mdsc, old_cap);
+			ceph_cap_put(mdsc, old_cap);
 			old_cap = NULL;
 		}
 
@@ -1567,12 +1567,13 @@ int ceph_iterate_session_caps(struct ceph_mds_session *session,
 			cap->session = NULL;
 			list_del_init(&cap->session_caps);
 			session->s_nr_caps--;
-			atomic64_dec(&session->s_mdsc->metric.total_caps);
+			atomic64_dec(&mdsc->metric.total_caps);
 			if (cap->queue_release)
 				__ceph_queue_cap_release(session, cap);
 			else
 				old_cap = cap;  /* put_cap it w/o locks held */
 		}
+		ceph_cap_put(mdsc, cap);
 		if (ret < 0)
 			goto out;
 	}
