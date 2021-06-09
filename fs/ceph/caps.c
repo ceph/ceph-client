@@ -1917,7 +1917,6 @@ void ceph_check_caps(struct ceph_inode_info *ci, int flags,
 	struct ceph_cap *cap;
 	u64 flush_tid, oldest_flush_tid;
 	int file_wanted, used, cap_used;
-	int took_snap_rwsem = 0;             /* true if mdsc->snap_rwsem held */
 	int issued, implemented, want, retain, revoking, flushing = 0;
 	int mds = -1;   /* keep track of how far we've gone through i_caps list
 			   to avoid an infinite loop on retry */
@@ -2107,19 +2106,6 @@ ack:
 			goto retry_locked;
 		}
 
-		/* take snap_rwsem after session mutex */
-		if (!took_snap_rwsem) {
-			if (down_read_trylock(&mdsc->snap_rwsem) == 0) {
-				dout("inverting snap/in locks on %p\n",
-				     inode);
-				spin_unlock(&ci->i_ceph_lock);
-				down_read(&mdsc->snap_rwsem);
-				took_snap_rwsem = 1;
-				goto retry;
-			}
-			took_snap_rwsem = 1;
-		}
-
 		if (cap == ci->i_auth_cap && ci->i_dirty_caps) {
 			flushing = ci->i_dirty_caps;
 			flush_tid = __mark_caps_flushing(inode, session, false,
@@ -2159,8 +2145,6 @@ ack:
 	ceph_put_mds_session(session);
 	if (queue_invalidate)
 		ceph_queue_invalidate(inode);
-	if (took_snap_rwsem)
-		up_read(&mdsc->snap_rwsem);
 }
 
 /*
