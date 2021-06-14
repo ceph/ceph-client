@@ -120,6 +120,7 @@ int afs_write_end(struct file *file, struct address_space *mapping,
 	_enter("{%llx:%llu},{%lx}",
 	       vnode->fid.vid, vnode->fid.vnode, folio_index(folio));
 
+	len = min_t(size_t, len, folio_size(folio) - from);
 	if (!folio_test_uptodate(folio)) {
 		if (copied < len) {
 			copied = 0;
