@@ -185,6 +185,7 @@ struct netfs_io_request {
 	struct list_head	proc_link;	/* Link in netfs_iorequests */
 	void			*netfs_priv;	/* Private data for the netfs */
 	unsigned int		debug_id;
+	unsigned int		rsize;		/* Maximum read size */
 	atomic_t		nr_outstanding;	/* Number of ops in progress */
 	atomic_t		nr_copy_ops;	/* Number of copy-to-cache ops in progress */
 	size_t			submitted;	/* Amount submitted for I/O so far */
