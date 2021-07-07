@@ -1945,6 +1945,7 @@ static u64 __mark_caps_flushing(struct inode *inode,
 	swap(cf, ci->i_prealloc_cap_flush);
 	cf->caps = flushing;
 	cf->wake = wake;
+	cf->ci = ci;
 
 	spin_lock(&mdsc->cap_dirty_lock);
 	list_del_init(&ci->i_dirty_item);
@@ -3819,6 +3820,10 @@ static void handle_cap_flush_ack(struct inode *inode, u64 flush_tid,
 	bool wake_ci = false;
 	bool wake_mdsc = false;
 
+	/* track latest cap flush ack seen for this inode */
+	if (flush_tid > ci->i_last_cap_flush_ack)
+		ci->i_last_cap_flush_ack = flush_tid;
+
 	list_for_each_entry_safe(cf, tmp_cf, &ci->i_cap_flush_list, i_list) {
 		/* Is this the one that was flushed? */
 		if (cf->tid == flush_tid)
@@ -4450,7 +4455,11 @@ void ceph_handle_caps(struct ceph_mds_session *session,
 	      session->s_seq, (unsigned)seq);
 
 	if (!inode) {
-		doutc(cl, " i don't have ino %llx\n", vino.ino);
+		if (op == CEPH_CAP_OP_FLUSH_ACK)
+			pr_info_client(cl, "can't find ino %llx:%llx for flush_ack!\n",
+				       vino.snap, vino.ino);
+		else
+			doutc(cl, " i don't have ino %llx\n", vino.ino);
 
 		switch (op) {
 		case CEPH_CAP_OP_IMPORT:
@@ -4505,10 +4514,14 @@ void ceph_handle_caps(struct ceph_mds_session *session,
 	spin_lock(&ci->i_ceph_lock);
 	cap = __get_cap_for_mds(ceph_inode(inode), session->s_mds);
 	if (!cap) {
-		doutc(cl, " no cap on %p ino %llx.%llx from mds%d\n",
+		doutc(cl, " no cap on %p ino %llx:%llx from mds%d\n",
 		      inode, ceph_ino(inode), ceph_snap(inode),
 		      session->s_mds);
 		spin_unlock(&ci->i_ceph_lock);
+		if (op == CEPH_CAP_OP_FLUSH_ACK)
+			pr_info_client(cl, "no cap on %p ino %llx:%llx from mds%d for flush_ack!\n",
+				       inode, ceph_ino(inode),
+				       ceph_snap(inode), session->s_mds);
 		switch (op) {
 		case CEPH_CAP_OP_REVOKE:
 		case CEPH_CAP_OP_GRANT:
