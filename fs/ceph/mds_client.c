@@ -2291,6 +2291,26 @@ static int check_caps_flush(struct ceph_mds_client *mdsc,
 	return ret;
 }
 
+static void dump_cap_flushes(struct ceph_mds_client *mdsc, u64 want_tid)
+{
+	struct ceph_client *cl = mdsc->fsc->client;
+	struct ceph_cap_flush *cf;
+
+	pr_info_client(cl, "still waiting for cap flushes through %llu:\n",
+		       want_tid);
+	spin_lock(&mdsc->cap_dirty_lock);
+	list_for_each_entry(cf, &mdsc->cap_flush_list, g_list) {
+		if (cf->tid > want_tid)
+			break;
+		pr_info_client(cl, "%llx:%llx %s %llu %llu %d%s\n",
+			       ceph_vinop(&cf->ci->netfs.inode),
+			       ceph_cap_string(cf->caps), cf->tid,
+			       cf->ci->i_last_cap_flush_ack, cf->wake,
+			       cf->is_capsnap ? " is_capsnap" : "");
+	}
+	spin_unlock(&mdsc->cap_dirty_lock);
+}
+
 /*
  * flush all dirty inode data to disk.
  *
@@ -2300,11 +2320,19 @@ static void wait_caps_flush(struct ceph_mds_client *mdsc,
 			    u64 want_flush_tid)
 {
 	struct ceph_client *cl = mdsc->fsc->client;
+	int i = 0;
+	long ret;
 
 	doutc(cl, "want %llu\n", want_flush_tid);
 
-	wait_event(mdsc->cap_flushing_wq,
-		   check_caps_flush(mdsc, want_flush_tid));
+	do {
+		ret = wait_event_timeout(mdsc->cap_flushing_wq,
+			   check_caps_flush(mdsc, want_flush_tid), 60 * HZ);
+		if (ret == 0 && ++i < 5)
+			dump_cap_flushes(mdsc, want_flush_tid);
+		else if (ret == 1)
+			pr_info_client(cl, "condition evaluated to true after timeout!\n");
+	} while (ret == 0);
 
 	doutc(cl, "ok, flushed thru %llu\n", want_flush_tid);
 }
@@ -6216,6 +6244,8 @@ static void mds_dispatch(struct ceph_connection *con, struct ceph_msg *msg)
 
 	mutex_lock(&mdsc->mutex);
 	if (__verify_registered_session(mdsc, s) < 0) {
+		pr_info_client(cl, "dropping tid %llu from unregistered session %d\n",
+			       msg->hdr.tid, s->s_mds);
 		mutex_unlock(&mdsc->mutex);
 		goto out;
 	}
