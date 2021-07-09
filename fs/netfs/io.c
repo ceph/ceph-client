@@ -21,12 +21,7 @@
  */
 static void netfs_clear_unread(struct netfs_io_subrequest *subreq)
 {
-	struct iov_iter iter;
-
-	iov_iter_xarray(&iter, READ, &subreq->rreq->mapping->i_pages,
-			subreq->start + subreq->transferred,
-			subreq->len   - subreq->transferred);
-	iov_iter_zero(iov_iter_count(&iter), &iter);
+	iov_iter_zero(iov_iter_count(&subreq->iter), &subreq->iter);
 }
 
 static void netfs_cache_read_terminated(void *priv, ssize_t transferred_or_error,
@@ -48,10 +43,6 @@ static void netfs_read_from_cache(struct netfs_io_request *rreq,
 	struct netfs_cache_resources *cres = &rreq->cache_resources;
 
 	netfs_stat(&netfs_n_rh_read);
-	iov_iter_xarray(&subreq->iter, READ, &rreq->mapping->i_pages,
-			subreq->start + subreq->transferred,
-			subreq->len   - subreq->transferred);
-
 	cres->ops->read(cres, subreq->start, &subreq->iter, read_hole,
 			netfs_cache_read_terminated, subreq);
 }
@@ -88,10 +79,12 @@ static void netfs_read_from_server(struct netfs_io_request *rreq,
 				   struct netfs_io_subrequest *subreq)
 {
 	netfs_stat(&netfs_n_rh_download);
-	iov_iter_xarray(&subreq->iter, READ, &rreq->mapping->i_pages,
-			subreq->start + subreq->transferred,
-			subreq->len   - subreq->transferred);
 
+	if (iov_iter_count(&subreq->iter) != subreq->len - subreq->transferred)
+		pr_warn("R=%08x[%u] ITER PRE-MISMATCH %zx != %zx-%zx %lx\n",
+			rreq->debug_id, subreq->debug_index,
+			iov_iter_count(&subreq->iter), subreq->len, subreq->transferred,
+			subreq->flags);
 	rreq->netfs_ops->issue_read(subreq);
 }
 
@@ -209,7 +202,7 @@ static void netfs_rreq_do_write_to_cache(struct netfs_io_request *rreq)
 			continue;
 		}
 
-		iov_iter_xarray(&iter, WRITE, &rreq->mapping->i_pages,
+		iov_iter_xarray(&iter, WRITE, &rreq->buffer,
 				subreq->start, subreq->len);
 
 		atomic_inc(&rreq->nr_copy_ops);
@@ -430,6 +423,13 @@ void netfs_subreq_terminated(struct netfs_io_subrequest *subreq,
 
 	subreq->error = 0;
 	subreq->transferred += transferred_or_error;
+
+	if (iov_iter_count(&subreq->iter) != subreq->len - subreq->transferred)
+		pr_warn("R=%08x[%u] ITER POST-MISMATCH %zx != %zx-%zx %x\n",
+			rreq->debug_id, subreq->debug_index,
+			iov_iter_count(&subreq->iter), subreq->len, subreq->transferred,
+			subreq->iter.iter_type);
+
 	if (subreq->transferred < subreq->len)
 		goto incomplete;
 
@@ -529,8 +529,20 @@ netfs_rreq_prepare_read(struct netfs_io_request *rreq,
 		}
 	}
 
-	if (WARN_ON(subreq->len == 0))
+	if (WARN_ON(subreq->len == 0)) {
 		source = NETFS_INVALID_READ;
+		goto out;
+	}
+
+	switch (rreq->buffering) {
+	case NETFS_BUFFER:
+		iov_iter_xarray(&subreq->iter, READ, &rreq->buffer,
+				subreq->start, subreq->len);
+		break;
+	case NETFS_INVALID:
+		kdebug("Invalid buffering form %u", rreq->buffering);
+		BUG();
+	}
 
 out:
 	subreq->source = source;

@@ -109,6 +109,10 @@ static inline int wait_on_page_fscache_killable(struct page *page)
 	return folio_wait_private_2_killable(page_folio(page));
 }
 
+/* Marks used on xarray-based buffers */
+#define NETFS_BUF_PUT_MARK	XA_MARK_0	/* - Page needs putting  */
+#define NETFS_BUF_PAGECACHE_MARK XA_MARK_1	/* - Page needs wb/dirty flag wrangling */
+
 enum netfs_io_source {
 	NETFS_FILL_WITH_ZEROES,
 	NETFS_DOWNLOAD_FROM_SERVER,
@@ -171,6 +175,11 @@ enum netfs_io_origin {
 	NETFS_READ_FOR_WRITE,		/* This read is to prepare a write */
 } __mode(byte);
 
+enum netfs_buffering {
+	NETFS_INVALID,			/* Buffering unset */
+	NETFS_BUFFER,			/* Do I/O to/from ->buffer */
+} __mode(byte);
+
 /*
  * Descriptor for an I/O helper request.  This is used to make multiple I/O
  * operations to a variety of data stores and then stitch the result together.
@@ -183,8 +192,9 @@ struct netfs_io_request {
 	struct inode		*inode;		/* The file being accessed */
 	struct address_space	*mapping;	/* The mapping being accessed */
 	struct netfs_cache_resources cache_resources;
-	struct list_head	subrequests;	/* Contributory I/O operations */
 	struct list_head	proc_link;	/* Link in netfs_iorequests */
+	struct list_head	subrequests;	/* Contributory I/O operations */
+	struct xarray		buffer;		/* Buffer to hold raw data */
 	void			*netfs_priv;	/* Private data for the netfs */
 	unsigned int		debug_id;
 	unsigned int		rsize;		/* Maximum read size */
@@ -194,6 +204,7 @@ struct netfs_io_request {
 	size_t			len;		/* Length of the request */
 	short			error;		/* 0 or error that occurred */
 	enum netfs_io_origin	origin;		/* Origin of the request */
+	enum netfs_buffering	buffering;	/* Method of buffering */
 	loff_t			i_size;		/* Size of the file */
 	loff_t			start;		/* Start position */
 	pgoff_t			no_unlock_folio; /* Don't unlock this folio after read */

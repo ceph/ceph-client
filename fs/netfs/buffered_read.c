@@ -196,11 +196,12 @@ void netfs_readahead(struct readahead_control *ractl)
 
 	netfs_rreq_expand(rreq, ractl);
 
-	/* Drop the refs on the folios here rather than in the cache or
-	 * filesystem.  The locks will be dropped in netfs_rreq_unlock().
-	 */
-	while (readahead_folio(ractl))
-		;
+	/* Set up the output buffer */
+	rreq->buffering = NETFS_BUFFER;
+	ret = netfs_set_up_buffer(&rreq->buffer, rreq->mapping, ractl, NULL,
+				  readahead_index(ractl), readahead_count(ractl));
+	if (ret < 0)
+		goto cleanup_free;
 
 	netfs_begin_read(rreq, false);
 	return;
@@ -249,6 +250,14 @@ int netfs_readpage(struct file *file, struct page *subpage)
 
 	netfs_stat(&netfs_n_rh_readpage);
 	trace_netfs_read(rreq, rreq->start, rreq->len, netfs_read_trace_readpage);
+
+	/* Set up the output buffer */
+	rreq->buffering = NETFS_BUFFER;
+	ret = netfs_set_up_buffer(&rreq->buffer, rreq->mapping, NULL, folio,
+				  folio_index(folio), folio_nr_pages(folio));
+	if (ret < 0)
+		goto discard;
+
 	return netfs_begin_read(rreq, true);
 
 discard:
@@ -376,7 +385,7 @@ retry:
 	if (folio_test_uptodate(folio))
 		goto have_folio;
 
-	/* If the page is beyond the EOF, we want to clear it - unless it's
+	/* If the folio is beyond the EOF, we want to clear it - unless it's
 	 * within the cache granule containing the EOF, in which case we need
 	 * to preload the granule.
 	 */
@@ -409,10 +418,17 @@ retry:
 	ractl._nr_pages = folio_nr_pages(folio);
 	netfs_rreq_expand(rreq, &ractl);
 
-	/* We hold the folio locks, so we can drop the references */
-	folio_get(folio);
-	while (readahead_folio(&ractl))
-		;
+	/* Set up the output buffer */
+	rreq->buffering = NETFS_BUFFER;
+	ret = netfs_set_up_buffer(&rreq->buffer, rreq->mapping, &ractl, folio,
+				  readahead_index(&ractl), readahead_count(&ractl));
+	if (ret < 0) {
+		/* We hold the folio locks, so we can drop the references */
+		folio_get(folio);
+		while (readahead_folio(&ractl))
+			;
+		goto error_put;
+	}
 
 	ret = netfs_begin_read(rreq, true);
 	if (ret < 0)
