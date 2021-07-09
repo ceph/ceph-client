@@ -535,6 +535,11 @@ netfs_rreq_prepare_read(struct netfs_io_request *rreq,
 	}
 
 	switch (rreq->buffering) {
+	case NETFS_DIRECT:
+	case NETFS_DIRECT_BV:
+		subreq->iter = rreq->direct_iter;
+		iov_iter_advance(&subreq->iter, subreq->start - rreq->start);
+		break;
 	case NETFS_BUFFER:
 		iov_iter_xarray(&subreq->iter, READ, &rreq->buffer,
 				subreq->start, subreq->len);
