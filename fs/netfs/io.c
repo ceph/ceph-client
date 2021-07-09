@@ -539,6 +539,10 @@ netfs_rreq_prepare_read(struct netfs_io_request *rreq,
 		iov_iter_xarray(&subreq->iter, READ, &rreq->buffer,
 				subreq->start, subreq->len);
 		break;
+	case NETFS_BOUNCE:
+		iov_iter_xarray(&subreq->iter, READ, &rreq->bounce,
+				subreq->start, subreq->len);
+		break;
 	case NETFS_INVALID:
 		kdebug("Invalid buffering form %u", rreq->buffering);
 		BUG();
