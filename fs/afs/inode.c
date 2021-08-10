@@ -249,6 +249,7 @@ static void afs_apply_status(struct afs_operation *op,
 		vnode->netfs_ctx.remote_i_size = status->size;
 		if (change_size) {
 			afs_set_i_size(vnode, status->size);
+			vnode->netfs_ctx.zero_point = status->size;
 			inode->i_ctime = t;
 			inode->i_atime = t;
 		}
@@ -837,11 +838,11 @@ static void afs_setattr_edit_file(struct afs_operation *op)
 		loff_t size = op->setattr.attr->ia_size;
 		loff_t i_size = op->setattr.old_i_size;
 
-		if (size < i_size)
+		if (size != i_size) {
 			truncate_pagecache(inode, size);
-		if (size != i_size)
-			fscache_resize_cookie(afs_vnode_cache(vp->vnode),
-					      vp->scb.status.size);
+			netfs_resize_file(inode, size);
+			fscache_resize_cookie(afs_vnode_cache(vp->vnode), size);
+		}
 	}
 }
 

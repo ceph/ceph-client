@@ -127,6 +127,8 @@ struct netfs_i_context {
 	struct fscache_cookie	*cache;
 #endif
 	loff_t			remote_i_size;	/* Size of the remote file */
+	loff_t			zero_point;	/* Size after which we assume there's no data
+						 * on the server */
 };
 
 /*
@@ -332,6 +334,7 @@ static inline void netfs_i_context_init(struct inode *inode,
 	memset(ctx, 0, sizeof(*ctx));
 	ctx->ops = ops;
 	ctx->remote_i_size = i_size_read(inode);
+	ctx->zero_point = ctx->remote_i_size;
 }
 
 /**
@@ -346,6 +349,8 @@ static inline void netfs_resize_file(struct inode *inode, loff_t new_i_size)
 	struct netfs_i_context *ctx = netfs_i_context(inode);
 
 	ctx->remote_i_size = new_i_size;
+	if (new_i_size < ctx->zero_point)
+		ctx->zero_point = new_i_size;
 }
 
 /**

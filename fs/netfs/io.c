@@ -73,6 +73,7 @@ static void netfs_fill_with_zeroes(struct netfs_io_request *rreq,
  *
  * The netfs is expected to read from subreq->pos + subreq->transferred to
  * subreq->pos + subreq->len - 1.  It may not backtrack and write data into the
+
  * buffer prior to the transferred point as it might clobber dirty data
  * obtained from the cache.
  *
