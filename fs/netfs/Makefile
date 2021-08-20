@@ -4,6 +4,7 @@ netfs-y := \
 	buffered_read.o \
 	io.o \
 	main.o \
+	misc.o \
 	objects.o
 
 netfs-$(CONFIG_NETFS_STATS) += stats.o

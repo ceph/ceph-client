@@ -290,6 +290,8 @@ extern int netfs_readpage(struct file *, struct page *);
 extern int netfs_write_begin(struct file *, struct address_space *,
 			     loff_t, unsigned int, unsigned int, struct folio **,
 			     void **);
+extern void netfs_invalidate_folio(struct folio *folio, size_t offset, size_t length);
+extern int netfs_releasepage(struct page *page, gfp_t gfp_flags);
 
 extern void netfs_subreq_terminated(struct netfs_io_subrequest *, ssize_t, bool);
 extern void netfs_get_subrequest(struct netfs_io_subrequest *subreq,
