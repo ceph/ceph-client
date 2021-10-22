@@ -803,6 +803,7 @@ int cachefiles_cull(struct cachefiles_cache *cache, struct dentry *dir,
 	if (ret < 0)
 		goto error;
 
+	fscache_count_culled();
 	dput(victim);
 	_leave(" = 0");
 	return 0;
