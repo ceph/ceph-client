@@ -102,8 +102,6 @@ static int cachefiles_daemon_open(struct inode *inode, struct file *file)
 	}
 
 	mutex_init(&cache->daemon_mutex);
-	cache->active_nodes = RB_ROOT;
-	rwlock_init(&cache->active_lock);
 	init_waitqueue_head(&cache->daemon_pollwq);
 
 	/* set default caching limits
@@ -138,8 +136,6 @@ static int cachefiles_daemon_release(struct inode *inode, struct file *file)
 
 	cachefiles_daemon_unbind(cache);
 
-	ASSERT(!cache->active_nodes.rb_node);
-
 	/* clean up the control file interface */
 	cache->cachefilesd = NULL;
 	file->private_data = NULL;
@@ -169,7 +165,7 @@ static ssize_t cachefiles_daemon_read(struct file *file, char __user *_buffer,
 		return 0;
 
 	/* check how much space the cache has */
-	cachefiles_has_space(cache, 0, 0);
+	// PLACEHOLDER: Check space
 
 	/* summarise */
 	f_released = atomic_xchg(&cache->f_released, 0);
@@ -575,7 +571,7 @@ static int cachefiles_daemon_cull(struct cachefiles_cache *cache, char *args)
 		goto notdir;
 
 	cachefiles_begin_secure(cache, &saved_cred);
-	ret = cachefiles_cull(cache, path.dentry, args);
+	ret = -ENOANO; // PLACEHOLDER: Do culling
 	cachefiles_end_secure(cache, saved_cred);
 
 	path_put(&path);
@@ -647,7 +643,7 @@ static int cachefiles_daemon_inuse(struct cachefiles_cache *cache, char *args)
 		goto notdir;
 
 	cachefiles_begin_secure(cache, &saved_cred);
-	ret = cachefiles_check_in_use(cache, path.dentry, args);
+	ret = -ENOANO; // PLACEHOLDER: Check if in use
 	cachefiles_end_secure(cache, saved_cred);
 
 	path_put(&path);
@@ -662,87 +658,4 @@ notdir:
 inval:
 	pr_err("inuse command requires dirfd and filename\n");
 	return -EINVAL;
-}
-
-/*
- * see if we have space for a number of pages and/or a number of files in the
- * cache
- */
-int cachefiles_has_space(struct cachefiles_cache *cache,
-			 unsigned fnr, unsigned bnr)
-{
-	struct kstatfs stats;
-	struct path path = {
-		.mnt	= cache->mnt,
-		.dentry	= cache->mnt->mnt_root,
-	};
-	int ret;
-
-	//_enter("{%llu,%llu,%llu,%llu,%llu,%llu},%u,%u",
-	//       (unsigned long long) cache->frun,
-	//       (unsigned long long) cache->fcull,
-	//       (unsigned long long) cache->fstop,
-	//       (unsigned long long) cache->brun,
-	//       (unsigned long long) cache->bcull,
-	//       (unsigned long long) cache->bstop,
-	//       fnr, bnr);
-
-	/* find out how many pages of blockdev are available */
-	memset(&stats, 0, sizeof(stats));
-
-	ret = vfs_statfs(&path, &stats);
-	if (ret < 0) {
-		if (ret == -EIO)
-			cachefiles_io_error(cache, "statfs failed");
-		_leave(" = %d", ret);
-		return ret;
-	}
-
-	stats.f_bavail >>= cache->bshift;
-
-	//_debug("avail %llu,%llu",
-	//       (unsigned long long) stats.f_ffree,
-	//       (unsigned long long) stats.f_bavail);
-
-	/* see if there is sufficient space */
-	if (stats.f_ffree > fnr)
-		stats.f_ffree -= fnr;
-	else
-		stats.f_ffree = 0;
-
-	if (stats.f_bavail > bnr)
-		stats.f_bavail -= bnr;
-	else
-		stats.f_bavail = 0;
-
-	ret = -ENOBUFS;
-	if (stats.f_ffree < cache->fstop ||
-	    stats.f_bavail < cache->bstop)
-		goto begin_cull;
-
-	ret = 0;
-	if (stats.f_ffree < cache->fcull ||
-	    stats.f_bavail < cache->bcull)
-		goto begin_cull;
-
-	if (test_bit(CACHEFILES_CULLING, &cache->flags) &&
-	    stats.f_ffree >= cache->frun &&
-	    stats.f_bavail >= cache->brun &&
-	    test_and_clear_bit(CACHEFILES_CULLING, &cache->flags)
-	    ) {
-		_debug("cease culling");
-		cachefiles_state_changed(cache);
-	}
-
-	//_leave(" = 0");
-	return 0;
-
-begin_cull:
-	if (!test_and_set_bit(CACHEFILES_CULLING, &cache->flags)) {
-		_debug("### CULL CACHE ###");
-		cachefiles_state_changed(cache);
-	}
-
-	_leave(" = %d", ret);
-	return ret;
 }

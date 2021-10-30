@@ -78,10 +78,9 @@ int cachefiles_daemon_bind(struct cachefiles_cache *cache, char *args)
  */
 static int cachefiles_daemon_add_cache(struct cachefiles_cache *cache)
 {
-	struct cachefiles_object *fsdef;
 	struct path path;
 	struct kstatfs stats;
-	struct dentry *graveyard, *cachedir, *root;
+	struct dentry *root;
 	const struct cred *saved_cred;
 	int ret;
 
@@ -93,18 +92,6 @@ static int cachefiles_daemon_add_cache(struct cachefiles_cache *cache)
 		return ret;
 
 	cachefiles_begin_secure(cache, &saved_cred);
-
-	/* allocate the root index object */
-	ret = -ENOMEM;
-
-	fsdef = kmem_cache_alloc(cachefiles_object_jar, GFP_KERNEL);
-	if (!fsdef)
-		goto error_root_object;
-
-	ASSERTCMP(fsdef->backer, ==, NULL);
-
-	atomic_set(&fsdef->usage, 1);
-	fsdef->type = FSCACHE_COOKIE_TYPE_INDEX;
 
 	/* look up the directory at the root of the cache */
 	ret = kern_path(cache->rootdirname, LOOKUP_DIRECTORY, &path);
@@ -187,65 +174,15 @@ static int cachefiles_daemon_add_cache(struct cachefiles_cache *cache)
 	       (unsigned long long) cache->bcull,
 	       (unsigned long long) cache->bstop);
 
-	/* get the cache directory and check its type */
-	cachedir = cachefiles_get_directory(cache, root, "cache");
-	if (IS_ERR(cachedir)) {
-		ret = PTR_ERR(cachedir);
-		goto error_unsupported;
-	}
+	// PLACEHOLDER: Register with fscache
+	ret = -ENOANO;
+	goto error_unsupported;
 
-	fsdef->dentry = cachedir;
-	fsdef->fscache.cookie = NULL;
-
-	ret = cachefiles_check_object_type(fsdef);
-	if (ret < 0)
-		goto error_unsupported;
-
-	/* get the graveyard directory */
-	graveyard = cachefiles_get_directory(cache, root, "graveyard");
-	if (IS_ERR(graveyard)) {
-		ret = PTR_ERR(graveyard);
-		goto error_unsupported;
-	}
-
-	cache->graveyard = graveyard;
-
-	/* publish the cache */
-	fscache_init_cache(&cache->cache,
-			   &cachefiles_cache_ops,
-			   "%s",
-			   fsdef->dentry->d_sb->s_id);
-
-	fscache_object_init(&fsdef->fscache, &fscache_fsdef_index,
-			    &cache->cache);
-
-	ret = fscache_add_cache(&cache->cache, &fsdef->fscache, cache->tag);
-	if (ret < 0)
-		goto error_add_cache;
-
-	/* done */
-	set_bit(CACHEFILES_READY, &cache->flags);
-	dput(root);
-
-	pr_info("File cache on %s registered\n", cache->cache.identifier);
-
-	/* check how much space the cache has */
-	cachefiles_has_space(cache, 0, 0);
-	cachefiles_end_secure(cache, saved_cred);
-	return 0;
-
-error_add_cache:
-	dput(cache->graveyard);
-	cache->graveyard = NULL;
 error_unsupported:
 	mntput(cache->mnt);
 	cache->mnt = NULL;
-	dput(fsdef->dentry);
-	fsdef->dentry = NULL;
 	dput(root);
 error_open_root:
-	kmem_cache_free(cachefiles_object_jar, fsdef);
-error_root_object:
 	cachefiles_end_secure(cache, saved_cred);
 	pr_err("Failed to register: %d\n", ret);
 	return ret;
@@ -259,13 +196,9 @@ void cachefiles_daemon_unbind(struct cachefiles_cache *cache)
 	_enter("");
 
 	if (test_bit(CACHEFILES_READY, &cache->flags)) {
-		pr_info("File cache on %s unregistering\n",
-			cache->cache.identifier);
-
-		fscache_withdraw_cache(&cache->cache);
+		// PLACEHOLDER: Withdraw cache
 	}
 
-	dput(cache->graveyard);
 	mntput(cache->mnt);
 
 	kfree(cache->rootdirname);

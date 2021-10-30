@@ -6,13 +6,7 @@
 cachefiles-y := \
 	bind.o \
 	daemon.o \
-	interface.o \
-	io.o \
-	key.o \
 	main.o \
-	namei.o \
-	rdwr.o \
-	security.o \
-	xattr.o
+	security.o
 
 obj-$(CONFIG_CACHEFILES) := cachefiles.o
