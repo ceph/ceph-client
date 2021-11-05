@@ -727,6 +727,8 @@ retry:
 	req->r_args.open.mask = cpu_to_le32(mask);
 	req->r_parent = dir;
 	ihold(dir);
+	if (IS_ENCRYPTED(dir))
+		set_bit(CEPH_MDS_R_FSCRYPT_FILE, &req->r_req_flags);
 
 	if (flags & O_CREAT) {
 		struct ceph_file_layout lo;
