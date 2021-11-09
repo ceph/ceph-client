@@ -547,18 +547,21 @@ static inline int ceph_ino_compare(struct inode *inode, void *data)
 
 static inline bool ceph_vino_is_reserved(const struct ceph_vino vino)
 {
-	if (vino.ino < CEPH_INO_SYSTEM_BASE &&
-	    vino.ino >= CEPH_MDS_INO_MDSDIR_OFFSET) {
-		WARN_RATELIMIT(1, "Attempt to access reserved inode number 0x%llx", vino.ino);
-		return true;
-	}
-	return false;
+	return vino.ino < CEPH_INO_SYSTEM_BASE &&
+	       vino.ino >= CEPH_MDS_INO_MDSDIR_OFFSET;
+}
+
+static inline bool ceph_vino_warn_reserved(const struct ceph_vino vino)
+{
+	return WARN_RATELIMIT(ceph_vino_is_reserved(vino),
+				"Attempt to access reserved inode number 0x%llx",
+				vino.ino);
 }
 
 static inline struct inode *ceph_find_inode(struct super_block *sb,
 					    struct ceph_vino vino)
 {
-	if (ceph_vino_is_reserved(vino))
+	if (ceph_vino_warn_reserved(vino))
 		return NULL;
 
 	/*

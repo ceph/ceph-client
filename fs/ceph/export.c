@@ -130,7 +130,7 @@ static struct inode *__lookup_inode(struct super_block *sb, u64 ino)
 	vino.ino = ino;
 	vino.snap = CEPH_NOSNAP;
 
-	if (ceph_vino_is_reserved(vino))
+	if (ceph_vino_warn_reserved(vino))
 		return ERR_PTR(-ESTALE);
 
 	inode = ceph_find_inode(sb, vino);
@@ -224,7 +224,7 @@ static struct dentry *__snapfh_to_dentry(struct super_block *sb,
 		vino.snap = sfh->snapid;
 	}
 
-	if (ceph_vino_is_reserved(vino))
+	if (ceph_vino_warn_reserved(vino))
 		return ERR_PTR(-ESTALE);
 
 	inode = ceph_find_inode(sb, vino);
