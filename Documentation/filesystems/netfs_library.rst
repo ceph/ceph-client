@@ -452,6 +452,10 @@ operation table looks like the following::
 			    netfs_io_terminated_t term_func,
 			    void *term_func_priv);
 
+		int (*prepare_write)(struct netfs_cache_resources *cres,
+				     loff_t *_start, size_t *_len, loff_t i_size,
+				     bool no_space_allocated_yet);
+
 		int (*write)(struct netfs_cache_resources *cres,
 			     loff_t start_pos,
 			     struct iov_iter *iter,
@@ -508,6 +512,17 @@ The methods defined in the table are:
    with the number of bytes transferred or an error code, plus a flag
    indicating whether the termination is definitely happening in the caller's
    context.
+
+ * ``prepare_write()``
+
+   [Required] Called to prepare a write to the cache to take place.  This
+   involves checking to see whether the cache has sufficient space to honour
+   the write.  *_start and *_len indicate the region to be written; the region
+   can be shrunk or it can be expanded to a page boundary either way as
+   necessary to align for direct I/O.  i_size holds the size of the object and
+   is provided for reference.  no_space_allocated_yet is set to true if the
+   caller is certain that no data has been written to that region - for example
+   if it tried to do a read from there already.
 
  * ``write()``
 
