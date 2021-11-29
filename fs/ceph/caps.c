@@ -1826,6 +1826,7 @@ static u64 __mark_caps_flushing(struct inode *inode,
 	swap(cf, ci->i_prealloc_cap_flush);
 	cf->caps = flushing;
 	cf->wake = wake;
+	cf->ci = ci;
 
 	spin_lock(&mdsc->cap_dirty_lock);
 	list_del_init(&ci->i_dirty_item);
@@ -3590,6 +3591,10 @@ static void handle_cap_flush_ack(struct inode *inode, u64 flush_tid,
 	bool wake_ci = false;
 	bool wake_mdsc = false;
 
+	/* track latest cap flush ack seen for this inode */
+	if (flush_tid > ci->i_last_cap_flush_ack)
+		ci->i_last_cap_flush_ack = flush_tid;
+
 	list_for_each_entry_safe(cf, tmp_cf, &ci->i_cap_flush_list, i_list) {
 		/* Is this the one that was flushed? */
 		if (cf->tid == flush_tid)
@@ -4143,7 +4148,11 @@ void ceph_handle_caps(struct ceph_mds_session *session,
 	     (unsigned)seq);
 
 	if (!inode) {
-		dout(" i don't have ino %llx\n", vino.ino);
+		if (op == CEPH_CAP_OP_FLUSH_ACK)
+			pr_info("%s: can't find ino %llx:%llx for flush_ack!\n",
+				__func__, vino.snap, vino.ino);
+		else
+			dout(" i don't have ino %llx\n", vino.ino);
 
 		if (op == CEPH_CAP_OP_IMPORT) {
 			cap = ceph_get_cap(mdsc, NULL);
@@ -4196,10 +4205,14 @@ void ceph_handle_caps(struct ceph_mds_session *session,
 	spin_lock(&ci->i_ceph_lock);
 	cap = __get_cap_for_mds(ceph_inode(inode), session->s_mds);
 	if (!cap) {
-		dout(" no cap on %p ino %llx.%llx from mds%d\n",
+		dout(" no cap on %p ino %llx:%llx from mds%d\n",
 		     inode, ceph_ino(inode), ceph_snap(inode),
 		     session->s_mds);
 		spin_unlock(&ci->i_ceph_lock);
+		if (op == CEPH_CAP_OP_FLUSH_ACK)
+			pr_info("%s: no cap on %p ino %llx:%llx from mds%d for flush_ack!\n",
+				__func__, inode, ceph_ino(inode),
+				ceph_snap(inode), session->s_mds);
 		goto flush_cap_releases;
 	}
 
@@ -4350,7 +4363,7 @@ void ceph_get_fmode(struct ceph_inode_info *ci, int fmode, int count)
 {
 	struct ceph_mds_client *mdsc = ceph_sb_to_mdsc(ci->vfs_inode.i_sb);
 	int bits = (fmode << 1) | 1;
-	bool is_opened = false;
+	bool already_opened = false;
 	int i;
 
 	if (count == 1)
@@ -4358,19 +4371,19 @@ void ceph_get_fmode(struct ceph_inode_info *ci, int fmode, int count)
 
 	spin_lock(&ci->i_ceph_lock);
 	for (i = 0; i < CEPH_FILE_MODE_BITS; i++) {
-		if (bits & (1 << i))
-			ci->i_nr_by_mode[i] += count;
-
 		/*
-		 * If any of the mode ref is larger than 1,
+		 * If any of the mode ref is larger than 0,
 		 * that means it has been already opened by
 		 * others. Just skip checking the PIN ref.
 		 */
-		if (i && ci->i_nr_by_mode[i] > 1)
-			is_opened = true;
+		if (i && ci->i_nr_by_mode[i])
+			already_opened = true;
+
+		if (bits & (1 << i))
+			ci->i_nr_by_mode[i] += count;
 	}
 
-	if (!is_opened)
+	if (!already_opened)
 		percpu_counter_inc(&mdsc->metric.opened_inodes);
 	spin_unlock(&ci->i_ceph_lock);
 }

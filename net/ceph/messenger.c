@@ -1267,7 +1267,7 @@ static int ceph_parse_server_name(const char *name, size_t namelen,
  */
 int ceph_parse_ips(const char *c, const char *end,
 		   struct ceph_entity_addr *addr,
-		   int max_count, int *count)
+		   int max_count, int *count, char delimiter)
 {
 	int i, ret = -EINVAL;
 	const char *p = c;
@@ -1276,7 +1276,7 @@ int ceph_parse_ips(const char *c, const char *end,
 	for (i = 0; i < max_count; i++) {
 		const char *ipend;
 		int port;
-		char delim = ',';
+		char delim = delimiter;
 
 		if (*p == '[') {
 			delim = ']';
@@ -1326,11 +1326,11 @@ int ceph_parse_ips(const char *c, const char *end,
 		addr[i].type = CEPH_ENTITY_ADDR_TYPE_LEGACY;
 		addr[i].nonce = 0;
 
-		dout("parse_ips got %s\n", ceph_pr_addr(&addr[i]));
+		dout("%s got %s\n", __func__, ceph_pr_addr(&addr[i]));
 
 		if (p == end)
 			break;
-		if (*p != ',')
+		if (*p != delimiter)
 			goto bad;
 		p++;
 	}
