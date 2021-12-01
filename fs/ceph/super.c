@@ -1096,6 +1096,14 @@ static int ceph_set_test_dummy_encryption(struct super_block *sb, struct fs_cont
 			return -EEXIST;
 		}
 
+		/* HACK: allow for cleartext "encryption" in files for testing */
+		if (fsc->mount_options->test_dummy_encryption &&
+		    !strcmp(fsc->mount_options->test_dummy_encryption, "clear")) {
+			fsopt->flags |= CEPH_MOUNT_OPT_DUMMY_ENC_CLEAR;
+			kfree(fsc->mount_options->test_dummy_encryption);
+			fsc->mount_options->test_dummy_encryption = NULL;
+		}
+
 		err = fscrypt_set_test_dummy_encryption(sb,
 							fsc->mount_options->test_dummy_encryption,
 							&fsc->dummy_enc_policy);
