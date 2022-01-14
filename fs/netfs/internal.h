@@ -21,9 +21,14 @@
 void netfs_rreq_unlock_folios(struct netfs_io_request *rreq);
 
 /*
+ * direct_read.c
+ */
+int netfs_dio_copy_to_dest(struct netfs_io_request *rreq);
+
+/*
  * io.c
  */
-int netfs_begin_read(struct netfs_io_request *rreq, bool sync);
+ssize_t netfs_begin_read(struct netfs_io_request *rreq, bool sync);
 
 /*
  * main.c
@@ -91,6 +96,7 @@ static inline void netfs_see_request(struct netfs_io_request *rreq,
  * stats.c
  */
 #ifdef CONFIG_NETFS_STATS
+extern atomic_t netfs_n_rh_dio_read;
 extern atomic_t netfs_n_rh_readahead;
 extern atomic_t netfs_n_rh_readpage;
 extern atomic_t netfs_n_rh_rreq;

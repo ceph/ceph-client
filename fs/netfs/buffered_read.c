@@ -232,7 +232,7 @@ int netfs_readpage(struct file *file, struct page *subpage)
 	struct address_space *mapping = folio_file_mapping(folio);
 	struct netfs_io_request *rreq;
 	struct netfs_i_context *ctx = netfs_i_context(mapping->host);
-	int ret;
+	ssize_t ret;
 
 	_enter("%lx", folio_index(folio));
 
@@ -258,7 +258,8 @@ int netfs_readpage(struct file *file, struct page *subpage)
 	if (ret < 0)
 		goto discard;
 
-	return netfs_begin_read(rreq, true);
+	ret = netfs_begin_read(rreq, true);
+	return ret < 0 ? ret : 0;
 
 discard:
 	netfs_put_request(rreq, false, netfs_rreq_trace_put_discard);
@@ -358,7 +359,7 @@ int netfs_write_begin(struct file *file, struct address_space *mapping,
 	struct folio *folio;
 	unsigned int fgp_flags;
 	pgoff_t index = pos >> PAGE_SHIFT;
-	int ret;
+	ssize_t ret;
 
 	DEFINE_READAHEAD(ractl, file, NULL, mapping, index);
 
@@ -448,7 +449,7 @@ error_put:
 error:
 	folio_unlock(folio);
 	folio_put(folio);
-	_leave(" = %d", ret);
+	_leave(" = %zd", ret);
 	return ret;
 }
 EXPORT_SYMBOL(netfs_write_begin);

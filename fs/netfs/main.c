@@ -29,7 +29,7 @@ static const char *netfs_origins[] = {
 	[NETFS_READAHEAD]	= "RA",
 	[NETFS_READPAGE]	= "RP",
 	[NETFS_READ_FOR_WRITE]	= "RW",
-
+	[NETFS_DIO_READ]	= "DR",
 };
 
 /*
