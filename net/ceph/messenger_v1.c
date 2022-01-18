@@ -18,6 +18,20 @@ static char tag_ack = CEPH_MSGR_TAG_ACK;
 static char tag_keepalive = CEPH_MSGR_TAG_KEEPALIVE;
 static char tag_keepalive2 = CEPH_MSGR_TAG_KEEPALIVE2;
 
+static int ceph_tcp_recv_iter(struct socket *sock, struct iov_iter *iter)
+{
+	struct msghdr msg = {
+		.msg_iter	= *iter,
+	};
+	unsigned int flags = MSG_DONTWAIT | MSG_NOSIGNAL;
+	int r;
+
+	r = sock_recvmsg(sock, &msg, flags);
+	if (r == -EAGAIN)
+		r = 0;
+	return r;
+}
+
 /*
  * If @buf is NULL, discard up to @len bytes.
  */
@@ -72,6 +86,30 @@ static int ceph_tcp_sendmsg(struct socket *sock, struct kvec *iov,
 		msg.msg_flags |= MSG_EOR;  /* superfluous, but what the hell */
 
 	r = kernel_sendmsg(sock, &msg, iov, kvlen, len);
+	if (r == -EAGAIN)
+		r = 0;
+	return r;
+}
+
+/*
+ * write something from an iterator.  @more is true if caller will be
+ * sending more data shortly.
+ */
+static int ceph_tcp_send_iter(struct socket *sock, struct iov_iter *iter,
+			      bool more)
+{
+	struct msghdr msg = {
+		.msg_flags	= MSG_DONTWAIT | MSG_NOSIGNAL | MSG_ZEROCOPY,
+		.msg_iter	= *iter,
+	};
+	int r;
+
+	if (more)
+		msg.msg_flags |= MSG_MORE;
+	else
+		msg.msg_flags |= MSG_EOR;  /* superfluous, but what the hell */
+
+	r = sock_sendmsg(sock, &msg);
 	if (r == -EAGAIN)
 		r = 0;
 	return r;
@@ -455,6 +493,15 @@ out:
 	return ret;  /* done! */
 }
 
+static ssize_t ceph_crc_scan(struct iov_iter *i, const void *p,
+			     size_t len, size_t off, void *_priv)
+{
+	u32 *crc = _priv;
+
+	*crc = crc32c(*crc, p, len);
+	return len;
+}
+
 /*
  * Write as much message data payload as we can.  If we finish, queue
  * up the footer.
@@ -467,7 +514,7 @@ static int write_partial_message_data(struct ceph_connection *con)
 	struct ceph_msg *msg = con->out_msg;
 	struct ceph_msg_data_cursor *cursor = &msg->cursor;
 	bool do_datacrc = !ceph_test_opt(from_msgr(con->msgr), NOCRC);
-	int more = MSG_MORE | MSG_SENDPAGE_NOTLAST;
+	int ret, more = MSG_MORE | MSG_SENDPAGE_NOTLAST;
 	u32 crc;
 
 	dout("%s %p msg %p\n", __func__, con, msg);
@@ -484,31 +531,45 @@ static int write_partial_message_data(struct ceph_connection *con)
 	 * been revoked, so use the zero page.
 	 */
 	crc = do_datacrc ? le32_to_cpu(msg->footer.data_crc) : 0;
-	while (cursor->total_resid) {
-		struct page *page;
-		size_t page_offset;
-		size_t length;
-		int ret;
 
-		if (!cursor->resid) {
-			ceph_msg_data_advance(cursor, 0);
-			continue;
-		}
+	if (cursor->data->type == CEPH_MSG_DATA_ITER) {
+		struct ceph_msg_data *data = cursor->data;
 
-		page = ceph_msg_data_next(cursor, &page_offset, &length, NULL);
-		if (length == cursor->total_resid)
-			more = MSG_MORE;
-		ret = ceph_tcp_sendpage(con->sock, page, page_offset, length,
-					more);
-		if (ret <= 0) {
-			if (do_datacrc)
-				msg->footer.data_crc = cpu_to_le32(crc);
-
+		ret = ceph_tcp_send_iter(con->sock, &data->iter, more);
+		if (ret <= 0)
 			return ret;
+		cursor->total_resid -= ret;
+		if (cursor->total_resid > 0)
+			return 0;
+
+		//iov_iter_revert(&data->iter, data->iter_count);
+		iov_iter_scan(&data->iter, data->iter_count, ceph_crc_scan, &crc);
+	} else {
+		while (cursor->total_resid) {
+			struct page *page;
+			size_t page_offset;
+			size_t length;
+
+			if (!cursor->resid) {
+				ceph_msg_data_advance(cursor, 0);
+				continue;
+			}
+
+			page = ceph_msg_data_next(cursor, &page_offset, &length, NULL);
+			if (length == cursor->total_resid)
+				more = MSG_MORE;
+			ret = ceph_tcp_sendpage(con->sock, page, page_offset, length,
+						more);
+			if (ret <= 0) {
+				if (do_datacrc)
+					msg->footer.data_crc = cpu_to_le32(crc);
+
+				return ret;
+			}
+			if (do_datacrc && cursor->need_crc)
+				crc = ceph_crc32c_page(crc, page, page_offset, length);
+			ceph_msg_data_advance(cursor, (size_t)ret);
 		}
-		if (do_datacrc && cursor->need_crc)
-			crc = ceph_crc32c_page(crc, page, page_offset, length);
-		ceph_msg_data_advance(cursor, (size_t)ret);
 	}
 
 	dout("%s %p msg %p done\n", __func__, con, msg);
@@ -1002,24 +1063,39 @@ static int read_partial_msg_data(struct ceph_connection *con)
 
 	if (do_datacrc)
 		crc = con->in_data_crc;
-	while (cursor->total_resid) {
-		if (!cursor->resid) {
-			ceph_msg_data_advance(cursor, 0);
-			continue;
-		}
 
-		page = ceph_msg_data_next(cursor, &page_offset, &length, NULL);
-		ret = ceph_tcp_recvpage(con->sock, page, page_offset, length);
-		if (ret <= 0) {
-			if (do_datacrc)
-				con->in_data_crc = crc;
+	if (cursor->data->type == CEPH_MSG_DATA_ITER) {
+		struct ceph_msg_data *data = cursor->data;
 
+		ret = ceph_tcp_recv_iter(con->sock, &data->iter);
+		if (ret <= 0)
 			return ret;
-		}
+		cursor->total_resid -= ret;
+		if (cursor->total_resid > 0)
+			return 0;
 
-		if (do_datacrc)
-			crc = ceph_crc32c_page(crc, page, page_offset, ret);
-		ceph_msg_data_advance(cursor, (size_t)ret);
+		iov_iter_scan(&data->iter, data->iter_count, ceph_crc_scan, &crc);
+
+	} else {
+		while (cursor->total_resid) {
+			if (!cursor->resid) {
+				ceph_msg_data_advance(cursor, 0);
+				continue;
+			}
+
+			page = ceph_msg_data_next(cursor, &page_offset, &length, NULL);
+			ret = ceph_tcp_recvpage(con->sock, page, page_offset, length);
+			if (ret <= 0) {
+				if (do_datacrc)
+					con->in_data_crc = crc;
+
+				return ret;
+			}
+
+			if (do_datacrc)
+				crc = ceph_crc32c_page(crc, page, page_offset, ret);
+			ceph_msg_data_advance(cursor, (size_t)ret);
+		}
 	}
 	if (do_datacrc)
 		con->in_data_crc = crc;

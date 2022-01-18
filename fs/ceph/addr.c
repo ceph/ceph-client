@@ -220,14 +220,8 @@ static void finish_netfs_read(struct ceph_osd_request *req)
 			__set_bit(NETFS_SREQ_CLEAR_TAIL, &subreq->flags);
 		iov_iter_advance(&subreq->iter, err);
 	}
-	if (!iov_iter_is_bvec(&subreq->iter))
-		ceph_put_page_vector(osd_data->pages,
-				     calc_pages_for(osd_data->alignment,
-				     osd_data->length),
-				     false);
 
 	netfs_subreq_terminated(subreq, err, true);
-	iput(req->r_inode);
 }
 
 static bool ceph_netfs_issue_op_inline(struct netfs_io_subrequest *subreq)
@@ -291,10 +285,7 @@ static void ceph_netfs_issue_read(struct netfs_io_subrequest *subreq)
 	struct ceph_fs_client *fsc = ceph_inode_to_client(inode);
 	struct ceph_osd_request *req;
 	struct ceph_vino vino = ceph_vino(inode);
-	struct iov_iter *iter = &subreq->iter;
-	struct page **pages;
-	size_t page_off;
-	int err = 0;
+	int err;
 	u64 len = subreq->len;
 
 	if (ci->i_inline_version != CEPH_INLINE_NONE &&
@@ -315,38 +306,14 @@ static void ceph_netfs_issue_read(struct netfs_io_subrequest *subreq)
 		__func__, subreq->start, subreq->len, len, rreq->debug_id,
 		subreq->debug_index, iov_iter_count(&subreq->iter));
 
-	if (iov_iter_is_bvec(iter)) {
-		/*
-		 * FIXME: remove force cast, ideally by plumbing an IOV_ITER osd_data
-		 * 	  variant.
-		 */
-		osd_req_op_extent_osd_data_bvecs(req, 0, (__force struct bio_vec *)iter->bvec,
-				iter->nr_segs, len);
-		goto submit;
-	}
-
-	err = iov_iter_get_pages_alloc(&subreq->iter, &pages, len, &page_off);
-	if (err < len) {
-		if (err < 0) {
-			dout("%s: iov_ter_get_pages_alloc returned %d\n", __func__, err);
-			goto out;
-		}
-		len = err;
-		req->r_ops[0].extent.length = err;
-	}
-
-	osd_req_op_extent_osd_data_pages(req, 0, pages, len, 0, false, false);
-submit:
+	osd_req_op_extent_osd_iter(req, 0, &subreq->iter);
 	req->r_callback = finish_netfs_read;
 	req->r_priv = subreq;
 	req->r_inode = inode;
-	ihold(inode);
 
 	err = ceph_osdc_start_request(req->r_osdc, req, false);
-	if (err)
-		iput(inode);
-out:
 	ceph_osdc_put_request(req);
+out:
 	if (err)
 		netfs_subreq_terminated(subreq, err, false);
 	dout("%s: result %d\n", __func__, err);
