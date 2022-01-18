@@ -190,6 +190,8 @@ static bool ceph_netfs_clamp_length(struct netfs_io_subrequest *subreq)
 	/* Truncate the extent at the end of the current block */
 	ceph_calc_file_object_mapping(&ci->i_layout, subreq->start, subreq->len,
 				      &objno, &objoff, &xlen);
+	dout("%s: subreq->len=0x%zx xlen=0x%x rsize=0x%x",
+		__func__, subreq->len, xlen, fsc->mount_options->rsize);
 	subreq->len = min(xlen, fsc->mount_options->rsize);
 	return true;
 }
@@ -304,7 +306,9 @@ static void ceph_netfs_issue_read(struct netfs_io_subrequest *subreq)
 		goto out;
 	}
 
-	dout("%s: pos=%llu orig_len=%zu len=%llu\n", __func__, subreq->start, subreq->len, len);
+	dout("%s: pos=%llu orig_len=%zu len=%llu debug_id=%x debug_idx=%hx iter->count=%zx\n",
+		__func__, subreq->start, subreq->len, len, rreq->debug_id,
+		subreq->debug_index, iov_iter_count(&subreq->iter));
 
 	err = iov_iter_get_pages_alloc(&subreq->iter, &pages, len, &page_off);
 	if (err < 0) {
