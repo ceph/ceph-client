@@ -517,7 +517,8 @@ static u64 get_writepages_data_length(struct inode *inode,
 static int writepage_nounlock(struct page *page, struct writeback_control *wbc)
 {
 	struct folio *folio = page_folio(page);
-	struct inode *inode = page->mapping->host;
+	struct address_space *mapping = folio->mapping;
+	struct inode *inode = mapping->host;
 	struct ceph_inode_info *ci = ceph_inode(inode);
 	struct ceph_fs_client *fsc = ceph_inode_to_client(inode);
 	struct ceph_snap_context *snapc, *oldest;
@@ -527,6 +528,7 @@ static int writepage_nounlock(struct page *page, struct writeback_control *wbc)
 	struct ceph_writeback_ctl ceph_wbc;
 	struct ceph_osd_client *osdc = &fsc->client->osdc;
 	struct ceph_osd_request *req;
+	struct iov_iter iter;
 	bool caching = ceph_is_cache_enabled(inode);
 
 	dout("writepage %p idx %lu\n", page, page->index);
@@ -583,7 +585,8 @@ static int writepage_nounlock(struct page *page, struct writeback_control *wbc)
 
 	/* it may be a short write due to an object boundary */
 	WARN_ON_ONCE(len > thp_size(page));
-	osd_req_op_extent_osd_data_pages(req, 0, &page, len, 0, false, false);
+	iov_iter_xarray(&iter, WRITE, &mapping->i_pages, 0, len);
+	osd_req_op_extent_osd_iter(req, 0, &iter);
 	dout("writepage %llu~%llu (%llu bytes)\n", page_off, len, len);
 
 	req->r_mtime = inode->i_mtime;
