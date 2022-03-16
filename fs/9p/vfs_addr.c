@@ -259,7 +259,7 @@ static int v9fs_write_begin(struct file *filp, struct address_space *mapping,
 	if (retval < 0)
 		return retval;
 
-	*subpagep = &folio->page;
+	*subpagep = folio_file_page(folio, pos / PAGE_SIZE);
 	return retval;
 }
 
