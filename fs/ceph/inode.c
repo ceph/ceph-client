@@ -2985,6 +2985,10 @@ int ceph_getattr(struct user_namespace *mnt_userns, const struct path *path,
 			stat->nlink = 1 + 1 + ci->i_subdirs;
 	}
 
+	if (IS_ENCRYPTED(inode))
+		stat->attributes |= STATX_ATTR_ENCRYPTED;
+	stat->attributes_mask |= STATX_ATTR_ENCRYPTED;
+
 	stat->result_mask = request_mask & valid_mask;
 	return err;
 }
