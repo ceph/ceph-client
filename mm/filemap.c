@@ -1002,10 +1002,12 @@ struct folio *filemap_alloc_folio_noprof(gfp_t gfp, unsigned int order)
 			n = cpuset_mem_spread_node();
 			folio = __folio_alloc_node_noprof(gfp, order, n);
 		} while (!folio && read_mems_allowed_retry(cpuset_mems_cookie));
-
-		return folio;
+	} else {
+		folio = folio_alloc_noprof(gfp, order);
 	}
-	return folio_alloc_noprof(gfp, order);
+	if (folio)
+		VM_BUG_ON_FOLIO(folio->private, folio);
+	return folio;
 }
 EXPORT_SYMBOL(filemap_alloc_folio_noprof);
 #endif
