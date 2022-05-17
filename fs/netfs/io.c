@@ -728,7 +728,7 @@ ssize_t netfs_begin_read(struct netfs_io_request *rreq, bool sync)
 
 		ret = rreq->error;
 		if (ret == 0 && rreq->submitted < rreq->len &&
-		    rreq->origin == NETFS_DIO_READ) {
+		    rreq->origin != NETFS_DIO_READ) {
 			trace_netfs_failure(rreq, NULL, ret, netfs_fail_short_read);
 			ret = -EIO;
 		}
