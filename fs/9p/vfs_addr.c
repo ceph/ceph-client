@@ -35,20 +35,28 @@ static void v9fs_issue_read(struct netfs_io_subrequest *subreq)
 {
 	struct netfs_io_request *rreq = subreq->rreq;
 	struct p9_fid *fid = rreq->netfs_priv;
-	struct iov_iter to;
 	loff_t pos = subreq->start + subreq->transferred;
-	size_t len = subreq->len   - subreq->transferred;
 	int total, err;
 
-	iov_iter_xarray(&to, READ, &rreq->mapping->i_pages, pos, len);
-
-	total = p9_client_read(fid, pos, &to, &err);
+	total = p9_client_read(fid, pos, &subreq->iter, &err);
+	set_bit(NETFS_RREQ_BLOCKED, &rreq->flags);
 
 	/* if we just extended the file size, any portion not in
 	 * cache won't be on server and is zeroes */
 	__set_bit(NETFS_SREQ_CLEAR_TAIL, &subreq->flags);
 
 	netfs_subreq_terminated(subreq, err ?: total, false);
+}
+
+/*
+ * Clamp the size of a read subrequest.
+ */
+static bool v9fs_clamp_length(struct netfs_io_subrequest *subreq)
+{
+	struct netfs_io_request *rreq = subreq->rreq;
+
+	subreq->len = min_t(size_t, subreq->len, rreq->rsize);
+	return true;
 }
 
 /**
@@ -59,20 +67,24 @@ static void v9fs_issue_read(struct netfs_io_subrequest *subreq)
 static int v9fs_init_request(struct netfs_io_request *rreq, struct file *file)
 {
 	struct p9_fid *fid = file->private_data;
+	struct p9_client *clnt = fid->clnt;
+	int rsize = fid->iounit;
 
 	refcount_inc(&fid->count);
 	rreq->netfs_priv = fid;
+	if (!rsize || rsize > clnt->msize - P9_IOHDRSZ)
+		rsize = clnt->msize - P9_IOHDRSZ;
+	rreq->rsize = rsize;
 	return 0;
 }
 
 /**
- * v9fs_req_cleanup - Cleanup request initialized by v9fs_init_request
- * @mapping: unused mapping of request to cleanup
- * @priv: private data to cleanup, a fid, guaranted non-null.
+ * v9fs_free_request - Cleanup request initialized by v9fs_init_rreq
+ * @rreq: The I/O request to clean up
  */
-static void v9fs_req_cleanup(struct address_space *mapping, void *priv)
+static void v9fs_free_request(struct netfs_io_request *rreq)
 {
-	struct p9_fid *fid = priv;
+	struct p9_fid *fid = rreq->netfs_priv;
 
 	p9_client_clunk(fid);
 }
@@ -94,42 +106,11 @@ static int v9fs_begin_cache_operation(struct netfs_io_request *rreq)
 
 const struct netfs_request_ops v9fs_req_ops = {
 	.init_request		= v9fs_init_request,
+	.free_request		= v9fs_free_request,
 	.begin_cache_operation	= v9fs_begin_cache_operation,
+	.clamp_length		= v9fs_clamp_length,
 	.issue_read		= v9fs_issue_read,
-	.cleanup		= v9fs_req_cleanup,
 };
-
-/**
- * v9fs_release_page - release the private state associated with a page
- * @page: The page to be released
- * @gfp: The caller's allocation restrictions
- *
- * Returns 1 if the page can be released, false otherwise.
- */
-
-static int v9fs_release_page(struct page *page, gfp_t gfp)
-{
-	struct folio *folio = page_folio(page);
-	struct inode *inode = folio_inode(folio);
-
-	if (folio_test_private(folio))
-		return 0;
-#ifdef CONFIG_9P_FSCACHE
-	if (folio_test_fscache(folio)) {
-		if (current_is_kswapd() || !(gfp & __GFP_FS))
-			return 0;
-		folio_wait_fscache(folio);
-	}
-#endif
-	fscache_note_page_release(v9fs_inode_cookie(V9FS_I(inode)));
-	return 1;
-}
-
-static void v9fs_invalidate_folio(struct folio *folio, size_t offset,
-				 size_t length)
-{
-	folio_wait_fscache(folio);
-}
 
 static void v9fs_write_to_cache_done(void *priv, ssize_t transferred_or_error,
 				     bool was_async)
@@ -244,17 +225,16 @@ v9fs_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
 	ssize_t n;
 	int err = 0;
 
-	if (iov_iter_rw(iter) == WRITE) {
-		n = p9_client_write(file->private_data, pos, iter, &err);
-		if (n) {
-			struct inode *inode = file_inode(file);
-			loff_t i_size = i_size_read(inode);
+	if (iov_iter_rw(iter) == READ)
+		return -EINVAL;
 
-			if (pos + n > i_size)
-				inode_add_bytes(inode, pos + n - i_size);
-		}
-	} else {
-		n = p9_client_read(file->private_data, pos, iter, &err);
+	n = p9_client_write(file->private_data, pos, iter, &err);
+	if (n) {
+		struct inode *inode = file_inode(file);
+		loff_t i_size = i_size_read(inode);
+
+		if (pos + n > i_size)
+			inode_add_bytes(inode, pos + n - i_size);
 	}
 	return n ? n : err;
 }
@@ -279,7 +259,7 @@ static int v9fs_write_begin(struct file *filp, struct address_space *mapping,
 	if (retval < 0)
 		return retval;
 
-	*subpagep = &folio->page;
+	*subpagep = folio_file_page(folio, pos / PAGE_SIZE);
 	return retval;
 }
 
@@ -342,8 +322,8 @@ const struct address_space_operations v9fs_addr_operations = {
 	.writepage = v9fs_vfs_writepage,
 	.write_begin = v9fs_write_begin,
 	.write_end = v9fs_write_end,
-	.releasepage = v9fs_release_page,
-	.invalidate_folio = v9fs_invalidate_folio,
+	.releasepage = netfs_releasepage,
+	.invalidate_folio = netfs_invalidate_folio,
 	.launder_folio = v9fs_launder_folio,
 	.direct_IO = v9fs_direct_IO,
 };

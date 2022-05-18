@@ -137,6 +137,22 @@ static void netfs_rreq_expand(struct netfs_io_request *rreq,
 	}
 }
 
+/*
+ * Begin an operation, and fetch the stored zero point value from the cookie if
+ * available.
+ */
+static int netfs_begin_cache_operation(struct netfs_io_request *rreq,
+				       struct netfs_i_context *ctx)
+{
+	int ret = -ENOBUFS;
+
+	if (ctx->ops->begin_cache_operation) {
+		ret = ctx->ops->begin_cache_operation(rreq);
+		/* TODO: Get the zero point value from the cache */
+	}
+	return ret;
+}
+
 /**
  * netfs_readahead - Helper to manage a read request
  * @ractl: The description of the readahead request
@@ -170,11 +186,9 @@ void netfs_readahead(struct readahead_control *ractl)
 	if (IS_ERR(rreq))
 		return;
 
-	if (ctx->ops->begin_cache_operation) {
-		ret = ctx->ops->begin_cache_operation(rreq);
-		if (ret == -ENOMEM || ret == -EINTR || ret == -ERESTARTSYS)
-			goto cleanup_free;
-	}
+	ret = netfs_begin_cache_operation(rreq, ctx);
+	if (ret == -ENOMEM || ret == -EINTR || ret == -ERESTARTSYS)
+		goto cleanup_free;
 
 	netfs_stat(&netfs_n_rh_readahead);
 	trace_netfs_read(rreq, readahead_pos(ractl), readahead_length(ractl),
@@ -182,11 +196,12 @@ void netfs_readahead(struct readahead_control *ractl)
 
 	netfs_rreq_expand(rreq, ractl);
 
-	/* Drop the refs on the folios here rather than in the cache or
-	 * filesystem.  The locks will be dropped in netfs_rreq_unlock().
-	 */
-	while (readahead_folio(ractl))
-		;
+	/* Set up the output buffer */
+	rreq->buffering = NETFS_BUFFER;
+	ret = netfs_set_up_buffer(&rreq->buffer, rreq->mapping, ractl, NULL,
+				  readahead_index(ractl), readahead_count(ractl));
+	if (ret < 0)
+		goto cleanup_free;
 
 	netfs_begin_read(rreq, false);
 	return;
@@ -217,7 +232,7 @@ int netfs_readpage(struct file *file, struct page *subpage)
 	struct address_space *mapping = folio_file_mapping(folio);
 	struct netfs_io_request *rreq;
 	struct netfs_i_context *ctx = netfs_i_context(mapping->host);
-	int ret;
+	ssize_t ret;
 
 	_enter("%lx", folio_index(folio));
 
@@ -229,15 +244,22 @@ int netfs_readpage(struct file *file, struct page *subpage)
 		goto alloc_error;
 	}
 
-	if (ctx->ops->begin_cache_operation) {
-		ret = ctx->ops->begin_cache_operation(rreq);
-		if (ret == -ENOMEM || ret == -EINTR || ret == -ERESTARTSYS)
-			goto discard;
-	}
+	ret = netfs_begin_cache_operation(rreq, ctx);
+	if (ret == -ENOMEM || ret == -EINTR || ret == -ERESTARTSYS)
+		goto discard;
 
 	netfs_stat(&netfs_n_rh_readpage);
 	trace_netfs_read(rreq, rreq->start, rreq->len, netfs_read_trace_readpage);
-	return netfs_begin_read(rreq, true);
+
+	/* Set up the output buffer */
+	rreq->buffering = NETFS_BUFFER;
+	ret = netfs_set_up_buffer(&rreq->buffer, rreq->mapping, NULL, folio,
+				  folio_index(folio), folio_nr_pages(folio));
+	if (ret < 0)
+		goto discard;
+
+	ret = netfs_begin_read(rreq, true);
+	return ret < 0 ? ret : 0;
 
 discard:
 	netfs_put_request(rreq, false, netfs_rreq_trace_put_discard);
@@ -337,7 +359,7 @@ int netfs_write_begin(struct file *file, struct address_space *mapping,
 	struct folio *folio;
 	unsigned int fgp_flags;
 	pgoff_t index = pos >> PAGE_SHIFT;
-	int ret;
+	ssize_t ret;
 
 	DEFINE_READAHEAD(ractl, file, NULL, mapping, index);
 
@@ -364,7 +386,7 @@ retry:
 	if (folio_test_uptodate(folio))
 		goto have_folio;
 
-	/* If the page is beyond the EOF, we want to clear it - unless it's
+	/* If the folio is beyond the EOF, we want to clear it - unless it's
 	 * within the cache granule containing the EOF, in which case we need
 	 * to preload the granule.
 	 */
@@ -384,11 +406,9 @@ retry:
 	rreq->no_unlock_folio	= folio_index(folio);
 	__set_bit(NETFS_RREQ_NO_UNLOCK_FOLIO, &rreq->flags);
 
-	if (ctx->ops->begin_cache_operation) {
-		ret = ctx->ops->begin_cache_operation(rreq);
-		if (ret == -ENOMEM || ret == -EINTR || ret == -ERESTARTSYS)
-			goto error_put;
-	}
+	ret = netfs_begin_cache_operation(rreq, ctx);
+	if (ret == -ENOMEM || ret == -EINTR || ret == -ERESTARTSYS)
+		goto error_put;
 
 	netfs_stat(&netfs_n_rh_write_begin);
 	trace_netfs_read(rreq, pos, len, netfs_read_trace_write_begin);
@@ -399,10 +419,17 @@ retry:
 	ractl._nr_pages = folio_nr_pages(folio);
 	netfs_rreq_expand(rreq, &ractl);
 
-	/* We hold the folio locks, so we can drop the references */
-	folio_get(folio);
-	while (readahead_folio(&ractl))
-		;
+	/* Set up the output buffer */
+	rreq->buffering = NETFS_BUFFER;
+	ret = netfs_set_up_buffer(&rreq->buffer, rreq->mapping, &ractl, folio,
+				  readahead_index(&ractl), readahead_count(&ractl));
+	if (ret < 0) {
+		/* We hold the folio locks, so we can drop the references */
+		folio_get(folio);
+		while (readahead_folio(&ractl))
+			;
+		goto error_put;
+	}
 
 	ret = netfs_begin_read(rreq, true);
 	if (ret < 0)
@@ -422,7 +449,7 @@ error_put:
 error:
 	folio_unlock(folio);
 	folio_put(folio);
-	_leave(" = %d", ret);
+	_leave(" = %zd", ret);
 	return ret;
 }
 EXPORT_SYMBOL(netfs_write_begin);

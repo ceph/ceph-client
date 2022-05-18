@@ -21,14 +21,57 @@
 void netfs_rreq_unlock_folios(struct netfs_io_request *rreq);
 
 /*
+ * direct_read.c
+ */
+int netfs_dio_copy_to_dest(struct netfs_io_request *rreq);
+
+/*
  * io.c
  */
-int netfs_begin_read(struct netfs_io_request *rreq, bool sync);
+ssize_t netfs_begin_read(struct netfs_io_request *rreq, bool sync);
 
 /*
  * main.c
  */
 extern unsigned int netfs_debug;
+extern struct list_head netfs_io_requests;
+extern spinlock_t netfs_proc_lock;
+
+#ifdef CONFIG_PROC_FS
+static inline void netfs_proc_add_rreq(struct netfs_io_request *rreq)
+{
+	spin_lock(&netfs_proc_lock);
+	list_add_tail_rcu(&rreq->proc_link, &netfs_io_requests);
+	spin_unlock(&netfs_proc_lock);
+}
+static inline void netfs_proc_del_rreq(struct netfs_io_request *rreq)
+{
+	if (!list_empty(&rreq->proc_link)) {
+		spin_lock(&netfs_proc_lock);
+		list_del_rcu(&rreq->proc_link);
+		spin_unlock(&netfs_proc_lock);
+	}
+}
+#else
+static inline void netfs_proc_add_rreq(struct netfs_io_request *rreq) {}
+static inline void netfs_proc_del_rreq(struct netfs_io_request *rreq) {}
+#endif
+
+/*
+ * misc.c
+ */
+int netfs_xa_store_and_mark(struct xarray *xa, unsigned long index,
+			    struct folio *folio, bool put_mark,
+			    bool pagecache_mark, gfp_t gfp_mask);
+int netfs_add_folios_to_buffer(struct xarray *buffer,
+			       struct address_space *mapping,
+			       pgoff_t index, pgoff_t to, gfp_t gfp_mask);
+int netfs_set_up_buffer(struct xarray *buffer,
+			struct address_space *mapping,
+			struct readahead_control *ractl,
+			struct folio *keep,
+			pgoff_t have_index, unsigned int have_folios);
+void netfs_clear_buffer(struct xarray *buffer);
 
 /*
  * objects.c
@@ -53,6 +96,7 @@ static inline void netfs_see_request(struct netfs_io_request *rreq,
  * stats.c
  */
 #ifdef CONFIG_NETFS_STATS
+extern atomic_t netfs_n_rh_dio_read;
 extern atomic_t netfs_n_rh_readahead;
 extern atomic_t netfs_n_rh_readpage;
 extern atomic_t netfs_n_rh_rreq;

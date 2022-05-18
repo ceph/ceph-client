@@ -1549,26 +1549,7 @@ error:
 }
 EXPORT_SYMBOL(p9_client_unlinkat);
 
-int
-p9_client_read(struct p9_fid *fid, u64 offset, struct iov_iter *to, int *err)
-{
-	int total = 0;
-	*err = 0;
-
-	while (iov_iter_count(to)) {
-		int count;
-
-		count = p9_client_read_once(fid, offset, to, err);
-		if (!count || *err)
-			break;
-		offset += count;
-		total += count;
-	}
-	return total;
-}
-EXPORT_SYMBOL(p9_client_read);
-
-int
+static int
 p9_client_read_once(struct p9_fid *fid, u64 offset, struct iov_iter *to,
 		    int *err)
 {
@@ -1635,7 +1616,25 @@ p9_client_read_once(struct p9_fid *fid, u64 offset, struct iov_iter *to,
 	p9_tag_remove(clnt, req);
 	return count;
 }
-EXPORT_SYMBOL(p9_client_read_once);
+
+int
+p9_client_read(struct p9_fid *fid, u64 offset, struct iov_iter *to, int *err)
+{
+	int total = 0;
+	*err = 0;
+
+	while (iov_iter_count(to)) {
+		int count;
+
+		count = p9_client_read_once(fid, offset, to, err);
+		if (!count || *err)
+			break;
+		offset += count;
+		total += count;
+	}
+	return total;
+}
+EXPORT_SYMBOL(p9_client_read);
 
 int
 p9_client_write(struct p9_fid *fid, u64 offset, struct iov_iter *from, int *err)

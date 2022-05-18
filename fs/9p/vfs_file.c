@@ -356,32 +356,6 @@ out_err:
 }
 
 /**
- * v9fs_file_read_iter - read from a file
- * @iocb: The operation parameters
- * @to: The buffer to read into
- *
- */
-static ssize_t
-v9fs_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
-{
-	struct p9_fid *fid = iocb->ki_filp->private_data;
-	int ret, err = 0;
-
-	p9_debug(P9_DEBUG_VFS, "count %zu offset %lld\n",
-		 iov_iter_count(to), iocb->ki_pos);
-
-	if (iocb->ki_filp->f_flags & O_NONBLOCK)
-		ret = p9_client_read_once(fid, iocb->ki_pos, to, &err);
-	else
-		ret = p9_client_read(fid, iocb->ki_pos, to, &err);
-	if (!ret)
-		return err;
-
-	iocb->ki_pos += ret;
-	return ret;
-}
-
-/**
  * v9fs_file_write_iter - write to a file
  * @iocb: The operation parameters
  * @from: The data to write
@@ -572,7 +546,7 @@ static ssize_t
 v9fs_mmap_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 {
 	/* TODO: Check if there are dirty pages */
-	return v9fs_file_read_iter(iocb, to);
+	return netfs_direct_read_iter(iocb, to);
 }
 
 /**
@@ -657,7 +631,7 @@ const struct file_operations v9fs_cached_file_operations_dotl = {
 
 const struct file_operations v9fs_file_operations = {
 	.llseek = generic_file_llseek,
-	.read_iter = v9fs_file_read_iter,
+	.read_iter = netfs_direct_read_iter,
 	.write_iter = v9fs_file_write_iter,
 	.open = v9fs_file_open,
 	.release = v9fs_dir_release,
@@ -670,7 +644,7 @@ const struct file_operations v9fs_file_operations = {
 
 const struct file_operations v9fs_file_operations_dotl = {
 	.llseek = generic_file_llseek,
-	.read_iter = v9fs_file_read_iter,
+	.read_iter = netfs_direct_read_iter,
 	.write_iter = v9fs_file_write_iter,
 	.open = v9fs_file_open,
 	.release = v9fs_dir_release,

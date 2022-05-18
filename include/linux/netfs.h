@@ -17,6 +17,7 @@
 #include <linux/workqueue.h>
 #include <linux/fs.h>
 #include <linux/pagemap.h>
+#include <linux/uio.h>
 
 enum netfs_sreq_ref_trace;
 
@@ -108,6 +109,10 @@ static inline int wait_on_page_fscache_killable(struct page *page)
 	return folio_wait_private_2_killable(page_folio(page));
 }
 
+/* Marks used on xarray-based buffers */
+#define NETFS_BUF_PUT_MARK	XA_MARK_0	/* - Page needs putting  */
+#define NETFS_BUF_PAGECACHE_MARK XA_MARK_1	/* - Page needs wb/dirty flag wrangling */
+
 enum netfs_io_source {
 	NETFS_FILL_WITH_ZEROES,
 	NETFS_DOWNLOAD_FROM_SERVER,
@@ -127,6 +132,8 @@ struct netfs_i_context {
 	struct fscache_cookie	*cache;
 #endif
 	loff_t			remote_i_size;	/* Size of the remote file */
+	loff_t			zero_point;	/* Size after which we assume there's no data
+						 * on the server */
 };
 
 /*
@@ -146,6 +153,7 @@ struct netfs_cache_resources {
 struct netfs_io_subrequest {
 	struct netfs_io_request *rreq;		/* Supervising I/O request */
 	struct list_head	rreq_link;	/* Link in rreq->subrequests */
+	struct iov_iter		iter;		/* Iterator for this subrequest */
 	loff_t			start;		/* Where to start the I/O */
 	size_t			len;		/* Size of the I/O */
 	size_t			transferred;	/* Amount of data transferred */
@@ -165,6 +173,15 @@ enum netfs_io_origin {
 	NETFS_READAHEAD,		/* This read was triggered by readahead */
 	NETFS_READPAGE,			/* This read is a synchronous read */
 	NETFS_READ_FOR_WRITE,		/* This read is to prepare a write */
+	NETFS_DIO_READ,			/* This read is a direct I/O read */
+} __mode(byte);
+
+enum netfs_buffering {
+	NETFS_INVALID,			/* Buffering unset */
+	NETFS_DIRECT,			/* Do I/O to/from ->direct_iter */
+	NETFS_DIRECT_BV,		/* Do I/O to/from ->direct_iter/bv[] */
+	NETFS_BUFFER,			/* Do I/O to/from ->buffer */
+	NETFS_BOUNCE,			/* Do I/O to/from ->bounce */
 } __mode(byte);
 
 /*
@@ -172,19 +189,32 @@ enum netfs_io_origin {
  * operations to a variety of data stores and then stitch the result together.
  */
 struct netfs_io_request {
-	struct work_struct	work;
+	union {
+		struct work_struct work;
+		struct rcu_head rcu;
+	};
 	struct inode		*inode;		/* The file being accessed */
 	struct address_space	*mapping;	/* The mapping being accessed */
+	struct kiocb		*iocb;		/* AIO completion vector */
 	struct netfs_cache_resources cache_resources;
+	struct list_head	proc_link;	/* Link in netfs_iorequests */
 	struct list_head	subrequests;	/* Contributory I/O operations */
+	struct xarray		buffer;		/* Buffer to hold raw data */
+	struct xarray		bounce;		/* Bounce buffer (eg. for crypto/compression) */
+	struct bio_vec		*direct_bv;	/* DIO buffer list (when handling iovec-iter) */
+	struct iov_iter		direct_iter;	/* Iterator for direct I/O */
 	void			*netfs_priv;	/* Private data for the netfs */
+	unsigned int		direct_bv_count; /* Number of elements in bv[] */
 	unsigned int		debug_id;
+	unsigned int		rsize;		/* Maximum read size */
 	atomic_t		nr_outstanding;	/* Number of ops in progress */
 	atomic_t		nr_copy_ops;	/* Number of copy-to-cache ops in progress */
 	size_t			submitted;	/* Amount submitted for I/O so far */
 	size_t			len;		/* Length of the request */
+	size_t			transferred;	/* Amount to be indicated as transferred */
 	short			error;		/* 0 or error that occurred */
 	enum netfs_io_origin	origin;		/* Origin of the request */
+	enum netfs_buffering	buffering;	/* Method of buffering */
 	loff_t			i_size;		/* Size of the file */
 	loff_t			start;		/* Start position */
 	pgoff_t			no_unlock_folio; /* Don't unlock this folio after read */
@@ -196,6 +226,8 @@ struct netfs_io_request {
 #define NETFS_RREQ_DONT_UNLOCK_FOLIOS	3	/* Don't unlock the folios on completion */
 #define NETFS_RREQ_FAILED		4	/* The request failed */
 #define NETFS_RREQ_IN_PROGRESS		5	/* Unlocked when the request completes */
+#define NETFS_RREQ_NONBLOCK		6	/* Don't block if possible (O_NONBLOCK) */
+#define NETFS_RREQ_BLOCKED		7	/* We blocked */
 	const struct netfs_request_ops *netfs_ops;
 };
 
@@ -203,8 +235,13 @@ struct netfs_io_request {
  * Operations the network filesystem can/must provide to the helpers.
  */
 struct netfs_request_ops {
+	unsigned int	io_request_size;	/* Alloc size for netfs_io_request struct */
+	unsigned int	io_subrequest_size;	/* Alloc size for netfs_io_subrequest struct */
 	int (*init_request)(struct netfs_io_request *rreq, struct file *file);
+	void (*free_request)(struct netfs_io_request *rreq);
+	void (*free_subrequest)(struct netfs_io_subrequest *rreq);
 	int (*begin_cache_operation)(struct netfs_io_request *rreq);
+
 	void (*expand_readahead)(struct netfs_io_request *rreq);
 	bool (*clamp_length)(struct netfs_io_subrequest *subreq);
 	void (*issue_read)(struct netfs_io_subrequest *subreq);
@@ -212,7 +249,6 @@ struct netfs_request_ops {
 	int (*check_write_begin)(struct file *file, loff_t pos, unsigned len,
 				 struct folio *folio, void **_fsdata);
 	void (*done)(struct netfs_io_request *rreq);
-	void (*cleanup)(struct address_space *mapping, void *netfs_priv);
 };
 
 /*
@@ -278,6 +314,8 @@ extern int netfs_readpage(struct file *, struct page *);
 extern int netfs_write_begin(struct file *, struct address_space *,
 			     loff_t, unsigned int, unsigned int, struct folio **,
 			     void **);
+extern void netfs_invalidate_folio(struct folio *folio, size_t offset, size_t length);
+extern int netfs_releasepage(struct page *page, gfp_t gfp_flags);
 
 extern void netfs_subreq_terminated(struct netfs_io_subrequest *, ssize_t, bool);
 extern void netfs_get_subrequest(struct netfs_io_subrequest *subreq,
@@ -285,6 +323,7 @@ extern void netfs_get_subrequest(struct netfs_io_subrequest *subreq,
 extern void netfs_put_subrequest(struct netfs_io_subrequest *subreq,
 				 bool was_async, enum netfs_sreq_ref_trace what);
 extern void netfs_stats_show(struct seq_file *);
+extern ssize_t netfs_direct_read_iter(struct kiocb *, struct iov_iter *);
 
 /**
  * netfs_i_context - Get the netfs inode context from the inode
@@ -326,6 +365,7 @@ static inline void netfs_i_context_init(struct inode *inode,
 	memset(ctx, 0, sizeof(*ctx));
 	ctx->ops = ops;
 	ctx->remote_i_size = i_size_read(inode);
+	ctx->zero_point = ctx->remote_i_size;
 }
 
 /**
@@ -340,6 +380,8 @@ static inline void netfs_resize_file(struct inode *inode, loff_t new_i_size)
 	struct netfs_i_context *ctx = netfs_i_context(inode);
 
 	ctx->remote_i_size = new_i_size;
+	if (new_i_size < ctx->zero_point)
+		ctx->zero_point = new_i_size;
 }
 
 /**
