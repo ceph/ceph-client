@@ -990,6 +990,47 @@ static bool ceph_msg_data_pagelist_advance(struct ceph_msg_data_cursor *cursor,
 	return true;
 }
 
+static void ceph_msg_data_iter_cursor_init(struct ceph_msg_data_cursor *cursor,
+					size_t length)
+{
+	struct ceph_msg_data *data = cursor->data;
+	size_t count = iov_iter_count(&data->iter);
+
+	cursor->resid = min_t(size_t, length, count);
+	cursor->iov_iter = data->iter;
+	cursor->last_piece = cursor->resid == count;
+}
+
+static struct page *ceph_msg_data_iter_next(struct ceph_msg_data_cursor *cursor,
+						size_t *page_offset,
+						size_t *length)
+{
+	struct page *page;
+	ssize_t len = iov_iter_get_pages(&cursor->iov_iter, &page, PAGE_SIZE,
+					 1, page_offset);
+
+	BUG_ON(len < 0);
+	*length = len;
+	return page;
+}
+
+static bool ceph_msg_data_iter_advance(struct ceph_msg_data_cursor *cursor,
+					size_t bytes)
+{
+	BUG_ON(bytes > cursor->resid);
+	cursor->resid -= bytes;
+	iov_iter_advance(&cursor->iov_iter, bytes);
+
+	if (!cursor->resid) {
+		BUG_ON(!cursor->last_piece);
+		return false;   /* no more data */
+	}
+
+	BUG_ON(cursor->last_piece);
+	cursor->last_piece = cursor->resid == iov_iter_count(&cursor->iov_iter);
+	return true;
+}
+
 /*
  * Message data is handled (sent or received) in pieces, where each
  * piece resides on a single page.  The network layer might not
@@ -1023,7 +1064,7 @@ static void __ceph_msg_data_cursor_init(struct ceph_msg_data_cursor *cursor)
 		ceph_msg_data_bvecs_cursor_init(cursor, length);
 		break;
 	case CEPH_MSG_DATA_ITER:
-		cursor->last_piece = true;
+		ceph_msg_data_iter_cursor_init(cursor, length);
 		break;
 	case CEPH_MSG_DATA_NONE:
 	default:
@@ -1073,7 +1114,8 @@ struct page *ceph_msg_data_next(struct ceph_msg_data_cursor *cursor,
 		page = ceph_msg_data_bvecs_next(cursor, page_offset, length);
 		break;
 	case CEPH_MSG_DATA_ITER:
-		BUG(); /* Shouldn't get here */
+		page = ceph_msg_data_iter_next(cursor, page_offset, length);
+		break;
 	case CEPH_MSG_DATA_NONE:
 	default:
 		page = NULL;
@@ -1115,7 +1157,8 @@ void ceph_msg_data_advance(struct ceph_msg_data_cursor *cursor, size_t bytes)
 		new_piece = ceph_msg_data_bvecs_advance(cursor, bytes);
 		break;
 	case CEPH_MSG_DATA_ITER:
-		BUG(); /* Shouldn't get here */
+		new_piece = ceph_msg_data_iter_advance(cursor, bytes);
+		break;
 	case CEPH_MSG_DATA_NONE:
 	default:
 		BUG();

@@ -228,6 +228,7 @@ struct ceph_msg_data_cursor {
 			struct page	*page;		/* page from list */
 			size_t		offset;		/* bytes from list */
 		};
+		struct iov_iter		iov_iter;
 	};
 };
 

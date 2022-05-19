@@ -1059,6 +1059,16 @@ static int decrypt_tail(struct ceph_connection *con)
 	if (ret)
 		goto out;
 
+	if (con->v2.in_cursor.data->type == CEPH_MSG_DATA_ITER) {
+		int i;
+		struct scatterlist *sg;
+#if 0
+		for_each_sg_table_sg(&sgt, sg, i) {
+			put_page(sg_page(sg));
+		}
+#endif
+	}
+
 	WARN_ON(!con->v2.in_enc_page_cnt);
 	ceph_release_page_vector(con->v2.in_enc_pages,
 				 con->v2.in_enc_page_cnt);
@@ -1792,12 +1802,16 @@ static void prepare_read_data_cont(struct ceph_connection *con)
 		memcpy_to_page(bv.bv_page, bv.bv_offset,
 			       page_address(con->bounce_page),
 			       con->v2.in_bvec.bv_len);
+
 	} else {
 		con->in_data_crc = ceph_crc32c_page(con->in_data_crc,
 						    con->v2.in_bvec.bv_page,
 						    con->v2.in_bvec.bv_offset,
 						    con->v2.in_bvec.bv_len);
 	}
+
+	if (con->v2.in_cursor.data->type == CEPH_MSG_DATA_ITER)
+		put_page(bv.bv_page);
 
 	ceph_msg_data_advance(&con->v2.in_cursor, con->v2.in_bvec.bv_len);
 	if (con->v2.in_cursor.total_resid) {
