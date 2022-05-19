@@ -997,6 +997,11 @@ static bool ceph_msg_data_pagelist_advance(struct ceph_msg_data_cursor *cursor,
  * track of which piece is next to process and how much remains to
  * be processed in that piece.  It also tracks whether the current
  * piece is the last one in the data item.
+ *
+ * Except for the CEPH_MSG_DATA_ITER type where we use an iov_iter to track the
+ * buffer and pass the iterator to sendmsg() with MSG_ZEROCOPY to try and
+ * transfer as much as the buffer as we can with as few invocations of the TCP
+ * driver as we can.
  */
 static void __ceph_msg_data_cursor_init(struct ceph_msg_data_cursor *cursor)
 {
@@ -1016,6 +1021,9 @@ static void __ceph_msg_data_cursor_init(struct ceph_msg_data_cursor *cursor)
 #endif /* CONFIG_BLOCK */
 	case CEPH_MSG_DATA_BVECS:
 		ceph_msg_data_bvecs_cursor_init(cursor, length);
+		break;
+	case CEPH_MSG_DATA_ITER:
+		cursor->last_piece = true;
 		break;
 	case CEPH_MSG_DATA_NONE:
 	default:
@@ -1064,6 +1072,8 @@ struct page *ceph_msg_data_next(struct ceph_msg_data_cursor *cursor,
 	case CEPH_MSG_DATA_BVECS:
 		page = ceph_msg_data_bvecs_next(cursor, page_offset, length);
 		break;
+	case CEPH_MSG_DATA_ITER:
+		BUG(); /* Shouldn't get here */
 	case CEPH_MSG_DATA_NONE:
 	default:
 		page = NULL;
@@ -1104,6 +1114,8 @@ void ceph_msg_data_advance(struct ceph_msg_data_cursor *cursor, size_t bytes)
 	case CEPH_MSG_DATA_BVECS:
 		new_piece = ceph_msg_data_bvecs_advance(cursor, bytes);
 		break;
+	case CEPH_MSG_DATA_ITER:
+		BUG(); /* Shouldn't get here */
 	case CEPH_MSG_DATA_NONE:
 	default:
 		BUG();
@@ -1902,6 +1914,20 @@ void ceph_msg_data_add_bvecs(struct ceph_msg *msg,
 	msg->data_length += bvec_pos->iter.bi_size;
 }
 EXPORT_SYMBOL(ceph_msg_data_add_bvecs);
+
+void ceph_msg_data_add_iter(struct ceph_msg *msg,
+			    struct iov_iter *iter)
+{
+	struct ceph_msg_data *data;
+
+	data = ceph_msg_data_add(msg);
+	data->type = CEPH_MSG_DATA_ITER;
+	data->iter = *iter;
+	data->iter_count = iov_iter_count(iter);
+
+	msg->data_length += iov_iter_count(&data->iter);
+}
+EXPORT_SYMBOL(ceph_msg_data_add_iter);
 
 /*
  * construct a new message with given type, size
