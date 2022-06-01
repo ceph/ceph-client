@@ -139,6 +139,22 @@ static void ceph_osd_data_pages_init(struct ceph_osd_data *osd_data,
 	osd_data->alignment = alignment;
 	osd_data->pages_from_pool = pages_from_pool;
 	osd_data->own_pages = own_pages;
+#if defined(__x86_64)
+	{
+		/* Vet the page array */
+		int i, alen = calc_pages_for(alignment, length);
+
+		for (i = 0; i < alen; ++i) {
+			if ((long)pages[i] > 0) {
+				pr_err("%s: [%d] page=%px len=0x%llx alignment=0x%x from_pool=%d owned=%d\n",
+					__func__, i, pages[i], length, alignment, pages_from_pool,
+					own_pages);
+				dump_stack();
+				break;
+			}
+		}
+	}
+#endif
 }
 
 /*

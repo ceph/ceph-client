@@ -496,6 +496,16 @@ static int write_partial_message_data(struct ceph_connection *con)
 		}
 
 		page = ceph_msg_data_next(cursor, &page_offset, &length);
+
+#if defined(__x86_64__)
+		if ((long)page > 0) {
+			/* bogus page pointer! */
+			pr_err("%s: page=%px offset=%zu len=%zu resid=%zu total_resid=%zu\n",
+				__func__, page, page_offset, length,
+				cursor->resid, cursor->total_resid);
+		}
+#endif
+
 		if (length == cursor->total_resid)
 			more = MSG_MORE;
 		ret = ceph_tcp_sendpage(con->sock, page, page_offset, length,

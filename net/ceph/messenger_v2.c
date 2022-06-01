@@ -156,6 +156,15 @@ static int do_try_sendpage(struct socket *sock, struct iov_iter *it)
 		bv.bv_len = min(iov_iter_count(it),
 				it->bvec->bv_len - it->iov_offset);
 
+#if defined(__x86_64__)
+		if ((long)bv.bv_page > 0) {
+			/* bogus page pointer! */
+			pr_err("%s: page=%px offset=%u len=%u count=%zu\n",
+				__func__, bv.bv_page, bv.bv_offset, bv.bv_len,
+				iov_iter_count(it));
+		}
+#endif
+
 		/*
 		 * sendpage cannot properly handle pages with
 		 * page_count == 0, we need to fall back to sendmsg if
