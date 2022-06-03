@@ -1519,8 +1519,10 @@ static void ceph_con_workfn(struct work_struct *work)
 		if (ret < 0) {
 			if (ret == -EAGAIN)
 				continue;
-			if (!con->error_msg)
+			if (!con->error_msg) {
+				pr_err("%s: socket error: %d\n", __func__, ret);
 				con->error_msg = "socket error on write";
+			}
 			fault = true;
 		}
 
