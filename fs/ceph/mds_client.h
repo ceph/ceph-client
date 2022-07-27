@@ -31,8 +31,9 @@ enum ceph_feature_type {
 	CEPHFS_FEATURE_METRIC_COLLECT,
 	CEPHFS_FEATURE_ALTERNATE_NAME,
 	CEPHFS_FEATURE_NOTIFY_SESSION_STATE,
+	CEPHFS_FEATURE_OP_GETVXATTR,
 
-	CEPHFS_FEATURE_MAX = CEPHFS_FEATURE_NOTIFY_SESSION_STATE,
+	CEPHFS_FEATURE_MAX = CEPHFS_FEATURE_OP_GETVXATTR,
 };
 
 #define CEPHFS_FEATURES_CLIENT_SUPPORTED {	\
@@ -45,6 +46,7 @@ enum ceph_feature_type {
 	CEPHFS_FEATURE_METRIC_COLLECT,		\
 	CEPHFS_FEATURE_ALTERNATE_NAME,		\
 	CEPHFS_FEATURE_NOTIFY_SESSION_STATE,	\
+	CEPHFS_FEATURE_OP_GETVXATTR,		\
 }
 
 /*
@@ -351,6 +353,8 @@ struct ceph_mds_request {
 	long long	  r_dir_release_cnt;
 	long long	  r_dir_ordered_cnt;
 	int		  r_readdir_cache_idx;
+
+	int		  r_feature_needed;
 
 	struct ceph_cap_reservation r_caps_reservation;
 };
