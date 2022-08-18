@@ -3547,7 +3547,7 @@ static void handle_cap_grant(struct inode *inode,
 		queue_trunc = ceph_fill_file_size(inode, extra_info->issued,
 					le32_to_cpu(grant->truncate_seq),
 					le64_to_cpu(grant->truncate_size),
-					size);
+					size, newcaps);
 	}
 
 	if (ci->i_auth_cap == cap && (newcaps & CEPH_CAP_ANY_FILE_WR)) {
@@ -3917,7 +3917,8 @@ static bool handle_cap_trunc(struct inode *inode,
 	dout("handle_cap_trunc inode %p mds%d seq %d to %lld seq %d\n",
 	     inode, mds, seq, truncate_size, truncate_seq);
 	queue_trunc = ceph_fill_file_size(inode, issued,
-					  truncate_seq, truncate_size, size);
+					  truncate_seq, truncate_size,
+					  size, 0);
 	return queue_trunc;
 }
 
