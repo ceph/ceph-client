@@ -591,6 +591,12 @@ static int ceph_parse_mount_param(struct fs_context *fc,
 		break;
 	case Opt_test_dummy_encryption:
 #ifdef CONFIG_FS_ENCRYPTION
+		/* HACK: allow for cleartext "encryption" in files for testing */
+		if (param->string && !strcmp(param->string, "clear")) {
+			fsopt->flags |= CEPH_MOUNT_OPT_DUMMY_ENC_CLEAR;
+			kfree(param->string);
+			param->string = NULL;
+		}
 		fscrypt_free_dummy_policy(&fsopt->dummy_enc_policy);
 		ret = fscrypt_parse_test_dummy_encryption(param,
 						&fsopt->dummy_enc_policy);
