@@ -898,8 +898,11 @@ void evict_inodes(struct super_block *sb)
 again:
 	spin_lock(&sb->s_inode_list_lock);
 	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
-		if (icount_read(inode))
+		if (icount_read(inode)) {
+			printk("evict_inodes inode %p, i_count = %d, was skipped!\n",
+			       inode, atomic_read(&inode->i_count));
 			continue;
+		}
 
 		spin_lock(&inode->i_lock);
 		if (icount_read(inode)) {
