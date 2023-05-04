@@ -3169,7 +3169,11 @@ EXPORT_SYMBOL_GPL(folio_wait_writeback_killable);
  */
 void folio_wait_stable(struct folio *folio)
 {
-	if (folio_inode(folio)->i_sb->s_iflags & SB_I_STABLE_WRITES)
+	struct inode *inode = folio_inode(folio);
+	struct super_block *sb = inode->i_sb;
+
+	if ((sb->s_iflags & SB_I_STABLE_WRITES) ||
+	    (sb_is_blkdev_sb(sb) && bdev_stable_writes(I_BDEV(inode))))
 		folio_wait_writeback(folio);
 }
 EXPORT_SYMBOL_GPL(folio_wait_stable);
