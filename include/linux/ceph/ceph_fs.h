@@ -383,6 +383,7 @@ extern const char *ceph_mds_op_name(int op);
  */
 #define CEPH_XATTR_CREATE  (1 << 0)
 #define CEPH_XATTR_REPLACE (1 << 1)
+#define CEPH_XATTR_REMOVE2 (1 << 30)
 #define CEPH_XATTR_REMOVE  (1 << 31)
 
 /*
