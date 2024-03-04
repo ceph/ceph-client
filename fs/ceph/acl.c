@@ -148,6 +148,11 @@ int ceph_set_acl(struct mnt_idmap *idmap, struct dentry *dentry,
 	}
 
 	ret = __ceph_setxattr(inode, name, value, size, 0);
+	/*
+	 * If the attribute didn't exist to start with that's fine.
+	 */
+	if (!acl && ret == -ENODATA)
+		ret = 0;
 	if (ret) {
 		if (new_mode != old_mode) {
 			newattrs.ia_ctime = old_ctime;
