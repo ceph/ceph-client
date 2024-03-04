@@ -611,11 +611,10 @@ static int __set_xattr(struct ceph_inode_info *ci,
 			return err;
 		}
 		if (update_xattr < 0) {
-			if (xattr)
-				__remove_xattr(ci, xattr);
+			err = __remove_xattr(ci, xattr);
 			kfree(name);
 			kfree(*newxattr);
-			return 0;
+			return err;
 		}
 	}
 
@@ -1129,7 +1128,7 @@ static int ceph_sync_setxattr(struct inode *inode, const char *name,
 		if (flags & CEPH_XATTR_REPLACE)
 			op = CEPH_MDS_OP_RMXATTR;
 		else
-			flags |= CEPH_XATTR_REMOVE;
+			flags |= CEPH_XATTR_REMOVE | CEPH_XATTR_REMOVE2;
 	}
 
 	doutc(cl, "name %s value size %zu\n", name, size);
