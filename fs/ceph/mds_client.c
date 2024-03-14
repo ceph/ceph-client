@@ -5649,8 +5649,11 @@ static int ceph_mds_auth_match(struct ceph_mds_client *mdsc,
 
 	doutc(cl, "match.uid %lld\n", auth->match.uid);
 	if (auth->match.uid != MDS_AUTH_UID_ANY) {
-		if (auth->match.uid != caller_uid)
+		if (auth->match.uid != caller_uid) {
+			pr_info_client(cl, "1 server path %s, tpath %s, match.path %s, auth->match.uid %lld, caller_uid %d\n",
+					spath, tpath, auth->match.path, auth->match.uid, caller_uid);
 			return 0;
+		}
 		if (auth->match.num_gids) {
 			for (i = 0; i < auth->match.num_gids; i++) {
 				if (caller_gid == auth->match.gids[i])
@@ -5669,15 +5672,21 @@ static int ceph_mds_auth_match(struct ceph_mds_client *mdsc,
 						break;
 				}
 			}
-			if (!gid_matched)
+			if (!gid_matched) {
+				pr_info_client(cl, "1 server path %s, tpath %s, match.path %s\n",
+						spath, tpath, auth->match.path);
 				return 0;
+			}
 		}
 	}
 
 	/* path match */
 	if (auth->match.path) {
-		if (!tpath)
+		if (!tpath) {
+			pr_info_client(cl, "2 server path %s, tpath %s, match.path %s\n",
+			      spath, tpath, auth->match.path);
 			return 0;
+		}
 
 		tlen = strlen(tpath);
 		len = strlen(auth->match.path);
@@ -5686,7 +5695,7 @@ static int ceph_mds_auth_match(struct ceph_mds_client *mdsc,
 			bool free_tpath = false;
 			int m, n;
 
-			doutc(cl, "server path %s, tpath %s, match.path %s\n",
+			doutc(cl, "3 server path %s, tpath %s, match.path %s\n",
 			      spath, tpath, auth->match.path);
 			if (spath && (m = strlen(spath)) != 1) {
 				/* mount path + '/' + tpath + an extra space */
@@ -5728,12 +5737,16 @@ static int ceph_mds_auth_match(struct ceph_mds_client *mdsc,
 			if (first != _tpath) {
 				if (free_tpath)
 					kfree(_tpath);
+				pr_info_client(cl, "4 server path %s, tpath %s, match.path %s\n",
+						spath, tpath, auth->match.path);
 				return 0;
 			}
 
 			if (tlen > len && _tpath[len] != '/') {
 				if (free_tpath)
 					kfree(_tpath);
+				pr_info_client(cl, "5 server path %s, tpath %s, match.path %s\n",
+						spath, tpath, auth->match.path);
 				return 0;
 			}
 		}
@@ -5784,15 +5797,17 @@ int ceph_mds_check_access(struct ceph_mds_client *mdsc, char *tpath, int mask)
 	}
 
 	if (!root_squash_perms) {
-		doutc(cl, "root_squash is enabled and user(%d %d) isn't allowed to write",
+		pr_info_client(cl, "root_squash is enabled and user(%d %d) isn't allowed to write",
 		      caller_uid, caller_gid);
 	}
 	if (rw_perms_s) {
-		doutc(cl, "mds auth caps readable/writeable %d/%d while request r/w %d/%d",
+		pr_info_client(cl, "mds auth caps readable/writeable %d/%d while request r/w %d/%d",
 		      rw_perms_s->readable, rw_perms_s->writeable, !!(mask & MAY_READ),
 		      !!(mask & MAY_WRITE));
 	}
-	doutc(cl, "access denied\n");
+	pr_info_client(cl, "tpath '%s', mask %d, caller_uid %d, caller_gid %d\n",
+	      tpath, mask, caller_uid, caller_gid);
+	pr_info_client(cl, "access denied\n");
 	return -EACCES;
 }
 

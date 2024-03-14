@@ -1372,6 +1372,8 @@ static int ceph_unlink(struct inode *dir, struct dentry *dentry)
 
 		/* For none EACCES cases will let the MDS do the mds auth check */
 		if (err == -EACCES) {
+			pr_info("unlink dir %p %llx.%llx dn %pd, path %s, err %d\n",
+				dir, ceph_vinop(dir), dn, path, err);
 			return err;
 		} else if (err < 0) {
 			try_async = false;

@@ -411,6 +411,8 @@ int ceph_open(struct inode *inode, struct file *file)
 
 		/* For none EACCES cases will let the MDS do the mds auth check */
 		if (err == -EACCES) {
+			pr_info("open %p %llx.%llx file %p flags %d (%d), path %s, mask %d, err %d\n",
+				inode, ceph_vinop(inode), file, flags, file->f_flags, path, mask, err);
 			return err;
 		} else if (err < 0) {
 			do_sync = true;
@@ -831,6 +833,8 @@ int ceph_atomic_open(struct inode *dir, struct dentry *dentry,
 
 		/* For none EACCES cases will let the MDS do the mds auth check */
 		if (err == -EACCES) {
+			pr_info("open dir %p %llx.%llx file %p flags %d (%d), path %s, mask %d, err %d\n",
+				dir, ceph_vinop(dir), file, flags, file->f_flags, path, mask, err);
 			return err;
 		} else if (err < 0) {
 			try_async = false;

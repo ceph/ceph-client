@@ -2514,6 +2514,8 @@ int __ceph_setattr(struct mnt_idmap *idmap, struct inode *inode,
 
 		/* For none EACCES cases will let the MDS do the mds auth check */
 		if (err == -EACCES) {
+			pr_info("__ceph_setattr inode %p %llx.%llx dentry %pd, path %s, err %d\n",
+				inode, ceph_vinop(inode), dentry, path, err);
 			return err;
 		} else if (err < 0) {
 			do_sync = true;
