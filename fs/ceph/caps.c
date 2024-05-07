@@ -1678,8 +1678,6 @@ static void __ceph_flush_snaps(struct ceph_inode_info *ci,
 		last_tid = capsnap->cap_flush.tid;
 	}
 
-	ci->i_ceph_flags &= ~CEPH_I_FLUSH_SNAPS;
-
 	while (first_tid <= last_tid) {
 		struct ceph_cap *cap = ci->i_auth_cap;
 		struct ceph_cap_flush *cf = NULL, *iter;
@@ -1724,6 +1722,15 @@ static void __ceph_flush_snaps(struct ceph_inode_info *ci,
 		ceph_put_cap_snap(capsnap);
 		spin_lock(&ci->i_ceph_lock);
 	}
+
+	/*
+	 * Clear the flag just after the capsnap request being sent out. Else the
+	 * ceph_check_caps() will race with it and send the cap update request
+	 * just before this capsnap request. Which will cause the cap update request
+	 * to miss setting the CEPH_CLIENT_CAPS_PENDING_CAPSNAP flag and finally
+	 * the mds will drop the capsnap request to floor.
+	 */
+	ci->i_ceph_flags &= ~CEPH_I_FLUSH_SNAPS;
 }
 
 void ceph_flush_snaps(struct ceph_inode_info *ci,
