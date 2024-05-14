@@ -6230,9 +6230,40 @@ static void mds_peer_reset(struct ceph_connection *con)
 
 	pr_warn_client(mdsc->fsc->client, "mds%d closed our session\n",
 		       s->s_mds);
-	if (READ_ONCE(mdsc->fsc->mount_state) != CEPH_MOUNT_FENCE_IO &&
-	    ceph_mdsmap_get_state(mdsc->mdsmap, s->s_mds) >= CEPH_MDS_STATE_RECONNECT)
+
+	if (READ_ONCE(mdsc->fsc->mount_state) == CEPH_MOUNT_FENCE_IO ||
+	    ceph_mdsmap_get_state(mdsc->mdsmap, s->s_mds) < CEPH_MDS_STATE_RECONNECT)
+		return;
+
+	if (ceph_mdsmap_get_state(mdsc->mdsmap, s->s_mds) == CEPH_MDS_STATE_RECONNECT) {
 		send_mds_reconnect(mdsc, s);
+		return;
+	}
+
+	mutex_lock(&s->s_mutex);
+	switch (s->s_state) {
+	case CEPH_MDS_SESSION_CLOSING:
+	case CEPH_MDS_SESSION_OPEN:
+	case CEPH_MDS_SESSION_OPENING:
+		mutex_lock(&mdsc->mutex);
+		ceph_get_mds_session(s);
+		__unregister_session(mdsc, s);
+		mutex_unlock(&mdsc->mutex);
+
+		s->s_state = CEPH_MDS_SESSION_CLOSED;
+		cleanup_session_requests(mdsc, s);
+		remove_session_caps(s);
+		wake_up_all(&mdsc->session_close_wq);
+
+		mutex_lock(&mdsc->mutex);
+		__wake_requests(mdsc, &s->s_waiting);
+		kick_requests(mdsc, s->s_mds);
+		mutex_unlock(&mdsc->mutex);
+
+		ceph_put_mds_session(s);
+		break;
+	}
+	mutex_unlock(&s->s_mutex);
 }
 
 static void mds_dispatch(struct ceph_connection *con, struct ceph_msg *msg)
