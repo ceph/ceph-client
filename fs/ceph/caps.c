@@ -4489,6 +4489,8 @@ void ceph_handle_caps(struct ceph_mds_session *session,
 		case CEPH_CAP_OP_REVOKE:
 		case CEPH_CAP_OP_GRANT:
 			do_cap_release = true;
+			pr_err_client(cl, "from mds%d, can't find ino %llx:%llx op %d, seq %d\n",
+				      session->s_mds, vino.snap, vino.ino, op, seq);
 			break;
 		default:
 			break;
@@ -4549,6 +4551,9 @@ void ceph_handle_caps(struct ceph_mds_session *session,
 		case CEPH_CAP_OP_REVOKE:
 		case CEPH_CAP_OP_GRANT:
 			do_cap_release = true;
+			pr_err_client(cl, "no cap on %p ino %llx:%llx from mds%d op %d, seq %d\n",
+				       inode, ceph_ino(inode),
+				       ceph_snap(inode), session->s_mds, op, seq);
 			break;
 		default:
 			break;
