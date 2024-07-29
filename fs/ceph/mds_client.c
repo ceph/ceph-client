@@ -5904,6 +5904,7 @@ void ceph_mdsc_sync(struct ceph_mds_client *mdsc)
 	want_tid = mdsc->last_tid;
 	mutex_unlock(&mdsc->mutex);
 
+	ceph_flush_cap_releases(mdsc);
 	ceph_flush_dirty_caps(mdsc);
 	spin_lock(&mdsc->cap_dirty_lock);
 	want_flush = mdsc->last_cap_flush_tid;
