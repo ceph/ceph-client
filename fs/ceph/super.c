@@ -286,7 +286,7 @@ static int ceph_parse_new_source(const char *dev_name, const char *dev_name_end,
 	struct ceph_fsid fsid;
 	struct ceph_parse_opts_ctx *pctx = fc->fs_private;
 	struct ceph_mount_options *fsopt = pctx->opts;
-	char *fsid_start, *fs_name_start;
+	const char *fsid_start, *fs_name_start;
 
 	if (*dev_name_end != '=') {
 		dout("separator '=' missing in source");
