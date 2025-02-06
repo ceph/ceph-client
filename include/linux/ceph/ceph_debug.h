@@ -16,13 +16,15 @@
 
 # if defined(DEBUG) || defined(CONFIG_DYNAMIC_DEBUG)
 #  define dout(fmt, ...)						\
-	pr_debug("%.*s %12.12s:%-4d : " fmt,				\
+	pr_debug("pid %d %.*s %12.12s:%-4d : " fmt,			\
+		 current->pid,						\
 		 8 - (int)sizeof(KBUILD_MODNAME), "    ",		\
 		 kbasename(__FILE__), __LINE__, ##__VA_ARGS__)
 #  define doutc(client, fmt, ...)					\
-	pr_debug("%.*s %12.12s:%-4d : [%pU %llu] " fmt,			\
+	pr_debug("pid %d %.*s %12.12s:%-4d %s() : [%pU %llu] " fmt,	\
+		 current->pid,						\
 		 8 - (int)sizeof(KBUILD_MODNAME), "    ",		\
-		 kbasename(__FILE__), __LINE__,				\
+		 kbasename(__FILE__), __LINE__, __func__,		\
 		 &client->fsid, client->monc.auth->global_id,		\
 		 ##__VA_ARGS__)
 # else
