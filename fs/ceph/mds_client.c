@@ -17,6 +17,7 @@
 #include "super.h"
 #include "mds_client.h"
 #include "crypto.h"
+#include "ceph_san.h"
 
 #include <linux/ceph/ceph_features.h>
 #include <linux/ceph/messenger.h>
@@ -3931,14 +3932,14 @@ static void handle_reply(struct ceph_mds_session *session, struct ceph_msg *msg)
 
 	/* insert trace into our cache */
 	mutex_lock(&req->r_fill_mutex);
-	current->journal_info = req;
+	CEPH_SAN_SET_REQ(req);
 	err = ceph_fill_trace(mdsc->fsc->sb, req);
 	if (err == 0) {
 		if (result == 0 && (req->r_op == CEPH_MDS_OP_READDIR ||
 				    req->r_op == CEPH_MDS_OP_LSSNAP))
 			err = ceph_readdir_prepopulate(req, req->r_session);
 	}
-	current->journal_info = NULL;
+	CEPH_SAN_RESET_REQ();
 	mutex_unlock(&req->r_fill_mutex);
 
 	up_read(&mdsc->snap_rwsem);

@@ -2,6 +2,7 @@
 #ifndef _FS_CEPH_DEBUG_H
 #define _FS_CEPH_DEBUG_H
 
+#undef pr_fmt
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/string.h>

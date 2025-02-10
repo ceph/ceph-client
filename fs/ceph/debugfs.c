@@ -21,6 +21,43 @@
 
 #include "mds_client.h"
 #include "metric.h"
+#include "ceph_san.h"
+
+static int ceph_san_show(struct seq_file *s, void *p)
+{
+	struct ceph_san_tls_logger *tls;
+	unsigned long flags;
+	size_t i;
+
+	seq_printf(s, "Ceph SAN logs:\n");
+	seq_printf(s, "%-16s %-8s %-32s %-16s %-16s\n",
+		   "Task", "PID", "Function", "Line", "Timestamp");
+	seq_printf(s, "--------------------------------------------------------------\n");
+
+	spin_lock_irqsave(&ceph_san_lock, flags);
+	list_for_each_entry(tls, &ceph_san_list, list) {
+		if (tls->cephsun_sig != 0xD1E7C0CE) {
+			pr_err("Ceph SAN: Invalid signature - %s(%d)\n", tls->task->comm, tls->task->pid);
+			continue;
+		}
+
+		u64 now = jiffies;
+		for (i = tls->tail_idx; i % CEPH_SAN_MAX_LOGS != tls->head_idx; i++) {
+			struct ceph_san_log_entry *log = &tls->logs[i];
+			seq_printf(s, "%-16s %-8d %-32s %-16zu %-16u (%lu)\n",
+				tls->task->comm,
+				tls->task->pid,
+				(char *)log->func,
+				log->line,
+				jiffies_to_msecs(now - log->ts),
+				log->opt_param);
+			now = log->ts;
+		}
+	}
+	spin_unlock_irqrestore(&ceph_san_lock, flags);
+
+	return 0;
+}
 
 static int mdsmap_show(struct seq_file *s, void *p)
 {
@@ -371,6 +408,7 @@ DEFINE_SHOW_ATTRIBUTE(metrics_file);
 DEFINE_SHOW_ATTRIBUTE(metrics_latency);
 DEFINE_SHOW_ATTRIBUTE(metrics_size);
 DEFINE_SHOW_ATTRIBUTE(metrics_caps);
+DEFINE_SHOW_ATTRIBUTE(ceph_san);
 
 
 /*
@@ -406,13 +444,14 @@ void ceph_fs_debugfs_cleanup(struct ceph_fs_client *fsc)
 	debugfs_remove(fsc->debugfs_caps);
 	debugfs_remove(fsc->debugfs_status);
 	debugfs_remove(fsc->debugfs_mdsc);
+	debugfs_remove(fsc->debugfs_cephsan);
 	debugfs_remove_recursive(fsc->debugfs_metrics_dir);
 	doutc(fsc->client, "done\n");
 }
 
 void ceph_fs_debugfs_init(struct ceph_fs_client *fsc)
 {
-	char name[100];
+	char name[NAME_MAX];
 
 	doutc(fsc->client, "begin\n");
 	fsc->debugfs_congestion_kb =
@@ -458,6 +497,11 @@ void ceph_fs_debugfs_init(struct ceph_fs_client *fsc)
 						  fsc->client->debugfs_dir,
 						  fsc,
 						  &status_fops);
+	fsc->debugfs_cephsan = debugfs_create_file("cephsan",
+							0444,
+							fsc->client->debugfs_dir,
+							fsc,
+							&ceph_san_fops);
 
 	fsc->debugfs_metrics_dir = debugfs_create_dir("metrics",
 						      fsc->client->debugfs_dir);
