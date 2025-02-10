@@ -2,9 +2,11 @@
 #ifndef _FS_CEPH_DEBUG_H
 #define _FS_CEPH_DEBUG_H
 
+#undef pr_fmt
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/string.h>
+#include <linux/ceph/ceph_san.h>
 
 #ifdef CONFIG_CEPH_LIB_PRETTYDEBUG
 
@@ -16,15 +18,23 @@
 
 # if defined(DEBUG) || defined(CONFIG_DYNAMIC_DEBUG)
 #  define dout(fmt, ...)						\
-	pr_debug("%.*s %12.12s:%-4d : " fmt,				\
+	do { 								\
+	pr_debug("%.*s %12.12s:%-4d:" fmt,				\
 		 8 - (int)sizeof(KBUILD_MODNAME), "    ",		\
-		 kbasename(__FILE__), __LINE__, ##__VA_ARGS__)
+		 kbasename(__FILE__), __LINE__, ##__VA_ARGS__); 	\
+	CEPH_SAN_LOG("%12.12s:%-4d : " fmt,				\
+		 kbasename(__FILE__), __LINE__, ##__VA_ARGS__);		\
+	} while (0)
 #  define doutc(client, fmt, ...)					\
+	do { 								\
 	pr_debug("%.*s %12.12s:%-4d : [%pU %llu] " fmt,			\
 		 8 - (int)sizeof(KBUILD_MODNAME), "    ",		\
 		 kbasename(__FILE__), __LINE__,				\
 		 &client->fsid, client->monc.auth->global_id,		\
-		 ##__VA_ARGS__)
+		 ##__VA_ARGS__); 					\
+	CEPH_SAN_LOG("%12.12s:%-4d:" fmt,				\
+		 kbasename(__FILE__), __LINE__, ##__VA_ARGS__);		\
+	} while (0)
 # else
 /* faux printk call just to see any compiler warnings. */
 #  define dout(fmt, ...)					\

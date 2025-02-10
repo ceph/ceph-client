@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
+#include "linux/mm_types.h"
 #include <linux/ceph/ceph_debug.h>
+#include <linux/ceph/ceph_san.h>
 
 #include <linux/backing-dev.h>
 #include <linux/ctype.h>
@@ -29,6 +31,10 @@
 #include <linux/ceph/debugfs.h>
 
 #include <uapi/linux/magic.h>
+
+
+// If no header file, declare the function prototype
+// int allocate_and_add_ceph_san(void);
 
 static DEFINE_SPINLOCK(ceph_fsc_lock);
 static LIST_HEAD(ceph_fsc_list);
@@ -1633,6 +1639,7 @@ static int __init init_ceph(void)
 		goto out;
 
 	ceph_flock_init();
+	ret = cephsan_init();
 	ret = register_filesystem(&ceph_fs_type);
 	if (ret)
 		goto out_caches;
@@ -1650,6 +1657,7 @@ out:
 static void __exit exit_ceph(void)
 {
 	dout("exit_ceph\n");
+	cephsan_cleanup();
 	unregister_filesystem(&ceph_fs_type);
 	destroy_caches();
 }

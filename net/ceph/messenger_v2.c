@@ -197,14 +197,14 @@ static int ceph_tcp_send(struct ceph_connection *con)
 {
 	int ret;
 
-	dout("%s con %p have %zu try_sendpage %d\n", __func__, con,
-	     iov_iter_count(&con->v2.out_iter), con->v2.out_iter_sendpage);
+	//dout("%s con %p have %zu try_sendpage %d\n", __func__, con,
+	//     iov_iter_count(&con->v2.out_iter), con->v2.out_iter_sendpage);
 	if (con->v2.out_iter_sendpage)
 		ret = do_try_sendpage(con->sock, &con->v2.out_iter);
 	else
 		ret = do_sendmsg(con->sock, &con->v2.out_iter);
-	dout("%s con %p ret %d left %zu\n", __func__, con, ret,
-	     iov_iter_count(&con->v2.out_iter));
+	//dout("%s con %p ret %d left %zu\n", __func__, con, ret,
+	//     iov_iter_count(&con->v2.out_iter));
 	return ret;
 }
 
@@ -3156,8 +3156,8 @@ int ceph_con_v2_try_read(struct ceph_connection *con)
 {
 	int ret;
 
-	dout("%s con %p state %d need %zu\n", __func__, con, con->state,
-	     iov_iter_count(&con->v2.in_iter));
+	//dout("%s con %p state %d need %zu\n", __func__, con, con->state,
+	//     iov_iter_count(&con->v2.in_iter));
 
 	if (con->state == CEPH_CON_S_PREOPEN)
 		return 0;
@@ -3273,7 +3273,7 @@ static void queue_zeros(struct ceph_connection *con)
 
 static void finish_message(struct ceph_connection *con)
 {
-	dout("%s con %p msg %p\n", __func__, con, con->out_msg);
+	//dout("%s con %p msg %p\n", __func__, con, con->out_msg);
 
 	/* we end up here both plain and secure modes */
 	if (con->v2.out_enc_pages) {
@@ -3296,8 +3296,8 @@ static int populate_out_iter(struct ceph_connection *con)
 {
 	int ret;
 
-	dout("%s con %p state %d out_state %d\n", __func__, con, con->state,
-	     con->v2.out_state);
+	//dout("%s con %p state %d out_state %d\n", __func__, con, con->state,
+	//     con->v2.out_state);
 	WARN_ON(iov_iter_count(&con->v2.out_iter));
 
 	if (con->state != CEPH_CON_S_OPEN) {
@@ -3359,13 +3359,13 @@ static int populate_out_iter(struct ceph_connection *con)
 populated:
 	if (WARN_ON(!iov_iter_count(&con->v2.out_iter)))
 		return -ENODATA;
-	dout("%s con %p populated %zu\n", __func__, con,
-	     iov_iter_count(&con->v2.out_iter));
+	//dout("%s con %p populated %zu\n", __func__, con,
+	//     iov_iter_count(&con->v2.out_iter));
 	return 1;
 
 nothing_pending:
 	WARN_ON(iov_iter_count(&con->v2.out_iter));
-	dout("%s con %p nothing pending\n", __func__, con);
+	//dout("%s con %p nothing pending\n", __func__, con);
 	ceph_con_flag_clear(con, CEPH_CON_F_WRITE_PENDING);
 	return 0;
 }
