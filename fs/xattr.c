@@ -24,7 +24,6 @@
 #include <linux/posix_acl_xattr.h>
 
 #include <linux/uaccess.h>
-
 #include "internal.h"
 
 static const char *

@@ -20,20 +20,22 @@ extern spinlock_t ceph_san_lock;
 
 #ifdef CONFIG_DEBUG_FS
 #define CEPH_SAN_MAX_LOGS 256
+#define LOG_BUF_SIZE 128
 
 void cephsan_cleanup(void);
 int __init cephsan_init(void);
 
-void log_cephsan(size_t line, u8 *func, size_t opt_param);
-#define CEPH_SAN_LOG(param) log_cephsan(__LINE__, (u8 *)__func__, param)
+char *get_log_cephsan(void);
+#define CEPH_SAN_LOG(fmt, ...) do { \
+    char *buf = get_log_cephsan(); \
+    snprintf(buf, LOG_BUF_SIZE, fmt, ##__VA_ARGS__); \
+} while (0)
 /*
  * Internal definitions for Ceph SAN logs.
  * These definitions are not part of the public API but are required by debugfs.c.
  */
 struct ceph_san_log_entry {
-    size_t line;
-    size_t opt_param;
-    void *func;
+    char buf[LOG_BUF_SIZE];
     u64 ts;
 };
 

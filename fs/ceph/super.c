@@ -2,6 +2,7 @@
 
 #include "linux/mm_types.h"
 #include <linux/ceph/ceph_debug.h>
+#include <linux/ceph/ceph_san.h>
 
 #include <linux/backing-dev.h>
 #include <linux/ctype.h>
@@ -31,7 +32,6 @@
 
 #include <uapi/linux/magic.h>
 
-#include "ceph_san.h"
 
 // If no header file, declare the function prototype
 // int allocate_and_add_ceph_san(void);

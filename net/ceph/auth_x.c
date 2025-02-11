@@ -1058,12 +1058,13 @@ static int ceph_x_check_message_signature(struct ceph_auth_handshake *auth,
 		return ret;
 	if (sig_check == msg->footer.sig)
 		return 0;
-	if (msg->footer.flags & CEPH_MSG_FOOTER_SIGNED)
+	if (msg->footer.flags & CEPH_MSG_FOOTER_SIGNED) {
 		dout("ceph_x_check_message_signature %p has signature %llx "
 		     "expect %llx\n", msg, msg->footer.sig, sig_check);
-	else
+	} else {
 		dout("ceph_x_check_message_signature %p sender did not set "
 		     "CEPH_MSG_FOOTER_SIGNED\n", msg);
+	}
 	return -EBADMSG;
 }
 

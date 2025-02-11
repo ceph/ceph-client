@@ -11,6 +11,7 @@
 #include <linux/ktime.h>
 
 #include <linux/ceph/libceph.h>
+#include <linux/ceph/ceph_san.h>
 #include <linux/ceph/mon_client.h>
 #include <linux/ceph/auth.h>
 #include <linux/ceph/debugfs.h>
@@ -21,7 +22,6 @@
 
 #include "mds_client.h"
 #include "metric.h"
-#include "ceph_san.h"
 
 static int ceph_san_show(struct seq_file *s, void *p)
 {
@@ -30,8 +30,8 @@ static int ceph_san_show(struct seq_file *s, void *p)
 	size_t i;
 
 	seq_printf(s, "Ceph SAN logs:\n");
-	seq_printf(s, "%-16s %-8s %-32s %-16s %-16s\n",
-		   "Task", "PID", "Function", "Line", "Timestamp");
+	seq_printf(s, "%-16s %-8s %-32s\n",
+		   "Task", "PID", "Log");
 	seq_printf(s, "--------------------------------------------------------------\n");
 
 	spin_lock_irqsave(&ceph_san_lock, flags);
@@ -44,13 +44,11 @@ static int ceph_san_show(struct seq_file *s, void *p)
 		u64 now = jiffies;
 		for (i = tls->tail_idx; i % CEPH_SAN_MAX_LOGS != tls->head_idx; i++) {
 			struct ceph_san_log_entry *log = &tls->logs[i];
-			seq_printf(s, "%-16s %-8d %-32s %-16zu %-16u (%lu)\n",
+			seq_printf(s, "%-16s %-8d %s (%u)\n",
 				tls->task->comm,
 				tls->task->pid,
-				(char *)log->func,
-				log->line,
-				jiffies_to_msecs(now - log->ts),
-				log->opt_param);
+				log->buf,
+				jiffies_to_msecs(now - log->ts));
 			now = log->ts;
 		}
 	}

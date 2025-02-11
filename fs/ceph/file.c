@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/ceph/ceph_debug.h>
 #include <linux/ceph/striper.h>
+#include <linux/ceph/ceph_san.h>
 
 #include <linux/module.h>
 #include <linux/sched.h>
@@ -384,8 +385,10 @@ int ceph_open(struct inode *inode, struct file *file)
 		flags = O_DIRECTORY;  /* mds likes to know */
 	} else if (S_ISREG(inode->i_mode)) {
 		err = fscrypt_file_open(inode, file);
-		if (err)
+		if (err) {
+			CEPH_SAN_LOG("fscrypt_file_open failed");
 			return err;
+		}
 	}
 
 	doutc(cl, "%p %llx.%llx file %p flags %d (%d)\n", inode,
@@ -411,6 +414,7 @@ int ceph_open(struct inode *inode, struct file *file)
 
 		/* For none EACCES cases will let the MDS do the mds auth check */
 		if (err == -EACCES) {
+			CEPH_SAN_LOG("ceph_mds_check_access failed");
 			return err;
 		} else if (err < 0) {
 			do_sync = true;

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/ceph/ceph_debug.h>
+#include <linux/ceph/ceph_san.h>
 
 #include <linux/fs.h>
 #include <linux/wait.h>
@@ -17,7 +18,6 @@
 #include "super.h"
 #include "mds_client.h"
 #include "crypto.h"
-#include "ceph_san.h"
 
 #include <linux/ceph/ceph_features.h>
 #include <linux/ceph/messenger.h>
