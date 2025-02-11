@@ -8,6 +8,26 @@
 extern struct list_head ceph_san_list;
 extern spinlock_t ceph_san_lock;
 
+/*
+ * Pagefrag Allocator for ceph_san:
+ *  - A contiguous 4-page buffer (16KB) is allocated.
+ *  - The allocator maintains two unsigned int indices (head and tail) into the buffer.
+ *  - cephsan_pagefrag_alloc(n) returns a pointer to n contiguous bytes (if available) and
+ *    advances the head pointer by n bytes (wrapping around at the end).
+ *  - cephsan_pagefrag_free(n) advances the tail pointer by n bytes.
+ *
+ * This simple ring-buffer allocator is intended for short-lived allocations in the Ceph SAN code.
+ */
+
+#define CEPHSAN_PAGEFRAG_SIZE  (4 * PAGE_SIZE)  /* 16KB */
+
+/* Pagefrag allocator structure */
+struct cephsan_pagefrag {
+    void *buffer;
+    unsigned int head;
+    unsigned int tail;
+};
+
 /* The ceph san log entry structure is now private to ceph_san.c.
  * Use log_cephsan() below.
  */
@@ -18,12 +38,41 @@ extern spinlock_t ceph_san_lock;
  * and an optional parameter. It uses the current task's journal_info field.
  */
 
+int cephsan_pagefrag_init(struct cephsan_pagefrag *pf);
+
+
+/**
+ * cephsan_pagefrag_alloc - Allocate bytes from the pagefrag buffer.
+ * @n: number of bytes to allocate.
+ *
+ * Allocates @n bytes if there is sufficient free space in the buffer.
+ * Advances the head pointer by @n bytes (wrapping around if needed).
+ *
+ * Return: pointer to the allocated memory, or NULL if not enough space.
+ */
+u64 cephsan_pagefrag_alloc(struct cephsan_pagefrag *pf, unsigned int n);
+
+/**
+ * cephsan_pagefrag_free - Free bytes in the pagefrag allocator.
+ * @n: number of bytes to free.
+ *
+ * Advances the tail pointer by @n bytes (wrapping around if needed).
+ */
+void cephsan_pagefrag_free(struct cephsan_pagefrag *pf, unsigned int n);
+/**
+ * cephsan_pagefrag_deinit - Deinitialize the pagefrag allocator.
+ *
+ * Frees the allocated buffer and resets the head and tail pointers.
+ */
+void cephsan_pagefrag_deinit(struct cephsan_pagefrag *pf);
+
+
 #ifdef CONFIG_DEBUG_FS
 #define CEPH_SAN_MAX_LOGS 256
 #define LOG_BUF_SIZE 128
 
 void cephsan_cleanup(void);
-int __init cephsan_init(void);
+int cephsan_init(void);
 
 char *get_log_cephsan(void);
 #define CEPH_SAN_LOG(fmt, ...) do { \

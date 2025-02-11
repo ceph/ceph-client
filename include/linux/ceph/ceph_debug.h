@@ -20,20 +20,20 @@
 #  define dout(fmt, ...)						\
 	pr_debug("%.*s %12.12s:%-4d : " fmt,				\
 		 8 - (int)sizeof(KBUILD_MODNAME), "    ",		\
-		 kbasename(__FILE__), __LINE__, ##__VA_ARGS__); \
+		 kbasename(__FILE__), __LINE__, ##__VA_ARGS__); 	\
 	CEPH_SAN_LOG("%.*s %12.12s:%-4d : " fmt,			\
 		 8 - (int)sizeof(KBUILD_MODNAME), "    ",		\
 		 kbasename(__FILE__), __LINE__, ##__VA_ARGS__)
-#  define doutc(client, fmt, ...)						\
-	pr_debug("%.*s %12.12s:%-4d : [%pU %llu] " fmt,		\
+#  define doutc(client, fmt, ...)					\
+	pr_debug("%.*s %12.12s:%-4d : [%pU %llu] " fmt,			\
 		 8 - (int)sizeof(KBUILD_MODNAME), "    ",		\
-		 kbasename(__FILE__), __LINE__,					\
-		 &client->fsid, client->monc.auth->global_id,	\
-		 ##__VA_ARGS__); 								\
-	CEPH_SAN_LOG("%.*s %12.12s:%-4d : [%pU %llu] " fmt,	\
+		 kbasename(__FILE__), __LINE__,				\
+		 &client->fsid, client->monc.auth->global_id,		\
+		 ##__VA_ARGS__); 					\
+	CEPH_SAN_LOG("%.*s %12.12s:%-4d : [%pU %llu] " fmt,		\
 		 8 - (int)sizeof(KBUILD_MODNAME), "    ",		\
-		 kbasename(__FILE__), __LINE__,					\
-		 &client->fsid, client->monc.auth->global_id,	\
+		 kbasename(__FILE__), __LINE__,				\
+		 &client->fsid, client->monc.auth->global_id,		\
 		 ##__VA_ARGS__)
 # else
 /* faux printk call just to see any compiler warnings. */

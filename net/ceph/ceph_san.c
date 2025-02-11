@@ -8,8 +8,9 @@
 #ifdef CONFIG_DEBUG_FS
 /* Global list and lock now hold TLS logger objects only */
 LIST_HEAD(ceph_san_list);
+EXPORT_SYMBOL(ceph_san_list);
 DEFINE_SPINLOCK(ceph_san_lock);
-
+EXPORT_SYMBOL(ceph_san_lock);
 /* The definitions for struct ceph_san_log_entry and struct ceph_san_tls_logger
  * have been moved to cephsan.h (under CONFIG_DEBUG_FS) to avoid duplication.
  */
@@ -73,37 +74,20 @@ void cephsan_cleanup(void)
     }
     spin_unlock(&ceph_san_lock);
 }
+EXPORT_SYMBOL(cephsan_cleanup);
 /* Initialize the Ceph SAN logging infrastructure.
  * Call this at module init to set up the global list and lock.
  */
-int __init cephsan_init(void)
+int cephsan_init(void)
 {
 	spin_lock_init(&ceph_san_lock);
 	INIT_LIST_HEAD(&ceph_san_list);
 	return 0;
 }
+EXPORT_SYMBOL(cephsan_init);
 
 #endif /* CONFIG_DEBUG_FS */
 
-/*
- * Pagefrag Allocator for ceph_san:
- *  - A contiguous 4-page buffer (16KB) is allocated.
- *  - The allocator maintains two unsigned int indices (head and tail) into the buffer.
- *  - cephsan_pagefrag_alloc(n) returns a pointer to n contiguous bytes (if available) and
- *    advances the head pointer by n bytes (wrapping around at the end).
- *  - cephsan_pagefrag_free(n) advances the tail pointer by n bytes.
- *
- * This simple ring-buffer allocator is intended for short-lived allocations in the Ceph SAN code.
- */
-
-#define CEPHSAN_PAGEFRAG_SIZE  (4 * PAGE_SIZE)  /* 16KB */
-
-/* Pagefrag allocator structure */
-struct cephsan_pagefrag {
-    void *buffer;
-    unsigned int head;
-    unsigned int tail;
-};
 
 /**
  * cephsan_pagefrag_init - Initialize the pagefrag allocator.
@@ -112,7 +96,7 @@ struct cephsan_pagefrag {
  *
  * Return: 0 on success, negative error code on failure.
  */
-static int cephsan_pagefrag_init(struct cephsan_pagefrag *pf)
+int cephsan_pagefrag_init(struct cephsan_pagefrag *pf)
 {
 	pf->buffer = kmalloc(CEPHSAN_PAGEFRAG_SIZE, GFP_KERNEL);
 	if (!pf->buffer)
@@ -122,6 +106,7 @@ static int cephsan_pagefrag_init(struct cephsan_pagefrag *pf)
 	pf->tail = 0;
 	return 0;
 }
+EXPORT_SYMBOL(cephsan_pagefrag_init);
 
 /**
  * cephsan_pagefrag_alloc - Allocate bytes from the pagefrag buffer.
@@ -132,7 +117,7 @@ static int cephsan_pagefrag_init(struct cephsan_pagefrag *pf)
  *
  * Return: pointer to the allocated memory, or NULL if not enough space.
  */
-static u64 cephsan_pagefrag_alloc(struct cephsan_pagefrag *pf, unsigned int n)
+u64 cephsan_pagefrag_alloc(struct cephsan_pagefrag *pf, unsigned int n)
 {
 	unsigned int used, free_space, remaining;
 	void *ptr;
@@ -166,26 +151,27 @@ static u64 cephsan_pagefrag_alloc(struct cephsan_pagefrag *pf, unsigned int n)
 	/* Return combined u64 with buffer index in lower 32 bits and size in upper 32 bits */
 	return ((u64)(n) << 32) | (ptr - pf->buffer);
 }
-
+EXPORT_SYMBOL(cephsan_pagefrag_alloc);
 /**
  * cephsan_pagefrag_free - Free bytes in the pagefrag allocator.
  * @n: number of bytes to free.
  *
  * Advances the tail pointer by @n bytes (wrapping around if needed).
  */
-static void cephsan_pagefrag_free(struct cephsan_pagefrag *pf, unsigned int n)
+void cephsan_pagefrag_free(struct cephsan_pagefrag *pf, unsigned int n)
 {
 	pf->tail = (pf->tail + n) % CEPHSAN_PAGEFRAG_SIZE;
 }
-
+EXPORT_SYMBOL(cephsan_pagefrag_free);
 /**
  * cephsan_pagefrag_deinit - Deinitialize the pagefrag allocator.
  *
  * Frees the allocated buffer and resets the head and tail pointers.
  */
-static void cephsan_pagefrag_deinit(struct cephsan_pagefrag *pf)
+void cephsan_pagefrag_deinit(struct cephsan_pagefrag *pf)
 {
 	kfree(pf->buffer);
 	pf->buffer = NULL;
 	pf->head = pf->tail = 0;
 }
+EXPORT_SYMBOL(cephsan_pagefrag_deinit);
