@@ -42,13 +42,15 @@ static int ceph_san_show(struct seq_file *s, void *p)
 		}
 
 		u64 now = jiffies;
+		int idx = 0
 		for (i = tls->tail_idx; i % CEPH_SAN_MAX_LOGS != tls->head_idx; i++) {
 			struct ceph_san_log_entry *log = &tls->logs[i];
-			seq_printf(s, "%-16s %-8d %s (%u)\n",
+			seq_printf(s, "%-16s %-8d %d) (%u):%s ",
 				tls->task->comm,
 				tls->task->pid,
-				log->buf,
-				jiffies_to_msecs(now - log->ts));
+				idx++,
+				jiffies_to_msecs(now - log->ts),
+				log->buf);
 			now = log->ts;
 		}
 	}
