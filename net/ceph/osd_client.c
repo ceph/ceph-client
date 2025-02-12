@@ -1420,7 +1420,7 @@ static int reopen_osd(struct ceph_osd *osd)
 		struct rb_node *n;
 
 		dout("osd addr hasn't changed and connection never opened, "
-		     "letting msgr retry\n");
+		     "msgr retrying\n");
 		/* touch each r_stamp for handle_timeout()'s benfit */
 		for (n = rb_first(&osd->o_requests); n; n = rb_next(n)) {
 			struct ceph_osd_request *req =
