@@ -682,7 +682,7 @@ void ceph_con_discard_sent(struct ceph_connection *con, u64 ack_seq)
 		if (seq > ack_seq)
 			break;
 
-		dout("%s con %p discarding msg %p seq %llu\n", __func__, con,
+		dout("con %p discarding msg %p seq %llu\n", con,
 		     msg, seq);
 		ceph_msg_remove(msg);
 	}
@@ -1412,15 +1412,17 @@ void ceph_con_process_message(struct ceph_connection *con)
 	con->in_seq++;
 	mutex_unlock(&con->mutex);
 
-	dout("===== %p %llu from %s%lld %d=%s len %d+%d+%d (%u %u %u) =====\n",
+	dout("===== %p %llu from %s%lld %d=%s len %d+%d+%d =====\n",
 	     msg, le64_to_cpu(msg->hdr.seq),
 	     ENTITY_NAME(msg->hdr.src),
 	     le16_to_cpu(msg->hdr.type),
 	     ceph_msg_type_name(le16_to_cpu(msg->hdr.type)),
 	     le32_to_cpu(msg->hdr.front_len),
 	     le32_to_cpu(msg->hdr.middle_len),
-	     le32_to_cpu(msg->hdr.data_len),
+	     le32_to_cpu(msg->hdr.data_len));
+	dout("=====  (%u %u %u) =====\n",
 	     con->in_front_crc, con->in_middle_crc, con->in_data_crc);
+
 	con->ops->dispatch(con, msg);
 
 	mutex_lock(&con->mutex);

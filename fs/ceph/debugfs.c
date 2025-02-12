@@ -37,24 +37,26 @@ static int ceph_san_show(struct seq_file *s, void *p)
 		tls = &per_cpu(ceph_san_tls, cpu);
 		int i;
 
-		u64 now = jiffies;
 		int idx = 0;
 		int head_idx = tls->head_idx & (CEPH_SAN_MAX_LOGS - 1);
 		int tail_idx = (head_idx + 1) & (CEPH_SAN_MAX_LOGS - 1);
 
 		for (i = tail_idx; (i & (CEPH_SAN_MAX_LOGS -1)) != head_idx; i++) {
+			struct timespec64 ts;
 			struct ceph_san_log_entry *log = &tls->logs[i & (CEPH_SAN_MAX_LOGS -1)];
+			jiffies_to_timespec64(log->ts, &ts);
+
 			if (log->ts == 0) {
 				continue;
 			}
-			seq_printf(s, "%zu:%d) %-16s %-8d (%u):%s",
+			seq_printf(s, "%zu:%lld.%09ld:%d) %-16s %-8d:%s",
 				cpu,
+				(long long)ts.tv_sec,
+				ts.tv_nsec,
 				idx++,
 				log->comm,
 				log->pid,
-				jiffies_to_msecs(now - log->ts),
 				log->buf);
-			now = log->ts;
 		}
 	}
 

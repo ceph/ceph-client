@@ -1248,15 +1248,18 @@ static void encode_cap_msg(struct ceph_msg *msg, struct cap_msg_args *arg)
 	struct ceph_osd_client *osdc = &mdsc->fsc->client->osdc;
 
 	doutc(mdsc->fsc->client,
-	      "%s %llx %llx caps %s wanted %s dirty %s seq %u/%u"
-	      " tid %llu/%llu mseq %u follows %lld size %llu/%llu"
-	      " xattr_ver %llu xattr_len %d\n",
-	      ceph_cap_op_name(arg->op), arg->cid, arg->ino,
-	      ceph_cap_string(arg->caps), ceph_cap_string(arg->wanted),
-	      ceph_cap_string(arg->dirty), arg->seq, arg->issue_seq,
-	      arg->flush_tid, arg->oldest_flush_tid, arg->mseq, arg->follows,
-	      arg->size, arg->max_size, arg->xattr_version,
-	      arg->xattr_buf ? (int)arg->xattr_buf->vec.iov_len : 0);
+		"%s %llx %llx caps %s wanted %s dirty %s seq %u/%u"
+		" tid %llu/%llu\n",
+		ceph_cap_op_name(arg->op), arg->cid, arg->ino,
+		ceph_cap_string(arg->caps), ceph_cap_string(arg->wanted),
+		ceph_cap_string(arg->dirty), arg->seq, arg->issue_seq,
+		arg->flush_tid, arg->oldest_flush_tid);
+	doutc(mdsc->fsc->client,
+		"mseq %u follows %lld size %llu/%llu"
+		" xattr_ver %llu xattr_len %d\n",
+		arg->mseq, arg->follows,
+		arg->size, arg->max_size, arg->xattr_version,
+		arg->xattr_buf ? (int)arg->xattr_buf->vec.iov_len : 0);
 
 	msg->hdr.version = cpu_to_le16(12);
 	msg->hdr.tid = cpu_to_le64(arg->flush_tid);

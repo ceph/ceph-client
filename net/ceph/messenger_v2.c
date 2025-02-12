@@ -678,7 +678,7 @@ static int verify_epilogue_crcs(struct ceph_connection *con, u32 front_crc,
 	if (!data_len(con->in_msg))
 		con->in_data_crc = 0;
 
-	dout("%s con %p msg %p crcs %u %u %u\n", __func__, con, con->in_msg,
+	dout("con %p msg %p crcs %u %u %u\n", con, con->in_msg,
 	     con->in_front_crc, con->in_middle_crc, con->in_data_crc);
 
 	if (con->in_front_crc != front_crc) {
