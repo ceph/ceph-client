@@ -9,21 +9,38 @@
 /* Use per-core TLS logger; no global list or lock needed */
 DEFINE_PER_CPU(struct ceph_san_tls_logger, ceph_san_tls);
 EXPORT_SYMBOL(ceph_san_tls);
+
+DEFINE_PER_CPU(struct cephsan_pagefrag, ceph_san_pagefrag);
+EXPORT_SYMBOL(ceph_san_pagefrag);
+
+
+static inline void *cephsan_pagefrag_get_ptr(struct cephsan_pagefrag *pf, u64 val);
 /* The definitions for struct ceph_san_log_entry and struct ceph_san_tls_logger
  * have been moved to cephsan.h (under CONFIG_DEBUG_FS) to avoid duplication.
  */
 
-char *get_log_cephsan(void) {
+void log_cephsan(char *buf) {
     /* Use the per-core TLS logger */
     struct ceph_san_tls_logger *tls = this_cpu_ptr(&ceph_san_tls);
+	struct cephsan_pagefrag *pf = this_cpu_ptr(&ceph_san_pagefrag);
+
     int head_idx = tls->head_idx++ & (CEPH_SAN_MAX_LOGS - 1);
+	int pre_len = tls->logs[head_idx].len;
     tls->logs[head_idx].pid = current->pid;
     tls->logs[head_idx].ts = jiffies;
     memcpy(tls->logs[head_idx].comm, current->comm, TASK_COMM_LEN);
 
-    return tls->logs[head_idx].buf;
+	cephsan_pagefrag_free(pf, pre_len);
+
+	int len = strlen(buf);
+    u64 buf_idx = cephsan_pagefrag_alloc(pf, len);
+    if (buf_idx) {
+		tls->logs[head_idx].len = len;
+        tls->logs[head_idx].buf = cephsan_pagefrag_get_ptr(pf, buf_idx);
+		memcpy(tls->logs[head_idx].buf, buf, len);
+    }
 }
-EXPORT_SYMBOL(get_log_cephsan);
+EXPORT_SYMBOL(log_cephsan);
 
 /* Cleanup function to free all TLS logger objects.
  * Call this at module exit to free allocated TLS loggers.
@@ -49,6 +66,7 @@ int cephsan_init(void)
 {
 	int cpu;
 	struct ceph_san_tls_logger *tls;
+	struct cephsan_pagefrag *pf;
 
 	for_each_possible_cpu(cpu) {
 		tls = per_cpu_ptr(&ceph_san_tls, cpu);
@@ -58,6 +76,11 @@ int cephsan_init(void)
 			return -ENOMEM;
 		}
 		tls->logs = (struct ceph_san_log_entry *)page_address(tls->pages);
+	}
+
+	for_each_possible_cpu(cpu) {
+		pf = per_cpu_ptr(&ceph_san_pagefrag, cpu);
+		cephsan_pagefrag_init(pf);
 	}
 	return 0;
 }
@@ -72,10 +95,11 @@ EXPORT_SYMBOL(cephsan_init);
  */
 int cephsan_pagefrag_init(struct cephsan_pagefrag *pf)
 {
-	pf->buffer = kmalloc(CEPHSAN_PAGEFRAG_SIZE, GFP_KERNEL);
-	if (!pf->buffer)
+	pf->pages = alloc_pages(GFP_KERNEL, get_order(CEPHSAN_PAGEFRAG_SIZE));
+	if (!pf->pages)
 		return -ENOMEM;
 
+	pf->buffer = page_address(pf->pages);
 	pf->head = 0;
 	pf->tail = 0;
 	return 0;
@@ -93,39 +117,52 @@ EXPORT_SYMBOL(cephsan_pagefrag_init);
  */
 u64 cephsan_pagefrag_alloc(struct cephsan_pagefrag *pf, unsigned int n)
 {
-	unsigned int used, free_space, remaining;
-	void *ptr;
-
-	/* Compute usage in the circular buffer */
-	if (pf->head >= pf->tail)
-		used = pf->head - pf->tail;
-	else
-		used = CEPHSAN_PAGEFRAG_SIZE - pf->tail + pf->head;
-
-	free_space = CEPHSAN_PAGEFRAG_SIZE - used;
-	if (n > free_space)
-		return 0;
-
-	/* Check if allocation would wrap around buffer end */
-	if (pf->head + n > CEPHSAN_PAGEFRAG_SIZE) {
-		/* Calculate bytes remaining until buffer end */
-		remaining = CEPHSAN_PAGEFRAG_SIZE - pf->head;
-		/* Move tail to start if needed */
-		if (pf->tail < n - remaining)
-			pf->tail = 0;
-
-		/* Return pointer to new head at buffer start */
-		ptr = pf->buffer;
-		pf->head = n - remaining;
-	} else {
-		/* No wrap around needed */
-		ptr = (char *)pf->buffer + pf->head;
-		pf->head += n;
+	/* Case 1: tail > head */
+	if (pf->tail > pf->head) {
+		if (pf->tail - pf->head >= n) {
+			unsigned int prev_head = pf->head;
+			pf->head += n;
+			return ((u64)n << 32) | prev_head;
+		} else {
+			pr_err("Not enough space in pagefrag buffer\n");
+			return 0;
+		}
 	}
-	/* Return combined u64 with buffer index in lower 32 bits and size in upper 32 bits */
-	return ((u64)(n) << 32) | (ptr - pf->buffer);
+	/* Case 2: tail <= head */
+	if (pf->head + n <= CEPHSAN_PAGEFRAG_SIZE) {
+		/* Normal allocation */
+		unsigned int prev_head = pf->head;
+		pf->head += n;
+		return ((u64)n << 32) | prev_head;
+	} else {
+		/* Need to wrap around */
+		if (n <= pf->tail) {
+			pf->head = n;
+			n += CEPHSAN_PAGEFRAG_SIZE - pf->head;
+			return ((u64)n << 32) | 0;
+		} else {
+			pr_err("Not enough space for wrap-around allocation\n");
+			return 0;
+		}
+	}
+	pr_err("impossible: Not enough space in pagefrag buffer\n");
+	return 0;
 }
 EXPORT_SYMBOL(cephsan_pagefrag_alloc);
+/**
+ * cephsan_pagefrag_get_ptr - Get buffer pointer from pagefrag allocation result
+ * @pf: pagefrag allocator
+ * @val: return value from cephsan_pagefrag_alloc
+ *
+ * Return: pointer to allocated buffer region
+ */
+static inline void *cephsan_pagefrag_get_ptr(struct cephsan_pagefrag *pf, u64 val)
+{
+	return pf->buffer + (val & 0xFFFFFFFF);
+}
+
+#define CEPHSAN_PAGEFRAG_GET_N(val)  ((val) >> 32)
+
 /**
  * cephsan_pagefrag_free - Free bytes in the pagefrag allocator.
  * @n: number of bytes to free.
@@ -134,7 +171,7 @@ EXPORT_SYMBOL(cephsan_pagefrag_alloc);
  */
 void cephsan_pagefrag_free(struct cephsan_pagefrag *pf, unsigned int n)
 {
-	pf->tail = (pf->tail + n) % CEPHSAN_PAGEFRAG_SIZE;
+	pf->tail = (pf->tail + n) & (CEPHSAN_PAGEFRAG_SIZE - 1);
 }
 EXPORT_SYMBOL(cephsan_pagefrag_free);
 /**

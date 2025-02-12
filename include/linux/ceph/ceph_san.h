@@ -8,6 +8,7 @@
 
 
 DECLARE_PER_CPU(struct ceph_san_tls_logger, ceph_san_tls);
+DECLARE_PER_CPU(struct cephsan_pagefrag, ceph_san_pagefrag);
 
 /*
  * Pagefrag Allocator for ceph_san:
@@ -20,10 +21,11 @@ DECLARE_PER_CPU(struct ceph_san_tls_logger, ceph_san_tls);
  * This simple ring-buffer allocator is intended for short-lived allocations in the Ceph SAN code.
  */
 
-#define CEPHSAN_PAGEFRAG_SIZE  (4 * PAGE_SIZE)  /* 16KB */
+#define CEPHSAN_PAGEFRAG_SIZE  (1<<22)  /* 4MB */
 
 /* Pagefrag allocator structure */
 struct cephsan_pagefrag {
+    struct page *pages;
     void *buffer;
     unsigned int head;
     unsigned int tail;
@@ -70,17 +72,16 @@ void cephsan_pagefrag_deinit(struct cephsan_pagefrag *pf);
 
 #ifdef CONFIG_DEBUG_FS
 #define CEPH_SAN_MAX_LOGS (8192 << 2) //4MB per core
-#define LOG_BUF_SIZE 100
+#define LOG_BUF_SIZE 256
 
 void cephsan_cleanup(void);
 int cephsan_init(void);
 
-char *get_log_cephsan(void);
+void log_cephsan(char *buf);
 #define CEPH_SAN_LOG(fmt, ...) do { \
-    char *buf = get_log_cephsan(); \
-    if (buf) { \
-        snprintf(buf, LOG_BUF_SIZE, fmt, ##__VA_ARGS__); \
-    }   \
+    char buf[LOG_BUF_SIZE]; \
+    snprintf(buf, LOG_BUF_SIZE, fmt, ##__VA_ARGS__); \
+    log_cephsan(buf); \
 } while (0)
 /*
  * Internal definitions for Ceph SAN logs.
@@ -88,9 +89,10 @@ char *get_log_cephsan(void);
  */
 struct ceph_san_log_entry {
     char comm[TASK_COMM_LEN];
-    char buf[LOG_BUF_SIZE];
-    pid_t pid;
+    char *buf;
     u64 ts;
+    pid_t pid;
+    u32 len;
 };
 
 struct ceph_san_tls_logger {
