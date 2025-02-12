@@ -26,38 +26,37 @@
 static int ceph_san_show(struct seq_file *s, void *p)
 {
 	struct ceph_san_tls_logger *tls;
-	unsigned long flags;
-	size_t i;
+	size_t cpu;
 
 	seq_printf(s, "Ceph SAN logs:\n");
 	seq_printf(s, "%-16s %-8s %-32s\n",
 		   "Task", "PID", "Log");
 	seq_printf(s, "--------------------------------------------------------------\n");
 
-	spin_lock_irqsave(&ceph_san_lock, flags);
-	list_for_each_entry(tls, &ceph_san_list, list) {
-		if (tls->cephsun_sig != 0xD1E7C0CE) {
-			pr_err("Ceph SAN: Invalid signature - %s(%d)\n", tls->task->comm, tls->task->pid);
-			continue;
-		}
+	for_each_possible_cpu(cpu) {
+		tls = &per_cpu(ceph_san_tls, cpu);
+		int i;
 
 		u64 now = jiffies;
 		int idx = 0;
-		for (i = tls->tail_idx; (i & (CEPH_SAN_MAX_LOGS -1)) != tls->head_idx; i++) {
+		int head_idx = tls->head_idx & (CEPH_SAN_MAX_LOGS - 1);
+		int tail_idx = (head_idx + 1) & (CEPH_SAN_MAX_LOGS - 1);
+
+		for (i = tail_idx; (i & (CEPH_SAN_MAX_LOGS -1)) != head_idx; i++) {
 			struct ceph_san_log_entry *log = &tls->logs[i & (CEPH_SAN_MAX_LOGS -1)];
 			if (log->ts == 0) {
-				break;
+				continue;
 			}
-			seq_printf(s, "%-16s %-8d %d) (%u):%s",
-				tls->task->comm,
-				tls->task->pid,
+			seq_printf(s, "%zu:%d) %-16s %-8d (%u):%s",
+				cpu,
 				idx++,
+				log->comm,
+				log->pid,
 				jiffies_to_msecs(now - log->ts),
 				log->buf);
 			now = log->ts;
 		}
 	}
-	spin_unlock_irqrestore(&ceph_san_lock, flags);
 
 	return 0;
 }

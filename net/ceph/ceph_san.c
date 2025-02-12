@@ -5,58 +5,22 @@
 #include <linux/jiffies.h>
 #include <linux/ceph/ceph_san.h>
 
-#ifdef CONFIG_DEBUG_FS
-/* Global list and lock now hold TLS logger objects only */
-LIST_HEAD(ceph_san_list);
-EXPORT_SYMBOL(ceph_san_list);
-DEFINE_SPINLOCK(ceph_san_lock);
-EXPORT_SYMBOL(ceph_san_lock);
+/* Use per-core TLS logger; no global list or lock needed */
+DEFINE_PER_CPU(struct ceph_san_tls_logger, ceph_san_tls);
+EXPORT_SYMBOL(ceph_san_tls);
 /* The definitions for struct ceph_san_log_entry and struct ceph_san_tls_logger
  * have been moved to cephsan.h (under CONFIG_DEBUG_FS) to avoid duplication.
  */
 
 char *get_log_cephsan(void) {
-    struct ceph_san_tls_logger *tls;
+    /* Use the per-core TLS logger */
+    struct ceph_san_tls_logger *tls = this_cpu_ptr(&ceph_san_tls);
+    int head_idx = tls->head_idx++ & (CEPH_SAN_MAX_LOGS - 1);
+    tls->logs[head_idx].pid = current->pid;
+    tls->logs[head_idx].ts = jiffies;
+    memcpy(tls->logs[head_idx].comm, current->comm, TASK_COMM_LEN);
 
-    /* Check if the current task already has a TLS logger in its journal_info field.
-     * (Note: This simplistic example assumes that current->journal_info is a valid field.)
-     */
-    if (current->journal_info) {
-        tls = (struct ceph_san_tls_logger *)current->journal_info;
-        if (tls->cephsun_sig != 0xD1E7C0CE) {
-            pr_err("Ceph SAN: Invalid signature - %s(%d)\n", current->comm, current->pid);
-            return NULL;
-        }
-        if (tls->task != current) {
-            pr_err("Ceph SAN: Task mismatch - %s(%d) != %s(%d)\n", tls->task->comm, tls->task->pid, current->comm, current->pid);
-            return NULL;
-        }
-    } else {
-        tls = kmalloc(sizeof(*tls), GFP_KERNEL);
-        if (!tls) {
-            pr_err("Ceph SAN: Failed to allocate TLS logger for %s(%d)\n", current->comm, current->pid);
-            return NULL;
-        }
-        tls->cephsun_sig = 0xD1E7C0CE; /* example signature */
-        tls->task = current;
-        tls->head_idx = 0;
-        tls->tail_idx = 0;
-        INIT_LIST_HEAD(&tls->list);
-
-        spin_lock(&ceph_san_lock);
-        list_add_tail(&tls->list, &ceph_san_list);
-        spin_unlock(&ceph_san_lock);
-
-        /* Set current task's journal_info pointer to the newly allocated TLS logger */
-        current->journal_info = (void *)tls;
-    }
-
-    if (((tls->head_idx + 1) & (CEPH_SAN_MAX_LOGS -1)) == tls->tail_idx) {
-        tls->tail_idx = (tls->tail_idx + 1) & (CEPH_SAN_MAX_LOGS -1);
-    }
-    tls->logs[tls->head_idx].ts = jiffies;
-    tls->head_idx = (tls->head_idx + 1) & (CEPH_SAN_MAX_LOGS -1);
-    return tls->logs[tls->head_idx].buf;
+    return tls->logs[head_idx].buf;
 }
 EXPORT_SYMBOL(get_log_cephsan);
 
@@ -65,14 +29,6 @@ EXPORT_SYMBOL(get_log_cephsan);
  */
 void cephsan_cleanup(void)
 {
-    struct ceph_san_tls_logger *tls, *tmp;
-
-    spin_lock(&ceph_san_lock);
-    list_for_each_entry_safe(tls, tmp, &ceph_san_list, list) {
-         list_del(&tls->list);
-         kfree(tls);
-    }
-    spin_unlock(&ceph_san_lock);
 }
 EXPORT_SYMBOL(cephsan_cleanup);
 /* Initialize the Ceph SAN logging infrastructure.
@@ -80,14 +36,10 @@ EXPORT_SYMBOL(cephsan_cleanup);
  */
 int cephsan_init(void)
 {
-	spin_lock_init(&ceph_san_lock);
-	INIT_LIST_HEAD(&ceph_san_list);
+
 	return 0;
 }
 EXPORT_SYMBOL(cephsan_init);
-
-#endif /* CONFIG_DEBUG_FS */
-
 
 /**
  * cephsan_pagefrag_init - Initialize the pagefrag allocator.

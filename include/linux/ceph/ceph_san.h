@@ -4,9 +4,10 @@
 #include <linux/types.h>
 #include <linux/list.h>
 #include <linux/spinlock.h>
+#include <linux/sched.h>
 
-extern struct list_head ceph_san_list;
-extern spinlock_t ceph_san_lock;
+
+DECLARE_PER_CPU(struct ceph_san_tls_logger, ceph_san_tls);
 
 /*
  * Pagefrag Allocator for ceph_san:
@@ -68,8 +69,8 @@ void cephsan_pagefrag_deinit(struct cephsan_pagefrag *pf);
 
 
 #ifdef CONFIG_DEBUG_FS
-#define CEPH_SAN_MAX_LOGS 256
-#define LOG_BUF_SIZE 128
+#define CEPH_SAN_MAX_LOGS 8192
+#define LOG_BUF_SIZE 100
 
 void cephsan_cleanup(void);
 int cephsan_init(void);
@@ -86,51 +87,27 @@ char *get_log_cephsan(void);
  * These definitions are not part of the public API but are required by debugfs.c.
  */
 struct ceph_san_log_entry {
-    char buf[LOG_BUF_SIZE];
+    pid_t pid;
     u64 ts;
+    char comm[TASK_COMM_LEN];
+    char buf[LOG_BUF_SIZE];
 };
 
 struct ceph_san_tls_logger {
-    u64 cephsun_sig;
     size_t head_idx;
-    size_t tail_idx;
-    struct list_head list;
-    struct task_struct *task;
-    struct ceph_mds_request *req;
     struct ceph_san_log_entry logs[CEPH_SAN_MAX_LOGS];
 };
-/* Macro to set the request in the TLS logger */
-#define CEPH_SAN_SET_REQ(req) do { \
-    struct ceph_san_tls_logger *__tls = current->journal_info; \
-    if (__tls && __tls->cephsun_sig == 0xD1E7C0CE) \
-        __tls->req = req; \
-    else \
-        current->journal_info = req; \
-} while (0)
-/* Macro to reset the request in the TLS logger */
-#define CEPH_SAN_RESET_REQ() do { \
-    struct ceph_san_tls_logger *__tls = current->journal_info; \
-    if (__tls && __tls->cephsun_sig == 0xD1E7C0CE) \
-        __tls->req = NULL; \
-    else \
-        current->journal_info = NULL; \
-} while (0)
-
-/* Macro to get the request from the TLS logger */
-#define CEPH_SAN_GET_REQ() ({ \
-    struct ceph_san_tls_logger *__tls = current->journal_info; \
-    (__tls && __tls->cephsun_sig == 0xD1E7C0CE) ? __tls->req : current->journal_info; \
-})
 #else /* CONFIG_DEBUG_FS */
-#define CEPH_SAN_LOG(param) do {} while (0)
-#define CEPH_SAN_SET_REQ(req) do { current->journal_info = req; } while (0)
-#define CEPH_SAN_RESET_REQ() do { current->journal_info = NULL; } while (0)
-#define CEPH_SAN_GET_REQ() (current->journal_info)
 
+#define CEPH_SAN_LOG(param) do {} while (0)
 
 static inline void cephsan_cleanup(void) {}
 static inline int __init cephsan_init(void) { return 0; }
 
 #endif /* CONFIG_DEBUG_FS */
+
+#define CEPH_SAN_SET_REQ(req) do { current->journal_info = req; } while (0)
+#define CEPH_SAN_RESET_REQ() do { current->journal_info = NULL; } while (0)
+#define CEPH_SAN_GET_REQ() (current->journal_info)
 
 #endif /* CEPHSAN_H */
