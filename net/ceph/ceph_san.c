@@ -28,7 +28,7 @@ char *get_log_cephsan(void) {
             return NULL;
         }
         if (tls->task != current) {
-            pr_err("Ceph SAN: Task mismatch - %s(%d)\n", current->comm, current->pid);
+            pr_err("Ceph SAN: Task mismatch - %s(%d) != %s(%d)\n", tls->task->comm, tls->task->pid, current->comm, current->pid);
             return NULL;
         }
     } else {
@@ -51,11 +51,11 @@ char *get_log_cephsan(void) {
         current->journal_info = (void *)tls;
     }
 
-    if ((tls->head_idx + 1) % CEPH_SAN_MAX_LOGS == tls->tail_idx) {
-        tls->tail_idx = (tls->tail_idx + 1) % CEPH_SAN_MAX_LOGS;
+    if (((tls->head_idx + 1) & (CEPH_SAN_MAX_LOGS -1)) == tls->tail_idx) {
+        tls->tail_idx = (tls->tail_idx + 1) & (CEPH_SAN_MAX_LOGS -1);
     }
     tls->logs[tls->head_idx].ts = jiffies;
-    tls->head_idx = (tls->head_idx + 1) % CEPH_SAN_MAX_LOGS;
+    tls->head_idx = (tls->head_idx + 1) & (CEPH_SAN_MAX_LOGS -1);
     return tls->logs[tls->head_idx].buf;
 }
 EXPORT_SYMBOL(get_log_cephsan);

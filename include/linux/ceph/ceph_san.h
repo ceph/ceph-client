@@ -77,7 +77,9 @@ int cephsan_init(void);
 char *get_log_cephsan(void);
 #define CEPH_SAN_LOG(fmt, ...) do { \
     char *buf = get_log_cephsan(); \
-    snprintf(buf, LOG_BUF_SIZE, fmt, ##__VA_ARGS__); \
+    if (buf) { \
+        snprintf(buf, LOG_BUF_SIZE, fmt, ##__VA_ARGS__); \
+    }   \
 } while (0)
 /*
  * Internal definitions for Ceph SAN logs.
