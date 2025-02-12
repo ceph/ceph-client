@@ -823,8 +823,9 @@ int __ceph_caps_issued(struct ceph_inode_info *ci, int *implemented)
 		cap = rb_entry(p, struct ceph_cap, ci_node);
 		if (!__cap_is_valid(cap))
 			continue;
-		doutc(cl, "%p %llx.%llx cap %p issued %s\n", inode,
-		      ceph_vinop(inode), cap, ceph_cap_string(cap->issued));
+		doutc(cl, "%p %llx.%llx cap %p\n", inode,
+		      ceph_vinop(inode), cap);
+		doutc(cl, "%p issued %s\n", inode, ceph_cap_string(cap->issued));
 		have |= cap->issued;
 		if (implemented)
 			*implemented |= cap->implemented;
@@ -897,8 +898,9 @@ int __ceph_caps_issued_mask(struct ceph_inode_info *ci, int mask, int touch)
 	int have = ci->i_snap_caps;
 
 	if ((have & mask) == mask) {
-		doutc(cl, "mask %p %llx.%llx snap issued %s (mask %s)\n",
-		      inode, ceph_vinop(inode), ceph_cap_string(have),
+		doutc(cl, "mask %p %llx.%llx snap issued %s\n",
+		      inode, ceph_vinop(inode), ceph_cap_string(have));
+		doutc(cl, "(mask %s)\n",
 		      ceph_cap_string(mask));
 		return 1;
 	}
@@ -908,9 +910,10 @@ int __ceph_caps_issued_mask(struct ceph_inode_info *ci, int mask, int touch)
 		if (!__cap_is_valid(cap))
 			continue;
 		if ((cap->issued & mask) == mask) {
-			doutc(cl, "mask %p %llx.%llx cap %p issued %s (mask %s)\n",
+			doutc(cl, "mask %p %llx.%llx cap %p issued %s\n",
 			      inode, ceph_vinop(inode), cap,
-			      ceph_cap_string(cap->issued),
+			      ceph_cap_string(cap->issued));
+			doutc(cl, "(mask %s)\n",
 			      ceph_cap_string(mask));
 			if (touch)
 				__touch_cap(cap);
@@ -920,9 +923,10 @@ int __ceph_caps_issued_mask(struct ceph_inode_info *ci, int mask, int touch)
 		/* does a combination of caps satisfy mask? */
 		have |= cap->issued;
 		if ((have & mask) == mask) {
-			doutc(cl, "mask %p %llx.%llx combo issued %s (mask %s)\n",
+			doutc(cl, "mask %p %llx.%llx combo issued %s\n",
 			      inode, ceph_vinop(inode),
-			      ceph_cap_string(cap->issued),
+			      ceph_cap_string(cap->issued));
+			doutc(cl, "(mask %s)\n",
 			      ceph_cap_string(mask));
 			if (touch) {
 				struct rb_node *q;
@@ -2089,10 +2093,11 @@ retry:
 	}
 
 	doutc(cl, "%p %llx.%llx file_want %s used %s dirty %s "
-	      "flushing %s issued %s revoking %s retain %s %s%s%s%s\n",
+	      "flushing %s\n",
 	     inode, ceph_vinop(inode), ceph_cap_string(file_wanted),
 	     ceph_cap_string(used), ceph_cap_string(ci->i_dirty_caps),
-	     ceph_cap_string(ci->i_flushing_caps),
+	     ceph_cap_string(ci->i_flushing_caps));
+	doutc(cl, "issued %s revoking %s retain %s %s%s%s%s\n",
 	     ceph_cap_string(issued), ceph_cap_string(revoking),
 	     ceph_cap_string(retain),
 	     (flags & CHECK_CAPS_AUTHONLY) ? " AUTHONLY" : "",
@@ -2143,12 +2148,12 @@ retry:
 			cap_used &= ~ci->i_auth_cap->issued;
 
 		revoking = cap->implemented & ~cap->issued;
-		doutc(cl, " mds%d cap %p used %s issued %s implemented %s revoking %s\n",
+		doutc(cl, "mds%d cap %p used %s issued %s implemented %s\n",
 		      cap->mds, cap, ceph_cap_string(cap_used),
 		      ceph_cap_string(cap->issued),
-		      ceph_cap_string(cap->implemented),
-		      ceph_cap_string(revoking));
+		      ceph_cap_string(cap->implemented));
 
+		doutc(cl, "revoking %s\n", ceph_cap_string(revoking));
 		/* completed revocation? going down and there are no caps? */
 		if (revoking) {
 			if ((revoking & cap_used) == 0) {

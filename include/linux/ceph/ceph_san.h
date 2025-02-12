@@ -69,7 +69,7 @@ void cephsan_pagefrag_deinit(struct cephsan_pagefrag *pf);
 
 
 #ifdef CONFIG_DEBUG_FS
-#define CEPH_SAN_MAX_LOGS 8192
+#define CEPH_SAN_MAX_LOGS (8192 << 2) //4MB per core
 #define LOG_BUF_SIZE 100
 
 void cephsan_cleanup(void);
