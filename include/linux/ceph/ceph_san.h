@@ -70,7 +70,7 @@ void cephsan_pagefrag_deinit(struct cephsan_pagefrag *pf);
 
 #ifdef CONFIG_DEBUG_FS
 #define CEPH_SAN_MAX_LOGS 8192
-#define LOG_BUF_SIZE 92
+#define LOG_BUF_SIZE 100
 
 void cephsan_cleanup(void);
 int cephsan_init(void);
@@ -89,8 +89,8 @@ char *get_log_cephsan(void);
 struct ceph_san_log_entry {
     char comm[TASK_COMM_LEN];
     char buf[LOG_BUF_SIZE];
-    u64 ts;
     pid_t pid;
+    u64 ts;
 };
 
 struct ceph_san_tls_logger {
