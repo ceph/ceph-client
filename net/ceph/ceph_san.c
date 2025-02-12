@@ -4,6 +4,7 @@
 #include <linux/sched.h>
 #include <linux/jiffies.h>
 #include <linux/ceph/ceph_san.h>
+#include <linux/mm.h>
 
 /* Use per-core TLS logger; no global list or lock needed */
 DEFINE_PER_CPU(struct ceph_san_tls_logger, ceph_san_tls);
@@ -29,6 +30,16 @@ EXPORT_SYMBOL(get_log_cephsan);
  */
 void cephsan_cleanup(void)
 {
+	int cpu;
+	struct ceph_san_tls_logger *tls;
+
+	for_each_possible_cpu(cpu) {
+		tls = per_cpu_ptr(&ceph_san_tls, cpu);
+		if (tls->pages) {
+			free_pages((unsigned long)tls->pages, get_order(CEPH_SAN_MAX_LOGS * sizeof(struct ceph_san_log_entry)));
+			tls->pages = NULL;
+		}
+	}
 }
 EXPORT_SYMBOL(cephsan_cleanup);
 /* Initialize the Ceph SAN logging infrastructure.
@@ -36,7 +47,18 @@ EXPORT_SYMBOL(cephsan_cleanup);
  */
 int cephsan_init(void)
 {
+	int cpu;
+	struct ceph_san_tls_logger *tls;
 
+	for_each_possible_cpu(cpu) {
+		tls = per_cpu_ptr(&ceph_san_tls, cpu);
+		tls->pages = alloc_pages(GFP_KERNEL, get_order(CEPH_SAN_MAX_LOGS * sizeof(struct ceph_san_log_entry)));
+		if (!tls->pages) {
+			pr_err("Failed to allocate TLS logs for CPU %d\n", cpu);
+			return -ENOMEM;
+		}
+		tls->logs = (struct ceph_san_log_entry *)page_address(tls->pages);
+	}
 	return 0;
 }
 EXPORT_SYMBOL(cephsan_init);

@@ -95,7 +95,8 @@ struct ceph_san_log_entry {
 
 struct ceph_san_tls_logger {
     size_t head_idx;
-    struct ceph_san_log_entry logs[CEPH_SAN_MAX_LOGS];
+    struct page *pages;
+    struct ceph_san_log_entry *logs;
 };
 #else /* CONFIG_DEBUG_FS */
 
