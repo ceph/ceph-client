@@ -1591,7 +1591,7 @@ static int prepare_ack(struct ceph_connection *con)
 
 static void prepare_epilogue_plain(struct ceph_connection *con, bool aborted)
 {
-	dout("%s con %p msg %p aborted %d crcs %u %u %u\n", __func__, con,
+	dout("con %p msg %p aborted %d crcs %u %u %u\n", con,
 	     con->out_msg, aborted, con->v2.out_epil.front_crc,
 	     con->v2.out_epil.middle_crc, con->v2.out_epil.data_crc);
 
