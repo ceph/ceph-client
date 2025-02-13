@@ -33,6 +33,7 @@ void log_cephsan(char *buf) {
 	cephsan_pagefrag_free(pf, pre_len);
 
 	int len = strlen(buf);
+	buf[len-1] = '\0';
     u64 buf_idx = cephsan_pagefrag_alloc(pf, len);
     if (buf_idx) {
 		tls->logs[head_idx].len = len;

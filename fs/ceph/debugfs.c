@@ -49,7 +49,7 @@ static int ceph_san_show(struct seq_file *s, void *p)
 			if (log->ts == 0) {
 				continue;
 			}
-			seq_printf(s, "%zu:%lld.%09ld:%d) %-16s %-8d:%s",
+			seq_printf(s, "%zu:%lld.%09ld:%d) %-16s %-8d:%s\n",
 				cpu,
 				(long long)ts.tv_sec,
 				ts.tv_nsec,

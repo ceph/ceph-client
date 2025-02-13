@@ -79,7 +79,7 @@ int cephsan_init(void);
 
 void log_cephsan(char *buf);
 #define CEPH_SAN_LOG(fmt, ...) do { \
-    char buf[LOG_BUF_SIZE]; \
+    char buf[LOG_BUF_SIZE] = {0}; \
     snprintf(buf, LOG_BUF_SIZE, fmt, ##__VA_ARGS__); \
     log_cephsan(buf); \
 } while (0)
