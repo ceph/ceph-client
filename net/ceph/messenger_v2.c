@@ -678,7 +678,7 @@ static int verify_epilogue_crcs(struct ceph_connection *con, u32 front_crc,
 	if (!data_len(con->in_msg))
 		con->in_data_crc = 0;
 
-	dout("con %p msg %p crcs %u %u %u\n", con, con->in_msg,
+	dout("%s con %p msg %p crcs %u %u %u\n", __func__, con, con->in_msg,
 	     con->in_front_crc, con->in_middle_crc, con->in_data_crc);
 
 	if (con->in_front_crc != front_crc) {
@@ -1591,9 +1591,10 @@ static int prepare_ack(struct ceph_connection *con)
 
 static void prepare_epilogue_plain(struct ceph_connection *con, bool aborted)
 {
-	dout("con %p msg %p aborted %d\n", con, con->out_msg, aborted);
-	dout("crcs %u %u %u\n",
-	     con->v2.out_epil.front_crc, con->v2.out_epil.middle_crc, con->v2.out_epil.data_crc);
+	dout("%s con %p msg %p aborted %d crcs %u %u %u\n", __func__, con,
+	     con->out_msg, aborted, con->v2.out_epil.front_crc,
+	     con->v2.out_epil.middle_crc, con->v2.out_epil.data_crc);
+
 	encode_epilogue_plain(con, aborted);
 	add_out_kvec(con, &con->v2.out_epil, CEPH_EPILOGUE_PLAIN_LEN);
 }

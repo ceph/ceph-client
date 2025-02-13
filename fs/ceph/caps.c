@@ -823,9 +823,8 @@ int __ceph_caps_issued(struct ceph_inode_info *ci, int *implemented)
 		cap = rb_entry(p, struct ceph_cap, ci_node);
 		if (!__cap_is_valid(cap))
 			continue;
-		doutc(cl, "%p %llx.%llx cap %p\n", inode,
-		      ceph_vinop(inode), cap);
-		doutc(cl, "%p issued %s\n", inode, ceph_cap_string(cap->issued));
+		doutc(cl, "%p %llx.%llx cap %p issued %s\n", inode,
+		      ceph_vinop(inode), cap, ceph_cap_string(cap->issued));
 		have |= cap->issued;
 		if (implemented)
 			*implemented |= cap->implemented;
@@ -898,9 +897,8 @@ int __ceph_caps_issued_mask(struct ceph_inode_info *ci, int mask, int touch)
 	int have = ci->i_snap_caps;
 
 	if ((have & mask) == mask) {
-		doutc(cl, "mask %p %llx.%llx snap issued %s\n",
-		      inode, ceph_vinop(inode), ceph_cap_string(have));
-		doutc(cl, "(mask %s)\n",
+		doutc(cl, "mask %p %llx.%llx snap issued %s (mask %s)\n",
+		      inode, ceph_vinop(inode), ceph_cap_string(have),
 		      ceph_cap_string(mask));
 		return 1;
 	}
@@ -910,10 +908,9 @@ int __ceph_caps_issued_mask(struct ceph_inode_info *ci, int mask, int touch)
 		if (!__cap_is_valid(cap))
 			continue;
 		if ((cap->issued & mask) == mask) {
-			doutc(cl, "mask %p %llx.%llx cap %p issued %s\n",
+			doutc(cl, "mask %p %llx.%llx cap %p issued %s (mask %s)\n",
 			      inode, ceph_vinop(inode), cap,
-			      ceph_cap_string(cap->issued));
-			doutc(cl, "(mask %s)\n",
+			      ceph_cap_string(cap->issued),
 			      ceph_cap_string(mask));
 			if (touch)
 				__touch_cap(cap);
@@ -923,10 +920,9 @@ int __ceph_caps_issued_mask(struct ceph_inode_info *ci, int mask, int touch)
 		/* does a combination of caps satisfy mask? */
 		have |= cap->issued;
 		if ((have & mask) == mask) {
-			doutc(cl, "mask %p %llx.%llx combo issued %s\n",
+			doutc(cl, "mask %p %llx.%llx combo issued %s (mask %s)\n",
 			      inode, ceph_vinop(inode),
-			      ceph_cap_string(cap->issued));
-			doutc(cl, "(mask %s)\n",
+			      ceph_cap_string(cap->issued),
 			      ceph_cap_string(mask));
 			if (touch) {
 				struct rb_node *q;
@@ -1252,18 +1248,15 @@ static void encode_cap_msg(struct ceph_msg *msg, struct cap_msg_args *arg)
 	struct ceph_osd_client *osdc = &mdsc->fsc->client->osdc;
 
 	doutc(mdsc->fsc->client,
-		"%s %llx %llx caps %s wanted %s dirty %s seq %u/%u"
-		" tid %llu/%llu\n",
-		ceph_cap_op_name(arg->op), arg->cid, arg->ino,
-		ceph_cap_string(arg->caps), ceph_cap_string(arg->wanted),
-		ceph_cap_string(arg->dirty), arg->seq, arg->issue_seq,
-		arg->flush_tid, arg->oldest_flush_tid);
-	doutc(mdsc->fsc->client,
-		"mseq %u follows %lld size %llu/%llu"
-		" xattr_ver %llu xattr_len %d\n",
-		arg->mseq, arg->follows,
-		arg->size, arg->max_size, arg->xattr_version,
-		arg->xattr_buf ? (int)arg->xattr_buf->vec.iov_len : 0);
+	      "%s %llx %llx caps %s wanted %s dirty %s seq %u/%u"
+	      " tid %llu/%llu mseq %u follows %lld size %llu/%llu"
+	      " xattr_ver %llu xattr_len %d\n",
+	      ceph_cap_op_name(arg->op), arg->cid, arg->ino,
+	      ceph_cap_string(arg->caps), ceph_cap_string(arg->wanted),
+	      ceph_cap_string(arg->dirty), arg->seq, arg->issue_seq,
+	      arg->flush_tid, arg->oldest_flush_tid, arg->mseq, arg->follows,
+	      arg->size, arg->max_size, arg->xattr_version,
+	      arg->xattr_buf ? (int)arg->xattr_buf->vec.iov_len : 0);
 
 	msg->hdr.version = cpu_to_le16(12);
 	msg->hdr.tid = cpu_to_le64(arg->flush_tid);
@@ -2093,11 +2086,10 @@ retry:
 	}
 
 	doutc(cl, "%p %llx.%llx file_want %s used %s dirty %s "
-	      "flushing %s\n",
+	      "flushing %s issued %s revoking %s retain %s %s%s%s%s\n",
 	     inode, ceph_vinop(inode), ceph_cap_string(file_wanted),
 	     ceph_cap_string(used), ceph_cap_string(ci->i_dirty_caps),
-	     ceph_cap_string(ci->i_flushing_caps));
-	doutc(cl, "issued %s revoking %s retain %s %s%s%s%s\n",
+	     ceph_cap_string(ci->i_flushing_caps),
 	     ceph_cap_string(issued), ceph_cap_string(revoking),
 	     ceph_cap_string(retain),
 	     (flags & CHECK_CAPS_AUTHONLY) ? " AUTHONLY" : "",
@@ -2148,12 +2140,12 @@ retry:
 			cap_used &= ~ci->i_auth_cap->issued;
 
 		revoking = cap->implemented & ~cap->issued;
-		doutc(cl, "mds%d cap %p used %s issued %s implemented %s\n",
+		doutc(cl, " mds%d cap %p used %s issued %s implemented %s revoking %s\n",
 		      cap->mds, cap, ceph_cap_string(cap_used),
 		      ceph_cap_string(cap->issued),
-		      ceph_cap_string(cap->implemented));
+		      ceph_cap_string(cap->implemented),
+		      ceph_cap_string(revoking));
 
-		doutc(cl, "revoking %s\n", ceph_cap_string(revoking));
 		/* completed revocation? going down and there are no caps? */
 		if (revoking) {
 			if ((revoking & cap_used) == 0) {

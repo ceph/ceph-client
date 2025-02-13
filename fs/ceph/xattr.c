@@ -6,7 +6,6 @@
 #include "mds_client.h"
 
 #include <linux/ceph/decode.h>
-#include <linux/ceph/ceph_san.h>
 
 #include <linux/xattr.h>
 #include <linux/security.h>
@@ -953,7 +952,7 @@ struct ceph_buffer *__ceph_build_xattrs_blob(struct ceph_inode_info *ci)
 }
 
 static inline int __get_request_mask(struct inode *in) {
-	struct ceph_mds_request *req = CEPH_SAN_GET_REQ();
+	struct ceph_mds_request *req = current->journal_info;
 	int mask = 0;
 	if (req && req->r_target_inode == in) {
 		if (req->r_op == CEPH_MDS_OP_LOOKUP ||
@@ -1021,7 +1020,7 @@ handle_non_vxattrs:
 		spin_unlock(&ci->i_ceph_lock);
 
 		/* security module gets xattr while filling trace */
-		if (CEPH_SAN_GET_REQ()) {
+		if (current->journal_info) {
 			pr_warn_ratelimited_client(cl,
 				"sync %p %llx.%llx during filling trace\n",
 				inode, ceph_vinop(inode));
@@ -1054,7 +1053,7 @@ handle_non_vxattrs:
 
 	memcpy(value, xattr->val, xattr->val_len);
 
-	if (CEPH_SAN_GET_REQ() &&
+	if (current->journal_info &&
 	    !strncmp(name, XATTR_SECURITY_PREFIX, XATTR_SECURITY_PREFIX_LEN) &&
 	    security_ismaclabel(name + XATTR_SECURITY_PREFIX_LEN))
 		ci->i_ceph_flags |= CEPH_I_SEC_INITED;
@@ -1302,7 +1301,7 @@ do_sync_unlocked:
 		up_read(&mdsc->snap_rwsem);
 
 	/* security module set xattr while filling trace */
-	if (CEPH_SAN_GET_REQ()) {
+	if (current->journal_info) {
 		pr_warn_ratelimited_client(cl,
 				"sync %p %llx.%llx during filling trace\n",
 				inode, ceph_vinop(inode));
