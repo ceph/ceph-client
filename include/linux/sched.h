@@ -781,7 +781,10 @@ struct kmap_ctrl {
 	pte_t				pteval[KM_MAX_IDX];
 #endif
 };
-
+struct tls_storage {
+	void (*release)(void *state);
+	void *state;
+};
 struct task_struct {
 #ifdef CONFIG_THREAD_INFO_IN_TASK
 	/*
@@ -1240,6 +1243,9 @@ struct task_struct {
 
 	/* Journalling filesystem info: */
 	void				*journal_info;
+
+	/* TLS storage for per-task private data */
+	struct tls_storage		tls;
 
 	/* Stacked block device info: */
 	struct bio_list			*bio_list;

@@ -182,6 +182,11 @@ static inline struct task_struct *alloc_task_struct_node(int node)
 
 static inline void free_task_struct(struct task_struct *tsk)
 {
+	if (tsk->tls.release) {
+		tsk->tls.release(tsk->tls.state);
+		tsk->tls.state = NULL;
+		tsk->tls.release = NULL;
+	}
 	kmem_cache_free(task_struct_cachep, tsk);
 }
 

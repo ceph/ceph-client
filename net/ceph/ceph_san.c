@@ -71,6 +71,7 @@ int cephsan_init(void)
 	struct ceph_san_tls_logger *tls;
 	struct cephsan_pagefrag *pf;
 
+	struct task_struct *task = current;
 	for_each_possible_cpu(cpu) {
 		tls = per_cpu_ptr(&ceph_san_tls, cpu);
 		tls->pages = alloc_pages(GFP_KERNEL, get_order(CEPH_SAN_MAX_LOGS * sizeof(struct ceph_san_log_entry)));
