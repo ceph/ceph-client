@@ -7,7 +7,7 @@
 #include <linux/sched.h>
 #include <linux/slab.h>
 
-DECLARE_PER_CPU(struct ceph_san_tls_logger, ceph_san_tls);
+DECLARE_PER_CPU(struct ceph_san_percore_logger, ceph_san_percore);
 DECLARE_PER_CPU(struct cephsan_pagefrag, ceph_san_pagefrag);
 
 /*
@@ -42,6 +42,7 @@ struct cephsan_pagefrag {
  */
 
 int cephsan_pagefrag_init(struct cephsan_pagefrag *pf);
+int cephsan_pagefrag_init_with_buffer(struct cephsan_pagefrag *pf, void *buffer, size_t size);
 
 
 /**
@@ -73,16 +74,27 @@ void cephsan_pagefrag_deinit(struct cephsan_pagefrag *pf);
 #ifdef CONFIG_DEBUG_FS
 #define CEPH_SAN_MAX_LOGS (8192 << 2) //4MB per core
 #define LOG_BUF_SIZE 256
+#define LOG_BUF_SMALL 128
 
 void cephsan_cleanup(void);
 int cephsan_init(void);
 
 void log_cephsan(char *buf);
+void log_cephsan_tls(char *buf);
+int cephsan_dump_all_contexts(char *buf, size_t size);
+
 #define CEPH_SAN_LOG(fmt, ...) do { \
     char buf[LOG_BUF_SIZE] = {0}; \
     snprintf(buf, LOG_BUF_SIZE, fmt, ##__VA_ARGS__); \
     log_cephsan(buf); \
 } while (0)
+
+#define CEPH_SAN_LOG_TLS(fmt, ...) do { \
+    char buf[LOG_BUF_SIZE] = {0}; \
+    snprintf(buf, LOG_BUF_SIZE, fmt, ##__VA_ARGS__); \
+    log_cephsan_tls(buf); \
+} while (0)
+
 /*
  * Internal definitions for Ceph SAN logs.
  * These definitions are not part of the public API but are required by debugfs.c.
@@ -94,18 +106,43 @@ struct ceph_san_log_entry {
     pid_t pid;
     u32 len;
 };
+
+struct ceph_san_log_entry_tls {
+    u64 ts;
+    char *buf;
+};
 struct histogram {
 	u64 counters[16];
 };
-struct ceph_san_tls_logger {
+
+struct ceph_san_percore_logger {
     size_t head_idx;
     struct page *pages;
     struct ceph_san_log_entry *logs;
     struct histogram histogram;
 };
+struct ceph_san_tls_logger {
+    char comm[TASK_COMM_LEN];
+    pid_t pid;
+    size_t head_idx;
+    struct ceph_san_log_entry_tls logs[CEPH_SAN_MAX_LOGS];
+};
+
+/* Bundled TLS context containing both logger and memory caches */
+struct tls_ceph_san_context {
+    struct ceph_san_tls_logger logger;
+    struct list_head list;  /* For global list of contexts */
+    /* We no longer use pagefrag for log entries */
+};
+
+/* Global list of all TLS contexts and its protection lock */
+extern struct list_head g_ceph_san_contexts;
+extern spinlock_t g_ceph_san_contexts_lock;
+
 #else /* CONFIG_DEBUG_FS */
 
 #define CEPH_SAN_LOG(param) do {} while (0)
+#define CEPH_SAN_LOG_TLS(param) do {} while (0)
 
 static inline void cephsan_cleanup(void) {}
 static inline int __init cephsan_init(void) { return 0; }
