@@ -26,7 +26,7 @@ void log_cephsan(char *buf) {
     struct ceph_san_tls_logger *tls = this_cpu_ptr(&ceph_san_tls);
     struct cephsan_pagefrag *pf = this_cpu_ptr(&ceph_san_pagefrag);
 
-    int head_idx = tls->head_idx++ & (CEPH_SAN_MAX_LOGS - 1);
+    int head_idx = tls->head_idx + 1 & (CEPH_SAN_MAX_LOGS - 1);
     int pre_len = tls->logs[head_idx].len;
 
     buf[len-1] = '\0';
@@ -35,9 +35,12 @@ void log_cephsan(char *buf) {
     memcpy(tls->logs[head_idx].comm, current->comm, TASK_COMM_LEN);
 
     cephsan_pagefrag_free(pf, pre_len);
+    tls->logs[head_idx].len = 0;
 
     buf_idx = cephsan_pagefrag_alloc(pf, len);
     if (buf_idx) {
+		tls->head_idx = head_idx;
+		tls->histogram.counters[len >> 3]++;
 		tls->logs[head_idx].len = len;
         tls->logs[head_idx].buf = cephsan_pagefrag_get_ptr(pf, buf_idx);
 		memcpy(tls->logs[head_idx].buf, buf, len);
@@ -71,7 +74,6 @@ int cephsan_init(void)
 	struct ceph_san_tls_logger *tls;
 	struct cephsan_pagefrag *pf;
 
-	struct task_struct *task = current;
 	for_each_possible_cpu(cpu) {
 		tls = per_cpu_ptr(&ceph_san_tls, cpu);
 		tls->pages = alloc_pages(GFP_KERNEL, get_order(CEPH_SAN_MAX_LOGS * sizeof(struct ceph_san_log_entry)));

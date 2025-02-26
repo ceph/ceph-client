@@ -5,7 +5,7 @@
 #include <linux/list.h>
 #include <linux/spinlock.h>
 #include <linux/sched.h>
-
+#include <linux/slab.h>
 
 DECLARE_PER_CPU(struct ceph_san_tls_logger, ceph_san_tls);
 DECLARE_PER_CPU(struct cephsan_pagefrag, ceph_san_pagefrag);
@@ -94,11 +94,14 @@ struct ceph_san_log_entry {
     pid_t pid;
     u32 len;
 };
-
+struct histogram {
+	u64 counters[16];
+};
 struct ceph_san_tls_logger {
     size_t head_idx;
     struct page *pages;
     struct ceph_san_log_entry *logs;
+    struct histogram histogram;
 };
 #else /* CONFIG_DEBUG_FS */
 

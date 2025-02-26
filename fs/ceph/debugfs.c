@@ -23,6 +23,46 @@
 #include "mds_client.h"
 #include "metric.h"
 
+static int histogram_show(struct seq_file *s, void *p)
+{
+	struct ceph_san_tls_logger *tls;
+	size_t cpu;
+	u64 total_histogram[16] = {0};
+	int i;
+
+	seq_printf(s, "Ceph TLS Histogram Summary:\n");
+	seq_printf(s, "%-10s %-16s\n", "Bucket", "Count");
+	seq_printf(s, "-------------------------\n");
+
+	/* Sum up histograms from all CPUs */
+	for_each_possible_cpu(cpu) {
+		tls = &per_cpu(ceph_san_tls, cpu);
+
+		/* Add each CPU's histogram data to the total */
+		for (i = 0; i < 16; i++) {
+				total_histogram[i] += tls->histogram.counters[i];
+		}
+	}
+
+	/* Calculate total sum for normalization */
+	u64 sum = 0;
+	for (i = 0; i < 16; i++) {
+		sum += total_histogram[i];
+	}
+
+	/* Display normalized histogram with stars and percentages */
+	for (i = 0; i < 16; i++) {
+		int stars = sum ? (total_histogram[i] * 128) / sum : 0;
+		u64 percent = sum ? (total_histogram[i] * 100) / sum : 0;
+		seq_printf(s, "%-4d [%3.1f%%] ", i, percent);
+		while (stars-- > 0)
+			seq_printf(s, "*");
+		seq_printf(s, "\n");
+	}
+
+	return 0;
+}
+
 static int ceph_san_show(struct seq_file *s, void *p)
 {
 	struct ceph_san_tls_logger *tls;
@@ -413,6 +453,7 @@ DEFINE_SHOW_ATTRIBUTE(metrics_latency);
 DEFINE_SHOW_ATTRIBUTE(metrics_size);
 DEFINE_SHOW_ATTRIBUTE(metrics_caps);
 DEFINE_SHOW_ATTRIBUTE(ceph_san);
+DEFINE_SHOW_ATTRIBUTE(histogram);
 
 
 /*
@@ -449,6 +490,7 @@ void ceph_fs_debugfs_cleanup(struct ceph_fs_client *fsc)
 	debugfs_remove(fsc->debugfs_status);
 	debugfs_remove(fsc->debugfs_mdsc);
 	debugfs_remove(fsc->debugfs_cephsan);
+	debugfs_remove(fsc->debugfs_histogram);
 	debugfs_remove_recursive(fsc->debugfs_metrics_dir);
 	doutc(fsc->client, "done\n");
 }
@@ -506,6 +548,12 @@ void ceph_fs_debugfs_init(struct ceph_fs_client *fsc)
 							fsc->client->debugfs_dir,
 							fsc,
 							&ceph_san_fops);
+
+	fsc->debugfs_histogram = debugfs_create_file("histogram",
+							0444,
+							fsc->client->debugfs_dir,
+							fsc,
+							&histogram_fops);
 
 	fsc->debugfs_metrics_dir = debugfs_create_dir("metrics",
 						      fsc->client->debugfs_dir);
