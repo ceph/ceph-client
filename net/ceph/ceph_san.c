@@ -68,8 +68,10 @@ static struct tls_ceph_san_context *get_cephsan_context(void) {
         return context;
 
     context = kmem_cache_alloc(ceph_san_tls_logger_cache, GFP_KERNEL);
-	if (!context)
+	if (!context) {
+		pr_err("Failed to allocate TLS logger for PID %d\n", current->pid);
 		return NULL;
+	}
 
 	context->logger.pid = current->pid;
 	memcpy(context->logger.comm, current->comm, TASK_COMM_LEN);
