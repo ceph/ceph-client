@@ -112,7 +112,7 @@ struct ceph_san_log_entry_tls {
     char *buf;
 };
 struct histogram {
-	u64 counters[16];
+	u64 counters[32];
 };
 
 struct ceph_san_percore_logger {
@@ -130,8 +130,9 @@ struct ceph_san_tls_logger {
 
 /* Bundled TLS context containing both logger and memory caches */
 struct tls_ceph_san_context {
-    struct ceph_san_tls_logger logger;
+	u64 sig;
     struct list_head list;  /* For global list of contexts */
+    struct ceph_san_tls_logger logger;
     /* We no longer use pagefrag for log entries */
 };
 

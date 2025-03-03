@@ -29,13 +29,17 @@ static inline void *cephsan_pagefrag_get_ptr(struct cephsan_pagefrag *pf, u64 va
  * have been moved to cephsan.h (under CONFIG_DEBUG_FS) to avoid duplication.
  */
 
-
+#define CEPH_SAN_SIG 0xDEADC0DE
 /* Release function for TLS storage */
 static void ceph_san_tls_release(void *ptr)
 {
     struct tls_ceph_san_context *context = ptr;
     if (!context)
         return;
+
+    if (context->sig != CEPH_SAN_SIG)
+	    pr_err("sig is wrong %p %llx != %llx", context, context->sig, CEPH_SAN_SIG);
+	    return;
 
     /* Remove from global list with lock protection */
     spin_lock(&g_ceph_san_contexts_lock);
@@ -78,14 +82,16 @@ static struct tls_ceph_san_context *get_cephsan_context(void) {
 
      /* Initialize list entry */
     INIT_LIST_HEAD(&context->list);
+    context->sig = CEPH_SAN_SIG;
+
+    current->tls.state = context;
+    current->tls.release = ceph_san_tls_release;
 
     /* Add to global list with lock protection */
     spin_lock(&g_ceph_san_contexts_lock);
     list_add(&context->list, &g_ceph_san_contexts);
     spin_unlock(&g_ceph_san_contexts_lock);
 
-    current->tls.state = context;
-    current->tls.release = ceph_san_tls_release;
     return context;
 }
 
@@ -119,7 +125,7 @@ void log_cephsan_tls(char *buf) {
         /* Allocate new buffer from appropriate cache */
         if (len <= LOG_BUF_SMALL) {
             new_buf = kmem_cache_alloc(ceph_san_log_128_cache, GFP_KERNEL);
-			entry->ts = jiffies | 0x0;
+			entry->ts = jiffies & ~0x1;
         } else {
             new_buf = kmem_cache_alloc(ceph_san_log_256_cache, GFP_KERNEL);
 			entry->ts = jiffies | 0x1;
@@ -160,7 +166,7 @@ static void log_cephsan_percore(char *buf) {
     buf_idx = cephsan_pagefrag_alloc(pf, len);
     if (buf_idx) {
         pc->head_idx = head_idx;
-        pc->histogram.counters[len >> 3]++;
+        pc->histogram.counters[(len >= 256) ? 31 : len >> 3]++;
         pc->logs[head_idx].len = len;
         pc->logs[head_idx].buf = cephsan_pagefrag_get_ptr(pf, buf_idx);
         memcpy(pc->logs[head_idx].buf, buf, len);
@@ -188,7 +194,7 @@ void cephsan_cleanup(void)
             pc->pages = NULL;
         }
     }
-
+#if 0
 	/* Let the TLS contexts cleanup lazily */
     if (ceph_san_tls_logger_cache) {
         kmem_cache_destroy(ceph_san_tls_logger_cache);
@@ -204,6 +210,7 @@ void cephsan_cleanup(void)
         kmem_cache_destroy(ceph_san_log_256_cache);
         ceph_san_log_256_cache = NULL;
     }
+#endif
 }
 EXPORT_SYMBOL(cephsan_cleanup);
 
