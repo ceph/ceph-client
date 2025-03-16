@@ -5,6 +5,7 @@
 #include <linux/jiffies.h>
 #include <linux/ceph/ceph_san.h>
 #include <linux/mm.h>
+#include <linux/module.h>
 
 /* Use per-core TLS logger; no global list or lock needed */
 DEFINE_PER_CPU(struct ceph_san_percore_logger, ceph_san_percore);
@@ -24,12 +25,8 @@ struct kmem_cache *ceph_san_log_256_cache;
 
 struct kmem_cache *ceph_san_tls_logger_cache;
 
-static inline void *cephsan_pagefrag_get_ptr(struct cephsan_pagefrag *pf, u64 val);
-/* The definitions for struct ceph_san_log_entry and struct ceph_san_tls_logger
- * have been moved to cephsan.h (under CONFIG_DEBUG_FS) to avoid duplication.
- */
-
 #define CEPH_SAN_SIG 0xDEADC0DE
+
 /* Release function for TLS storage */
 static void ceph_san_tls_release(void *ptr)
 {
@@ -37,9 +34,10 @@ static void ceph_san_tls_release(void *ptr)
     if (!context)
         return;
 
-    if (context->sig != CEPH_SAN_SIG)
-	    pr_err("sig is wrong %p %llx != %llx", context, context->sig, CEPH_SAN_SIG);
-	    return;
+    if (context->sig != CEPH_SAN_SIG) {
+        pr_err("sig is wrong %p %llx != %llx", context, context->sig, CEPH_SAN_SIG);
+        return;
+    }
 
     /* Remove from global list with lock protection */
     spin_lock(&g_ceph_san_contexts_lock);
@@ -47,24 +45,25 @@ static void ceph_san_tls_release(void *ptr)
     spin_unlock(&g_ceph_san_contexts_lock);
 
     /* Free all log entries */
-        int head_idx = context->logger.head_idx & (CEPH_SAN_MAX_LOGS - 1);
-        int tail_idx = (head_idx + 1) & (CEPH_SAN_MAX_LOGS - 1);
+    int head_idx = context->logger.head_idx & (CEPH_SAN_MAX_LOGS - 1);
+    int tail_idx = (head_idx + 1) & (CEPH_SAN_MAX_LOGS - 1);
 
     for (int i = tail_idx; (i & (CEPH_SAN_MAX_LOGS - 1)) != head_idx; i++) {
         struct ceph_san_log_entry_tls *entry = &context->logger.logs[i & (CEPH_SAN_MAX_LOGS - 1)];
         if (entry->buf) {
             if (entry->ts & 0x1)
-                    kmem_cache_free(ceph_san_log_256_cache, entry->buf);
-			else
-                    kmem_cache_free(ceph_san_log_128_cache, entry->buf);
-			entry->buf = NULL;
-		}
-	}
+                kmem_cache_free(ceph_san_log_256_cache, entry->buf);
+            else
+                kmem_cache_free(ceph_san_log_128_cache, entry->buf);
+            entry->buf = NULL;
+        }
+    }
 
     kmem_cache_free(ceph_san_tls_logger_cache, context);
 }
 
-static struct tls_ceph_san_context *get_cephsan_context(void) {
+static struct tls_ceph_san_context *get_cephsan_context(void)
+{
     struct tls_ceph_san_context *context;
 
     context = current->tls.state;
@@ -72,15 +71,15 @@ static struct tls_ceph_san_context *get_cephsan_context(void) {
         return context;
 
     context = kmem_cache_alloc(ceph_san_tls_logger_cache, GFP_KERNEL);
-	if (!context) {
-		pr_err("Failed to allocate TLS logger for PID %d\n", current->pid);
-		return NULL;
-	}
+    if (!context) {
+        pr_err("Failed to allocate TLS logger for PID %d\n", current->pid);
+        return NULL;
+    }
 
-	context->logger.pid = current->pid;
-	memcpy(context->logger.comm, current->comm, TASK_COMM_LEN);
+    context->logger.pid = current->pid;
+    memcpy(context->logger.comm, current->comm, TASK_COMM_LEN);
 
-     /* Initialize list entry */
+    /* Initialize list entry */
     INIT_LIST_HEAD(&context->list);
     context->sig = CEPH_SAN_SIG;
 
@@ -95,7 +94,8 @@ static struct tls_ceph_san_context *get_cephsan_context(void) {
     return context;
 }
 
-void log_cephsan_tls(char *buf) {
+void log_cephsan_tls(char *buf)
+{
     /* Use the task's TLS storage */
     int len = strlen(buf);
     struct tls_ceph_san_context *ctx;
@@ -125,10 +125,10 @@ void log_cephsan_tls(char *buf) {
         /* Allocate new buffer from appropriate cache */
         if (len <= LOG_BUF_SMALL) {
             new_buf = kmem_cache_alloc(ceph_san_log_128_cache, GFP_KERNEL);
-			entry->ts = jiffies & ~0x1;
+            entry->ts = jiffies & ~0x1;
         } else {
             new_buf = kmem_cache_alloc(ceph_san_log_256_cache, GFP_KERNEL);
-			entry->ts = jiffies | 0x1;
+            entry->ts = jiffies | 0x1;
         }
     } else {
         /* Reuse existing buffer since size category hasn't changed */
@@ -145,7 +145,8 @@ void log_cephsan_tls(char *buf) {
     logger->head_idx = head_idx;
 }
 
-static void log_cephsan_percore(char *buf) {
+static void log_cephsan_percore(char *buf)
+{
     /* Use the per-core TLS logger */
     u64 buf_idx;
     int len = strlen(buf);
@@ -173,7 +174,8 @@ static void log_cephsan_percore(char *buf) {
     }
 }
 
-void log_cephsan(char *buf) {
+void log_cephsan(char *buf)
+{
     log_cephsan_percore(buf);
     log_cephsan_tls(buf);
 }
@@ -195,7 +197,7 @@ void cephsan_cleanup(void)
         }
     }
 #if 0
-	/* Let the TLS contexts cleanup lazily */
+    /* Let the TLS contexts cleanup lazily */
     if (ceph_san_tls_logger_cache) {
         kmem_cache_destroy(ceph_san_tls_logger_cache);
         ceph_san_tls_logger_cache = NULL;
@@ -280,129 +282,6 @@ cleanup_128_cache:
     return -ENOMEM;
 }
 EXPORT_SYMBOL(cephsan_init);
-
-/**
- * cephsan_pagefrag_init - Initialize the pagefrag allocator.
- *
- * Allocates a 16KB contiguous buffer and resets head and tail pointers.
- *
- * Return: 0 on success, negative error code on failure.
- */
-int cephsan_pagefrag_init(struct cephsan_pagefrag *pf)
-{
-	pf->pages = alloc_pages(GFP_KERNEL, get_order(CEPHSAN_PAGEFRAG_SIZE));
-	if (!pf->pages)
-		return -ENOMEM;
-
-	pf->buffer = page_address(pf->pages);
-	pf->head = 0;
-	pf->tail = 0;
-	return 0;
-}
-EXPORT_SYMBOL(cephsan_pagefrag_init);
-
-/**
- * cephsan_pagefrag_init_with_buffer - Initialize pagefrag with an existing buffer
- * @pf: pagefrag allocator to initialize
- * @buffer: pre-allocated buffer to use
- * @size: size of the buffer
- *
- * Return: 0 on success
- */
-int cephsan_pagefrag_init_with_buffer(struct cephsan_pagefrag *pf, void *buffer, size_t size)
-{
-    pf->pages = NULL; /* No pages allocated, using provided buffer */
-    pf->buffer = buffer;
-    pf->head = 0;
-    pf->tail = 0;
-    return 0;
-}
-EXPORT_SYMBOL(cephsan_pagefrag_init_with_buffer);
-
-/**
- * cephsan_pagefrag_alloc - Allocate bytes from the pagefrag buffer.
- * @n: number of bytes to allocate.
- *
- * Allocates @n bytes if there is sufficient free space in the buffer.
- * Advances the head pointer by @n bytes (wrapping around if needed).
- *
- * Return: pointer to the allocated memory, or NULL if not enough space.
- */
-u64 cephsan_pagefrag_alloc(struct cephsan_pagefrag *pf, unsigned int n)
-{
-	/* Case 1: tail > head */
-	if (pf->tail > pf->head) {
-		if (pf->tail - pf->head >= n) {
-			unsigned int prev_head = pf->head;
-			pf->head += n;
-			return ((u64)n << 32) | prev_head;
-		} else {
-			pr_err("Not enough space in pagefrag buffer\n");
-			return 0;
-		}
-	}
-	/* Case 2: tail <= head */
-	if (pf->head + n <= CEPHSAN_PAGEFRAG_SIZE) {
-		/* Normal allocation */
-		unsigned int prev_head = pf->head;
-		pf->head += n;
-		return ((u64)n << 32) | prev_head;
-	} else {
-		/* Need to wrap around */
-		if (n <= pf->tail) {
-			pf->head = n;
-			n += CEPHSAN_PAGEFRAG_SIZE - pf->head;
-			return ((u64)n << 32) | 0;
-		} else {
-			pr_err("Not enough space for wrap-around allocation\n");
-			return 0;
-		}
-	}
-	pr_err("impossible: Not enough space in pagefrag buffer\n");
-	return 0;
-}
-EXPORT_SYMBOL(cephsan_pagefrag_alloc);
-/**
- * cephsan_pagefrag_get_ptr - Get buffer pointer from pagefrag allocation result
- * @pf: pagefrag allocator
- * @val: return value from cephsan_pagefrag_alloc
- *
- * Return: pointer to allocated buffer region
- */
-static inline void *cephsan_pagefrag_get_ptr(struct cephsan_pagefrag *pf, u64 val)
-{
-	return pf->buffer + (val & 0xFFFFFFFF);
-}
-
-#define CEPHSAN_PAGEFRAG_GET_N(val)  ((val) >> 32)
-
-/**
- * cephsan_pagefrag_free - Free bytes in the pagefrag allocator.
- * @n: number of bytes to free.
- *
- * Advances the tail pointer by @n bytes (wrapping around if needed).
- */
-void cephsan_pagefrag_free(struct cephsan_pagefrag *pf, unsigned int n)
-{
-	pf->tail = (pf->tail + n) & (CEPHSAN_PAGEFRAG_SIZE - 1);
-}
-EXPORT_SYMBOL(cephsan_pagefrag_free);
-/**
- * cephsan_pagefrag_deinit - Deinitialize the pagefrag allocator.
- *
- * Frees the allocated buffer and resets the head and tail pointers.
- */
-void cephsan_pagefrag_deinit(struct cephsan_pagefrag *pf)
-{
-    if (pf->pages) {
-        free_pages((unsigned long)pf->pages, get_order(CEPHSAN_PAGEFRAG_SIZE));
-        pf->pages = NULL;
-    }
-    /* Don't free buffer if it was provided externally */
-	pf->buffer = NULL;
-	pf->head = pf->tail = 0;
-}
-EXPORT_SYMBOL(cephsan_pagefrag_deinit);
 
 /**
  * cephsan_dump_all_contexts - Dump logs from all TLS contexts to a buffer
