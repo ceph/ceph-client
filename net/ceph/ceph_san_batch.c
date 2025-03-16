@@ -244,6 +244,7 @@ EXPORT_SYMBOL(ceph_san_batch_get);
  * @batch: Batch to put element into
  * @element: Element to put back
  */
+ //TOOD this shit needs a rewrite
 void ceph_san_batch_put(struct ceph_san_batch *batch, void *element)
 {
     struct ceph_san_cpu_magazine *cpu_mag;
@@ -268,6 +269,7 @@ void ceph_san_batch_put(struct ceph_san_batch *batch, void *element)
 
         if (!cpu_mag->mag) {
             /* If we can't get a magazine, free the element */
+            pr_err("Failed to allocate magazine for batch put\n");
             batch->free_element(element);
             return;
         }
