@@ -138,16 +138,12 @@ int ceph_san_logger_init(void)
     spin_lock_init(&g_logger.lock);
 
     /* Initialize allocation batch */
-    ret = ceph_san_batch_init(&g_logger.alloc_batch,
-                             alloc_tls_ctx,
-                             free_tls_ctx);
+    ret = ceph_san_batch_init(&g_logger.alloc_batch);
     if (ret)
         return ret;
 
     /* Initialize log batch */
-    ret = ceph_san_batch_init(&g_logger.log_batch,
-                             NULL,
-                             NULL);
+    ret = ceph_san_batch_init(&g_logger.log_batch);
     if (ret)
         goto cleanup_alloc;
 
