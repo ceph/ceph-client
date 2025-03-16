@@ -7,6 +7,7 @@
 #include <linux/string.h>
 #include <linux/ceph/ceph_san_logger.h>
 
+#define CEPH_SAN_LOG_BATCH_MAX_FULL 128
 /* Global logger instance */
 static struct ceph_san_logger g_logger;
 
@@ -14,12 +15,15 @@ static void *alloc_tls_ctx(void)
 {
     struct ceph_san_tls_ctx *ctx;
     ctx = kmem_cache_alloc(g_logger.alloc_batch.magazine_cache, GFP_KERNEL);
-    if (!ctx)
+    if (!ctx) {
+        pr_err("Failed to allocate TLS context from magazine cache\n");
         return NULL;
+    }
 
     /* Initialize pagefrag */
     memset(&ctx->pf, 0, sizeof(ctx->pf));
     if (cephsan_pagefrag_init(&ctx->pf)) {
+        pr_err("Failed to initialize pagefrag for TLS context\n");
         kmem_cache_free(g_logger.alloc_batch.magazine_cache, ctx);
         return NULL;
     }
@@ -44,6 +48,25 @@ static void ceph_san_tls_release(void *ptr)
     /* Add context to log batch */
     ceph_san_batch_put(&g_logger.log_batch, ctx);
 
+    /* If log_batch has too many full magazines, move one to alloc_batch */
+    if (g_logger.log_batch.nr_full > CEPH_SAN_LOG_BATCH_MAX_FULL) {
+        struct ceph_san_magazine *mag;
+        spin_lock(&g_logger.log_batch.full_lock);
+        if (!list_empty(&g_logger.log_batch.full_magazines)) {
+            mag = list_first_entry(&g_logger.log_batch.full_magazines,
+                                 struct ceph_san_magazine, list);
+            list_del(&mag->list);
+            g_logger.log_batch.nr_full--;
+            spin_unlock(&g_logger.log_batch.full_lock);
+
+            spin_lock(&g_logger.alloc_batch.full_lock);
+            list_add(&mag->list, &g_logger.alloc_batch.full_magazines);
+            g_logger.alloc_batch.nr_full++;
+            spin_unlock(&g_logger.alloc_batch.full_lock);
+        } else {
+            spin_unlock(&g_logger.log_batch.full_lock);
+        }
+    }
     current->tls.state = NULL;
 }
 
@@ -166,8 +189,7 @@ void ceph_san_logger_cleanup(void)
     spin_lock(&g_logger.lock);
     list_for_each_entry_safe(ctx, tmp, &g_logger.contexts, list) {
         list_del(&ctx->list);
-        cephsan_pagefrag_deinit(&ctx->pf);
-        kfree(ctx);
+        free_tls_ctx(ctx);
     }
     spin_unlock(&g_logger.lock);
 

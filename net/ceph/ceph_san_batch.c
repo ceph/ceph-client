@@ -185,7 +185,6 @@ void *ceph_san_batch_get(struct ceph_san_batch *batch)
             spin_unlock(&batch->full_lock);
         }
     }
-
     return element;
 }
 EXPORT_SYMBOL(ceph_san_batch_get);
@@ -211,7 +210,7 @@ void ceph_san_batch_put(struct ceph_san_batch *batch, void *element)
     /* If current magazine is full, move it to full pool */
     if (likely(cpu_mag->mag && cpu_mag->mag->count >= CEPH_SAN_MAGAZINE_SIZE)) {
         spin_lock(&batch->full_lock);
-        list_add(&cpu_mag->mag->list, &batch->full_magazines);
+        list_add_tail(&cpu_mag->mag->list, &batch->full_magazines);
         batch->nr_full++;
         spin_unlock(&batch->full_lock);
         cpu_mag->mag = NULL;
