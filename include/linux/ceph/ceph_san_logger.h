@@ -10,9 +10,10 @@
 
 /* Maximum length of a log entry buffer */
 #define CEPH_SAN_LOG_MAX_LEN 256
-
+#define CEPH_SAN_LOG_ENTRY_POISON 0xDEADBEEF
 /* Log entry structure */
 struct ceph_san_log_entry {
+    u64 debug_poison;           /* Debug poison value */
     u64 ts;                     /* Timestamp (jiffies) */
     unsigned int line;          /* Line number */
     unsigned int len;           /* Length of the message */

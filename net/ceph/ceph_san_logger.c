@@ -134,6 +134,7 @@ void ceph_san_log(const char *file, unsigned int line, const char *fmt, ...)
     alloc = cephsan_pagefrag_alloc(&ctx->pf, sizeof(*entry) + len + 1);
     while (!alloc) {
         entry = cephsan_pagefrag_get_ptr_from_tail(&ctx->pf);
+        BUG_ON(entry->debug_poison != CEPH_SAN_LOG_ENTRY_POISON);
         cephsan_pagefrag_free(&ctx->pf, entry->len);
         alloc = cephsan_pagefrag_alloc(&ctx->pf, sizeof(*entry) + len + 1);
     }
@@ -144,6 +145,7 @@ void ceph_san_log(const char *file, unsigned int line, const char *fmt, ...)
     entry->buffer[len] = '\0';
 
     /* Fill in entry details */
+    entry->debug_poison = CEPH_SAN_LOG_ENTRY_POISON;
     entry->ts = jiffies;
     entry->line = line;
     entry->file = file;
