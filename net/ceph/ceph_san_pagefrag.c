@@ -54,12 +54,11 @@ u64 cephsan_pagefrag_alloc(struct cephsan_pagefrag *pf, unsigned int n)
 {
     /* Case 1: tail > head */
     if (pf->tail > pf->head) {
-        if (pf->tail - pf->head >= n) {
+        if (pf->tail - pf->head > n) {
             unsigned int prev_head = pf->head;
             pf->head += n;
             return ((u64)n << 32) | prev_head;
         } else {
-            pr_err("Not enough space in pagefrag buffer\n");
             return 0;
         }
     }
@@ -71,12 +70,11 @@ u64 cephsan_pagefrag_alloc(struct cephsan_pagefrag *pf, unsigned int n)
         return ((u64)n << 32) | prev_head;
     } else {
         /* Need to wrap around */
-        if (n <= pf->tail) {
+        if (n < pf->tail) {
             pf->head = n;
             n += CEPHSAN_PAGEFRAG_SIZE - pf->head;
             return ((u64)n << 32) | 0;
         } else {
-            pr_err("Not enough space for wrap-around allocation\n");
             return 0;
         }
     }
@@ -97,6 +95,19 @@ void *cephsan_pagefrag_get_ptr(struct cephsan_pagefrag *pf, u64 val)
     return pf->buffer + (val & 0xFFFFFFFF);
 }
 EXPORT_SYMBOL(cephsan_pagefrag_get_ptr);
+
+/**
+ * cephsan_pagefrag_get_ptr_from_tail - Get buffer pointer from pagefrag tail
+ * @pf: pagefrag allocator
+ * @n: number of bytes to get pointer from
+ *
+ * Returns pointer to the buffer region at the tail pointer minus @n bytes.
+ */
+void *cephsan_pagefrag_get_ptr_from_tail(struct cephsan_pagefrag *pf)
+{
+    return pf->buffer + pf->tail;
+}
+EXPORT_SYMBOL(cephsan_pagefrag_get_ptr_from_tail);
 
 /**
  * cephsan_pagefrag_free - Free bytes in the pagefrag allocator.
@@ -126,3 +137,15 @@ void cephsan_pagefrag_deinit(struct cephsan_pagefrag *pf)
     pf->head = pf->tail = 0;
 }
 EXPORT_SYMBOL(cephsan_pagefrag_deinit);
+
+/**
+ * cephsan_pagefrag_reset - Reset the pagefrag allocator.
+ *
+ * Resets the head and tail pointers to the beginning of the buffer.
+ */
+void cephsan_pagefrag_reset(struct cephsan_pagefrag *pf)
+{
+    pf->head = 0;
+    pf->tail = 0;
+}
+EXPORT_SYMBOL(cephsan_pagefrag_reset);

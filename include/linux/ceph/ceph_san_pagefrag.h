@@ -17,8 +17,10 @@ struct cephsan_pagefrag {
 int cephsan_pagefrag_init(struct cephsan_pagefrag *pf);
 int cephsan_pagefrag_init_with_buffer(struct cephsan_pagefrag *pf, void *buffer, size_t size);
 u64 cephsan_pagefrag_alloc(struct cephsan_pagefrag *pf, unsigned int n);
+void *cephsan_pagefrag_get_ptr_from_tail(struct cephsan_pagefrag *pf);
 void cephsan_pagefrag_free(struct cephsan_pagefrag *pf, unsigned int n);
 void cephsan_pagefrag_deinit(struct cephsan_pagefrag *pf);
+void cephsan_pagefrag_reset(struct cephsan_pagefrag *pf);
 void *cephsan_pagefrag_get_ptr(struct cephsan_pagefrag *pf, u64 val);
 
 #define CEPHSAN_PAGEFRAG_GET_N(val)  ((val) >> 32)

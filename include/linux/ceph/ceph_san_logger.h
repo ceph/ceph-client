@@ -53,4 +53,4 @@ struct ceph_san_tls_ctx *ceph_san_get_tls_ctx(void);
 #define CEPH_SAN_LOG(fmt, ...) \
     ceph_san_log(__FILE__, __LINE__, fmt, ##__VA_ARGS__)
 
-#endif /* CEPH_SAN_LOGGER_H */ 
+#endif /* CEPH_SAN_LOGGER_H */

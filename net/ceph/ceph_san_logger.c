@@ -95,7 +95,7 @@ struct ceph_san_tls_ctx *ceph_san_get_tls_ctx(void)
         list_add(&ctx->list, &g_logger.contexts);
         spin_unlock(&g_logger.lock);
     }
-
+    cephsan_pagefrag_reset(&ctx->pf);
     /* Set up TLS */
     current->tls.state = ctx;
     current->tls.release = ceph_san_tls_release;
@@ -119,6 +119,7 @@ void ceph_san_log(const char *file, unsigned int line, const char *fmt, ...)
     struct ceph_san_tls_ctx *ctx;
     struct ceph_san_log_entry *entry;
     va_list args;
+    u64 alloc;
     int len;
 
     ctx = ceph_san_get_tls_ctx();
@@ -130,9 +131,12 @@ void ceph_san_log(const char *file, unsigned int line, const char *fmt, ...)
     va_end(args);
 
     /* Allocate entry from pagefrag */ //We need a spinlock here to protect printing
-    u64 alloc = cephsan_pagefrag_alloc(&ctx->pf, sizeof(*entry) + len + 1);
-    if (!alloc)
-        return;
+    alloc = cephsan_pagefrag_alloc(&ctx->pf, sizeof(*entry) + len + 1);
+    while (!alloc) {
+        entry = cephsan_pagefrag_get_ptr_from_tail(&ctx->pf);
+        cephsan_pagefrag_free(&ctx->pf, entry->len);
+        alloc = cephsan_pagefrag_alloc(&ctx->pf, sizeof(*entry) + len + 1);
+    }
     entry = cephsan_pagefrag_get_ptr(&ctx->pf, alloc);
 
     /* Copy to entry buffer */
