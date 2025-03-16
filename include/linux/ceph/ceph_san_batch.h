@@ -30,14 +30,10 @@ struct ceph_san_batch {
     unsigned int nr_empty;            /* Protected by empty_lock */
     struct ceph_san_cpu_magazine __percpu *cpu_magazines; /* Per-CPU magazines */
     struct kmem_cache *magazine_cache; /* Cache for magazine allocations */
-    void *(*alloc_element)(void);     /* Function to allocate new elements */
-    void (*free_element)(void *);     /* Function to free elements */
 };
 
 /* Initialize the batching system */
-int ceph_san_batch_init(struct ceph_san_batch *batch,
-                       void *(*alloc_element)(void),
-                       void (*free_element)(void *));
+int ceph_san_batch_init(struct ceph_san_batch *batch);
 
 /* Clean up the batching system */
 void ceph_san_batch_cleanup(struct ceph_san_batch *batch);

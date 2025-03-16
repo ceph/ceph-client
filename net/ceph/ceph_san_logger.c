@@ -106,7 +106,7 @@ void ceph_san_log(const char *file, unsigned int line, const char *fmt, ...)
     len = vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
 
-    /* Allocate entry from pagefrag */
+    /* Allocate entry from pagefrag */ //We need a spinlock here to protect printing
     u64 alloc = cephsan_pagefrag_alloc(&ctx->pf, sizeof(*entry) + len + 1);
     if (!alloc)
         return;

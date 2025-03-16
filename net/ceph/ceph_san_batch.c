@@ -8,10 +8,9 @@
 /* Number of magazines to preallocate during initialization */
 #define CEPH_SAN_INIT_MAGAZINES 4
 
-static struct ceph_san_magazine *alloc_magazine(struct ceph_san_batch *batch, bool fill)
+static struct ceph_san_magazine *alloc_magazine(struct ceph_san_batch *batch)
 {
     struct ceph_san_magazine *mag;
-    int i;
 
     mag = kmem_cache_alloc(batch->magazine_cache, GFP_KERNEL);
     if (!mag)
@@ -19,56 +18,27 @@ static struct ceph_san_magazine *alloc_magazine(struct ceph_san_batch *batch, bo
 
     INIT_LIST_HEAD(&mag->list);
     mag->count = 0;
-
-    /* Pre-fill magazine if requested and allocation function exists */
-    if (fill && batch->alloc_element) {
-        for (i = 0; i < CEPH_SAN_MAGAZINE_SIZE; i++) {
-            void *element = batch->alloc_element();
-            if (!element) {
-                /* Clean up already allocated elements on failure */
-                while (mag->count > 0)
-                    batch->free_element(mag->elements[--mag->count]);
-                kmem_cache_free(batch->magazine_cache, mag);
-                return NULL;
-            }
-            mag->elements[mag->count++] = element;
-        }
-    }
     return mag;
 }
 
 static void free_magazine(struct ceph_san_batch *batch, struct ceph_san_magazine *mag)
 {
-    /* Free all elements in the magazine */
-    while (mag->count > 0)
-        batch->free_element(mag->elements[--mag->count]);
     kmem_cache_free(batch->magazine_cache, mag);
 }
 
 /**
  * ceph_san_batch_init - Initialize the batching system
  * @batch: Batch structure to initialize
- * @alloc_element: Function to allocate new elements
- * @free_element: Function to free elements
  *
  * Allocates and initializes the per-CPU magazines and global pools.
  *
  * Return: 0 on success, negative error code on failure
  */
-int ceph_san_batch_init(struct ceph_san_batch *batch,
-                       void *(*alloc_element)(void),
-                       void (*free_element)(void *))
+int ceph_san_batch_init(struct ceph_san_batch *batch)
 {
     int cpu, i;
     struct ceph_san_cpu_magazine *cpu_mag;
     struct ceph_san_magazine *mag;
-
-    if (!alloc_element || !free_element)
-        return -EINVAL;
-
-    /* Store allocation and free functions */
-    batch->alloc_element = alloc_element;
-    batch->free_element = free_element;
 
     /* Initialize counters */
     batch->nr_full = 0;
@@ -98,26 +68,16 @@ int ceph_san_batch_init(struct ceph_san_batch *batch,
         cpu_mag->mag = NULL;
     }
 
-    /* Pre-allocate some magazines - half empty, half full */
+    /* Pre-allocate empty magazines */
     for (i = 0; i < CEPH_SAN_INIT_MAGAZINES; i++) {
-        /* Alternate between empty and full magazines */
-        mag = alloc_magazine(batch, i & 1);
+        mag = alloc_magazine(batch);
         if (!mag)
             goto cleanup;
 
-        if (i & 1) {
-            /* Add full magazine to full pool */
-            spin_lock(&batch->full_lock);
-            list_add(&mag->list, &batch->full_magazines);
-            batch->nr_full++;
-            spin_unlock(&batch->full_lock);
-        } else {
-            /* Add empty magazine to empty pool */
-            spin_lock(&batch->empty_lock);
-            list_add(&mag->list, &batch->empty_magazines);
-            batch->nr_empty++;
-            spin_unlock(&batch->empty_lock);
-        }
+        spin_lock(&batch->empty_lock);
+        list_add(&mag->list, &batch->empty_magazines);
+        batch->nr_empty++;
+        spin_unlock(&batch->empty_lock);
     }
 
     return 0;
@@ -208,7 +168,7 @@ void *ceph_san_batch_get(struct ceph_san_batch *batch)
         cpu_mag->mag = NULL;
     }
 
-    /* Try to get a full magazine first */
+    /* Try to get a full magazine */
     spin_lock(&batch->full_lock);
     if (!list_empty(&batch->full_magazines)) {
         new_mag = list_first_entry(&batch->full_magazines,
@@ -218,21 +178,10 @@ void *ceph_san_batch_get(struct ceph_san_batch *batch)
         spin_unlock(&batch->full_lock);
 
         cpu_mag->mag = new_mag;
-        element = new_mag->elements[--new_mag->count];
+        if (new_mag->count > 0)
+            element = new_mag->elements[--new_mag->count];
     } else {
         spin_unlock(&batch->full_lock);
-        /* No full magazine available, create and fill a new one */
-        new_mag = alloc_magazine(batch, true);
-        if (new_mag && new_mag->count > 0) {
-            cpu_mag->mag = new_mag;
-            element = new_mag->elements[--new_mag->count];
-        } else if (new_mag) {
-            /* Magazine allocated but couldn't be filled */
-            spin_lock(&batch->empty_lock);
-            list_add(&new_mag->list, &batch->empty_magazines);
-            batch->nr_empty++;
-            spin_unlock(&batch->empty_lock);
-        }
     }
 
     return element;
@@ -244,7 +193,6 @@ EXPORT_SYMBOL(ceph_san_batch_get);
  * @batch: Batch to put element into
  * @element: Element to put back
  */
- //TOOD this shit needs a rewrite
 void ceph_san_batch_put(struct ceph_san_batch *batch, void *element)
 {
     struct ceph_san_cpu_magazine *cpu_mag;
@@ -264,15 +212,11 @@ void ceph_san_batch_put(struct ceph_san_batch *batch, void *element)
         } else {
             spin_unlock(&batch->empty_lock);
             /* No empty magazine available, allocate a new one */
-            cpu_mag->mag = alloc_magazine(batch, false);
+            cpu_mag->mag = alloc_magazine(batch);
         }
 
-        if (!cpu_mag->mag) {
-            /* If we can't get a magazine, free the element */
-            pr_err("Failed to allocate magazine for batch put\n");
-            batch->free_element(element);
+        if (!cpu_mag->mag)
             return;
-        }
     }
 
     /* If current magazine isn't full, add to it */
@@ -294,7 +238,7 @@ void ceph_san_batch_put(struct ceph_san_batch *batch, void *element)
         spin_unlock(&batch->empty_lock);
     } else {
         spin_unlock(&batch->empty_lock);
-        new_mag = alloc_magazine(batch, false);
+        new_mag = alloc_magazine(batch);
     }
 
     if (new_mag) {
@@ -307,9 +251,6 @@ void ceph_san_batch_put(struct ceph_san_batch *batch, void *element)
         /* Use new magazine */
         cpu_mag->mag = new_mag;
         new_mag->elements[new_mag->count++] = element;
-    } else {
-        /* Failed to get new magazine, free the element */
-        batch->free_element(element);
     }
 }
 EXPORT_SYMBOL(ceph_san_batch_put);
