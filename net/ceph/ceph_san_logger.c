@@ -213,3 +213,46 @@ void ceph_san_logger_cleanup(void)
     ceph_san_batch_cleanup(&g_logger.log_batch);
 }
 EXPORT_SYMBOL(ceph_san_logger_cleanup);
+
+/**
+ * ceph_san_log_iter_init - Initialize the log entry iterator for a specific pagefrag
+ * @iter: Iterator structure to initialize
+ * @pf: Pagefrag to iterate over
+ */
+void ceph_san_log_iter_init(struct ceph_san_log_iter *iter, struct cephsan_pagefrag *pf)
+{
+    /* Initialize iterator state */
+    iter->pf = pf;
+    iter->current_offset = pf->tail;
+    iter->end_offset = pf->head;
+}
+EXPORT_SYMBOL(ceph_san_log_iter_init);
+
+/**
+ * ceph_san_log_iter_next - Get the next log entry from the iterator
+ * @iter: Iterator structure
+ *
+ * Returns the next log entry or NULL if no more entries are available.
+ */
+struct ceph_san_log_entry *ceph_san_log_iter_next(struct ceph_san_log_iter *iter)
+{
+    struct ceph_san_log_entry *entry;
+
+    if (!iter->pf || iter->current_offset== iter->end_offset)
+        return NULL;
+
+    /* Get current entry */
+    entry = cephsan_pagefrag_get_ptr(iter->pf, iter->current_offset);
+    /* Verify entry is valid */
+    if (!entry || entry->debug_poison != CEPH_SAN_LOG_ENTRY_POISON || entry->len == 0) {
+        iter->current_offset = iter->end_offset;
+        BUG_ON(entry->debug_poison != CEPH_SAN_LOG_ENTRY_POISON);
+        return NULL;
+    }
+
+    /* Move to next entry */
+    iter->current_offset += entry->len & CEPHSAN_PAGEFRAG_MASK;
+
+    return entry;
+}
+EXPORT_SYMBOL(ceph_san_log_iter_next);

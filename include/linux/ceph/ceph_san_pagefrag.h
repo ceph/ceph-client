@@ -4,7 +4,8 @@
 #include <linux/types.h>
 #include <linux/mm.h>
 
-#define CEPHSAN_PAGEFRAG_SIZE  (1<<22)  /* 4MB */
+#define CEPHSAN_PAGEFRAG_SIZE  (1<<21)  /* 2MB */
+#define CEPHSAN_PAGEFRAG_MASK (CEPHSAN_PAGEFRAG_SIZE - 1)
 
 /* Pagefrag allocator structure */
 struct cephsan_pagefrag {

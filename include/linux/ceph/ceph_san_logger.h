@@ -38,6 +38,19 @@ struct ceph_san_logger {
     struct ceph_san_batch log_batch;    /* Batch for storing log entries */
 };
 
+/* Iterator for log entries in a single pagefrag */
+struct ceph_san_log_iter {
+    struct cephsan_pagefrag *pf;    /* Pagefrag being iterated */
+    u64 current_offset;             /* Current offset in pagefrag */
+    u64 end_offset;                 /* End offset in pagefrag */
+};
+
+/* Initialize the iterator for a specific pagefrag */
+void ceph_san_log_iter_init(struct ceph_san_log_iter *iter, struct cephsan_pagefrag *pf);
+
+/* Get next log entry, returns NULL when no more entries */
+struct ceph_san_log_entry *ceph_san_log_iter_next(struct ceph_san_log_iter *iter);
+
 /* Initialize the logging system */
 int ceph_san_logger_init(void);
 
