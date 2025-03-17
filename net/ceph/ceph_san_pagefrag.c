@@ -12,6 +12,7 @@
  */
 int cephsan_pagefrag_init(struct cephsan_pagefrag *pf)
 {
+    spin_lock_init(&pf->lock);
     pf->pages = alloc_pages(GFP_KERNEL, get_order(CEPHSAN_PAGEFRAG_SIZE));
     if (!pf->pages)
         return -ENOMEM;
@@ -33,6 +34,7 @@ EXPORT_SYMBOL(cephsan_pagefrag_init);
  */
 int cephsan_pagefrag_init_with_buffer(struct cephsan_pagefrag *pf, void *buffer, size_t size)
 {
+    spin_lock_init(&pf->lock);
     pf->pages = NULL; /* No pages allocated, using provided buffer */
     pf->buffer = buffer;
     pf->head = 0;
@@ -151,7 +153,9 @@ EXPORT_SYMBOL(cephsan_pagefrag_deinit);
  */
 void cephsan_pagefrag_reset(struct cephsan_pagefrag *pf)
 {
+    spin_lock(&pf->lock);
     pf->head = 0;
     pf->tail = 0;
+    spin_unlock(&pf->lock);
 }
 EXPORT_SYMBOL(cephsan_pagefrag_reset);

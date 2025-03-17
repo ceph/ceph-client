@@ -3,6 +3,7 @@
 
 #include <linux/types.h>
 #include <linux/mm.h>
+#include <linux/spinlock.h>
 
 #define CEPHSAN_PAGEFRAG_SIZE  (1<<21)  /* 2MB */
 #define CEPHSAN_PAGEFRAG_MASK (CEPHSAN_PAGEFRAG_SIZE - 1)
@@ -11,6 +12,7 @@
 struct cephsan_pagefrag {
     struct page *pages;
     void *buffer;
+    spinlock_t lock;        /* protects head and tail */
     unsigned int head;
     unsigned int tail;
 };

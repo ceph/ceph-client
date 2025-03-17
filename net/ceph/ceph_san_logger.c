@@ -131,7 +131,8 @@ void ceph_san_log(const char *file, unsigned int line, const char *fmt, ...)
     va_end(args);
 
     needed_size = sizeof(*entry) + len + 1;
-    /* Allocate entry from pagefrag */ //We need a spinlock here to protect printing
+    /* Allocate entry from pagefrag - We need a spinlock here to protect access iterators */
+    spin_lock(&ctx->pf.lock);
     alloc = cephsan_pagefrag_alloc(&ctx->pf, needed_size);
     while (!alloc) {
         entry = cephsan_pagefrag_get_ptr_from_tail(&ctx->pf);
@@ -149,16 +150,17 @@ void ceph_san_log(const char *file, unsigned int line, const char *fmt, ...)
     }
     entry = cephsan_pagefrag_get_ptr(&ctx->pf, alloc);
 
-    /* Copy to entry buffer */
-    memcpy(entry->buffer, buf, len + 1);
-    entry->buffer[len] = '\0';
-
     /* Fill in entry details */
     entry->debug_poison = CEPH_SAN_LOG_ENTRY_POISON;
     entry->ts = jiffies;
     entry->line = line;
     entry->file = file;
     entry->len = cephsan_pagefrag_get_alloc_size(alloc);
+    spin_unlock(&ctx->pf.lock);
+
+    /* Copy to entry buffer */
+    memcpy(entry->buffer, buf, len + 1);
+    entry->buffer[len] = '\0';
 }
 EXPORT_SYMBOL(ceph_san_log);
 
