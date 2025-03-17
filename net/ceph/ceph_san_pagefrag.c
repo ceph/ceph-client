@@ -52,10 +52,12 @@ EXPORT_SYMBOL(cephsan_pagefrag_init_with_buffer);
  */
 u64 cephsan_pagefrag_alloc(struct cephsan_pagefrag *pf, unsigned int n)
 {
+    int delta = CEPHSAN_PAGEFRAG_SIZE - pf->head -n;
+    unsigned int prev_head = pf->head;
+
     /* Case 1: tail > head */
     if (pf->tail > pf->head) {
         if (pf->tail - pf->head > n) {
-            unsigned int prev_head = pf->head;
             pf->head += n;
             return ((u64)n << 32) | prev_head;
         } else {
@@ -63,23 +65,21 @@ u64 cephsan_pagefrag_alloc(struct cephsan_pagefrag *pf, unsigned int n)
         }
     }
     /* Case 2: tail <= head */
-    if (pf->head + n <= CEPHSAN_PAGEFRAG_SIZE) {
+    if (delta >= 0) {
         /* Normal allocation */
-        unsigned int prev_head = pf->head;
+        /* make sure we have enough space to allocate next entry */
+        if (unlikely(delta < 64)) {
+            n += delta;
+            pf->head = 0;
+            return ((u64)n << 32) | prev_head;
+        }
         pf->head += n;
         return ((u64)n << 32) | prev_head;
     } else {
-        /* Need to wrap around */
-        if (n < pf->tail) {
-            pf->head = n;
-            n += CEPHSAN_PAGEFRAG_SIZE - pf->head;
-            return ((u64)n << 32) | 0;
-        } else {
-            return 0;
-        }
+        /* Need to wrap around return a partial allocation*/
+        pf->head = 0;
+        return ((u64)delta << 32) | prev_head;
     }
-    pr_err("impossible: Not enough space in pagefrag buffer\n");
-    return 0;
 }
 EXPORT_SYMBOL(cephsan_pagefrag_alloc);
 
@@ -95,6 +95,12 @@ void *cephsan_pagefrag_get_ptr(struct cephsan_pagefrag *pf, u64 val)
     return pf->buffer + (val & 0xFFFFFFFF);
 }
 EXPORT_SYMBOL(cephsan_pagefrag_get_ptr);
+
+u64 cephsan_pagefrag_get_alloc_size(u64 val)
+{
+    return val >> 32;
+}
+EXPORT_SYMBOL(cephsan_pagefrag_get_alloc_size);
 
 /**
  * cephsan_pagefrag_get_ptr_from_tail - Get buffer pointer from pagefrag tail

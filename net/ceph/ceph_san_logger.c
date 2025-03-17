@@ -120,7 +120,7 @@ void ceph_san_log(const char *file, unsigned int line, const char *fmt, ...)
     struct ceph_san_log_entry *entry;
     va_list args;
     u64 alloc;
-    int len;
+    int len, needed_size;
 
     ctx = ceph_san_get_tls_ctx();
     if (!ctx)
@@ -130,14 +130,22 @@ void ceph_san_log(const char *file, unsigned int line, const char *fmt, ...)
     len = vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
 
+    needed_size = sizeof(*entry) + len + 1;
     /* Allocate entry from pagefrag */ //We need a spinlock here to protect printing
-    alloc = cephsan_pagefrag_alloc(&ctx->pf, sizeof(*entry) + len + 1);
+    alloc = cephsan_pagefrag_alloc(&ctx->pf, needed_size);
     while (!alloc) {
         entry = cephsan_pagefrag_get_ptr_from_tail(&ctx->pf);
         BUG_ON(entry->debug_poison != CEPH_SAN_LOG_ENTRY_POISON);
         BUG_ON(entry->len == 0);
         cephsan_pagefrag_free(&ctx->pf, entry->len);
-        alloc = cephsan_pagefrag_alloc(&ctx->pf, sizeof(*entry) + len + 1);
+        alloc = cephsan_pagefrag_alloc(&ctx->pf, needed_size);
+        //In case we hit the wrap around, we may get a partial allocation that should be marked as used
+        if (alloc && cephsan_pagefrag_get_alloc_size(alloc) < needed_size) {
+            entry = cephsan_pagefrag_get_ptr(&ctx->pf, alloc);
+            memset(entry->buffer, 0, sizeof(entry->buffer));
+            entry->len = cephsan_pagefrag_get_alloc_size(alloc);
+            alloc = 0;
+        }
     }
     entry = cephsan_pagefrag_get_ptr(&ctx->pf, alloc);
 
@@ -150,7 +158,7 @@ void ceph_san_log(const char *file, unsigned int line, const char *fmt, ...)
     entry->ts = jiffies;
     entry->line = line;
     entry->file = file;
-    entry->len = len + sizeof(*entry) + 1;
+    entry->len = cephsan_pagefrag_get_alloc_size(alloc);
 }
 EXPORT_SYMBOL(ceph_san_log);
 

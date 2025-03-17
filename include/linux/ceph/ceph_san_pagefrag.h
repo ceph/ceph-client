@@ -23,6 +23,9 @@ void cephsan_pagefrag_deinit(struct cephsan_pagefrag *pf);
 void cephsan_pagefrag_reset(struct cephsan_pagefrag *pf);
 void *cephsan_pagefrag_get_ptr(struct cephsan_pagefrag *pf, u64 val);
 
+/* Get allocation size from pagefrag allocation result */
+u64 cephsan_pagefrag_get_alloc_size(u64 val);
+
 #define CEPHSAN_PAGEFRAG_GET_N(val)  ((val) >> 32)
 
 #endif /* CEPH_SAN_PAGEFRAG_H */
