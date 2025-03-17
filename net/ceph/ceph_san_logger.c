@@ -123,8 +123,10 @@ void ceph_san_log(const char *file, unsigned int line, const char *fmt, ...)
     int len, needed_size;
 
     ctx = ceph_san_get_tls_ctx();
-    if (!ctx)
+    if (!ctx) {
+        pr_err("Failed to get TLS context\n");
         return;
+    }
 
     va_start(args, fmt);
     len = vsnprintf(buf, sizeof(buf), fmt, args);
