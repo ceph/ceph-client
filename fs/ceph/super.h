@@ -153,8 +153,6 @@ struct ceph_fs_client {
 	struct dentry *debugfs_status;
 	struct dentry *debugfs_mds_sessions;
 	struct dentry *debugfs_metrics_dir;
-	struct dentry *debugfs_cephsan;
-	struct dentry *debugfs_histogram;
 	struct dentry *debugfs_cephsan_contexts;
 	struct dentry *debugfs_cephsan_tls;
 #endif

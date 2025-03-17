@@ -9,7 +9,8 @@
 
 #define CEPH_SAN_LOG_BATCH_MAX_FULL 128
 /* Global logger instance */
-static struct ceph_san_logger g_logger;
+struct ceph_san_logger g_logger;
+EXPORT_SYMBOL(g_logger);
 
 static void *alloc_tls_ctx(void)
 {

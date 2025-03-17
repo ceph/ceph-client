@@ -11,7 +11,7 @@
 #include <linux/ktime.h>
 
 #include <linux/ceph/libceph.h>
-#include <linux/ceph/ceph_san.h>
+#include <linux/ceph/ceph_san_logger.h>
 #include <linux/ceph/mon_client.h>
 #include <linux/ceph/auth.h>
 #include <linux/ceph/debugfs.h>
@@ -22,86 +22,6 @@
 
 #include "mds_client.h"
 #include "metric.h"
-
-static int histogram_show(struct seq_file *s, void *p)
-{
-	struct ceph_san_percore_logger *pc;
-	size_t cpu;
-	u64 total_histogram[16] = {0};
-	int i;
-
-	seq_printf(s, "Ceph TLS Histogram Summary:\n");
-	seq_printf(s, "%-10s %-16s\n", "Bucket", "Count");
-	seq_printf(s, "-------------------------\n");
-
-	/* Sum up histograms from all CPUs */
-	for_each_possible_cpu(cpu) {
-		pc = &per_cpu(ceph_san_percore, cpu);
-
-		/* Add each CPU's histogram data to the total */
-		for (i = 0; i < 16; i++) {
-			total_histogram[i] += pc->histogram.counters[i];
-		}
-	}
-
-	/* Calculate total sum for normalization */
-	u64 sum = 0;
-	for (i = 0; i < 16; i++) {
-		sum += total_histogram[i];
-	}
-
-	/* Display normalized histogram with stars and percentages */
-	for (i = 0; i < 16; i++) {
-		int stars = sum ? (total_histogram[i] * 128) / sum : 0;
-		u64 percent = sum ? (total_histogram[i] * 100) / sum : 0;
-		seq_printf(s, "%-4d [%3llu%%] ", i, percent);
-		while (stars-- > 0)
-			seq_printf(s, "*");
-		seq_printf(s, "\n");
-	}
-
-	return 0;
-}
-
-static int ceph_san_show(struct seq_file *s, void *p)
-{
-	struct ceph_san_percore_logger *pc;
-	size_t cpu;
-
-	seq_printf(s, "Ceph SAN logs:\n");
-	seq_printf(s, "%-16s %-8s %-32s\n",
-			   "Task", "PID", "Log");
-	seq_printf(s, "--------------------------------------------------------------\n");
-
-	for_each_possible_cpu(cpu) {
-		pc = &per_cpu(ceph_san_percore, cpu);
-		int i;
-
-		int idx = 0;
-		int head_idx = pc->head_idx & (CEPH_SAN_MAX_LOGS - 1);
-		int tail_idx = (head_idx + 1) & (CEPH_SAN_MAX_LOGS - 1);
-
-		for (i = tail_idx; (i & (CEPH_SAN_MAX_LOGS -1)) != head_idx; i++) {
-			struct timespec64 ts;
-			struct ceph_san_log_entry *log = &pc->logs[i & (CEPH_SAN_MAX_LOGS -1)];
-			jiffies_to_timespec64(log->ts, &ts);
-
-			if (log->ts == 0) {
-				continue;
-			}
-			seq_printf(s, "%zu:%lld.%09ld:%d) %-16s %-8d:%s\n",
-				cpu,
-				(long long)ts.tv_sec,
-				ts.tv_nsec,
-				idx++,
-				log->comm,
-				log->pid,
-				log->buf);
-		}
-	}
-
-	return 0;
-}
 
 static int mdsmap_show(struct seq_file *s, void *p)
 {
@@ -443,104 +363,73 @@ static int status_show(struct seq_file *s, void *p)
 	return 0;
 }
 
-static int ceph_san_contexts_show(struct seq_file *s, void *p)
-{
-	struct tls_ceph_san_context *ctx;
-	struct ceph_san_tls_logger *logger;
-	struct timespec64 ts;
-	unsigned long flags;
-	int count = 0;
-
-	seq_printf(s, "All Ceph SAN TLS contexts:\n");
-	seq_printf(s, "%-8s %-16s %-20s %-12s %-12s\n",
-			   "PID", "Task", "Last Activity", "Cache Type", "Log Count");
-	seq_printf(s, "--------------------------------------------------------------\n");
-
-	spin_lock_irqsave(&g_ceph_san_contexts_lock, flags);
-
-	list_for_each_entry(ctx, &g_ceph_san_contexts, list) {
-		logger = &ctx->logger;
-		count++;
-
-		/* Get timestamp of most recent log entry */
-		int head_idx = logger->head_idx & (CEPH_SAN_MAX_LOGS - 1);
-		struct ceph_san_log_entry_tls *entry = &logger->logs[head_idx];
-
-		if (entry->ts == 0) {
-			seq_printf(s, "%-8s %-16s %-20s %-12s %-12d\n",
-					  "N/A", "N/A", "N/A", "N/A", 0);
-			continue;
-		}
-
-		jiffies_to_timespec64(entry->ts, &ts);
-
-		seq_printf(s, "%-8d %-16s %-20lld.%09ld\n",
-				logger->pid,
-				logger->comm,
-				 (long long)ts.tv_sec,
-				 ts.tv_nsec);
-	}
-
-	spin_unlock_irqrestore(&g_ceph_san_contexts_lock, flags);
-
-	seq_printf(s, "\nTotal contexts: %d\n", count);
-
-	return 0;
-}
-
 static int ceph_san_tls_show(struct seq_file *s, void *p)
 {
-	struct tls_ceph_san_context *ctx;
-	struct ceph_san_tls_logger *logger;
-	struct ceph_san_log_entry_tls *entry;
-	unsigned long flags;
-	int count = 0;
+	struct ceph_san_tls_ctx *ctx;
+	struct ceph_san_log_iter iter;
+	struct ceph_san_log_entry *entry;
 
-	seq_printf(s, "All Ceph SAN TLS logs from all contexts:\n");
-	seq_printf(s, "%-8s %-16s %-20s %-8s %-s\n",
-			   "PID", "Task", "Timestamp", "Index", "Log Message");
-	seq_printf(s, "-------------------------------------------------------------------------\n");
+	/* Lock the logger to safely traverse the contexts list */
+	spin_lock(&g_logger.lock);
 
-	spin_lock_irqsave(&g_ceph_san_contexts_lock, flags);
+	list_for_each_entry(ctx, &g_logger.contexts, list) {
+		/* Print context information */
+		seq_printf(s, "Context: PID=%d Command=%s\n", ctx->pid, ctx->comm);
 
-	list_for_each_entry(ctx, &g_ceph_san_contexts, list) {
-		logger = &ctx->logger;
-		count++;
+		/* Initialize iterator for this context's pagefrag */
+		ceph_san_log_iter_init(&iter, &ctx->pf);
 
-		seq_printf(s, "\n=== Context for PID %d ===\n", logger->pid);
+		/* Lock the pagefrag before accessing entries */
+		spin_lock(&ctx->pf.lock);
 
-		int idx = 0;
-		int head_idx = logger->head_idx & (CEPH_SAN_MAX_LOGS - 1);
-		int tail_idx = (head_idx + 1) & (CEPH_SAN_MAX_LOGS - 1);
-
-		for (int i = tail_idx; (i & (CEPH_SAN_MAX_LOGS - 1)) != head_idx; i++) {
-			struct timespec64 ts;
-			entry = &logger->logs[i & (CEPH_SAN_MAX_LOGS - 1)];
-
-			if (entry->ts == 0 || !entry->buf) {
+		/* Iterate through all log entries in this context */
+		while ((entry = ceph_san_log_iter_next(&iter)) != NULL) {
+			if (entry->debug_poison != CEPH_SAN_LOG_ENTRY_POISON) {
+				seq_puts(s, "    [Corrupted Entry]\n");
 				continue;
 			}
 
-			jiffies_to_timespec64(entry->ts, &ts);
-
-			seq_printf(s, "%-8d %-16s %lld.%09ld\n",
-					  logger->pid,
-					  logger->comm,
-					  (long long)ts.tv_sec,
-					  ts.tv_nsec);
+			seq_printf(s, "    [%llu] %s:%u: %.*s\n",
+					  entry->ts,
+					  entry->file,
+					  entry->line,
+					  entry->len,
+					  entry->buffer);
 		}
 
-		seq_printf(s, "\n");
+		/* Unlock the pagefrag after we're done with this context */
+		spin_unlock(&ctx->pf.lock);
 	}
 
-	spin_unlock_irqrestore(&g_ceph_san_contexts_lock, flags);
+	spin_unlock(&g_logger.lock);
+	return 0;
+}
 
-	if (count == 0) {
-		seq_printf(s, "No TLS contexts found.\n");
-	} else {
-		seq_printf(s, "\nTotal contexts: %d\n", count);
+static int ceph_san_contexts_show(struct seq_file *s, void *p)
+{
+	struct ceph_san_tls_ctx *ctx;
+	unsigned long flags;
+
+	/* Lock the logger to safely traverse the contexts list */
+	spin_lock_irqsave(&g_logger.lock, flags);
+
+	seq_puts(s, "Active TLS Contexts:\n");
+	seq_puts(s, "PID      Command          Buffer Size\n");
+	seq_puts(s, "----------------------------------------\n");
+
+	list_for_each_entry(ctx, &g_logger.contexts, list) {
+		unsigned int buffer_size = ctx->pf.head - ctx->pf.tail;
+		if (ctx->pf.head < ctx->pf.tail) {
+			buffer_size = CEPHSAN_PAGEFRAG_SIZE - ctx->pf.tail + ctx->pf.head;
+		}
+
+		seq_printf(s, "%-8d %-15s %u bytes\n",
+				  ctx->pid,
+				  ctx->comm,
+				  buffer_size);
 	}
 
+	spin_unlock_irqrestore(&g_logger.lock, flags);
 	return 0;
 }
 
@@ -553,10 +442,8 @@ DEFINE_SHOW_ATTRIBUTE(metrics_file);
 DEFINE_SHOW_ATTRIBUTE(metrics_latency);
 DEFINE_SHOW_ATTRIBUTE(metrics_size);
 DEFINE_SHOW_ATTRIBUTE(metrics_caps);
-DEFINE_SHOW_ATTRIBUTE(ceph_san);
-DEFINE_SHOW_ATTRIBUTE(histogram);
-DEFINE_SHOW_ATTRIBUTE(ceph_san_contexts);
 DEFINE_SHOW_ATTRIBUTE(ceph_san_tls);
+DEFINE_SHOW_ATTRIBUTE(ceph_san_contexts);
 
 
 /*
@@ -592,8 +479,6 @@ void ceph_fs_debugfs_cleanup(struct ceph_fs_client *fsc)
 	debugfs_remove(fsc->debugfs_caps);
 	debugfs_remove(fsc->debugfs_status);
 	debugfs_remove(fsc->debugfs_mdsc);
-	debugfs_remove(fsc->debugfs_cephsan);
-	debugfs_remove(fsc->debugfs_histogram);
 	debugfs_remove(fsc->debugfs_cephsan_tls);
 	debugfs_remove(fsc->debugfs_cephsan_contexts);
 	debugfs_remove_recursive(fsc->debugfs_metrics_dir);
@@ -648,17 +533,7 @@ void ceph_fs_debugfs_init(struct ceph_fs_client *fsc)
 						  fsc->client->debugfs_dir,
 						  fsc,
 						  &status_fops);
-	fsc->debugfs_cephsan = debugfs_create_file("cephsan",
-							0444,
-							fsc->client->debugfs_dir,
-							fsc,
-							&ceph_san_fops);
 
-	fsc->debugfs_histogram = debugfs_create_file("histogram",
-							0444,
-							fsc->client->debugfs_dir,
-							fsc,
-							&histogram_fops);
 
 	fsc->debugfs_cephsan_tls = debugfs_create_file("cephsan_tls",
 							0444,
@@ -666,12 +541,12 @@ void ceph_fs_debugfs_init(struct ceph_fs_client *fsc)
 							fsc,
 							&ceph_san_tls_fops);
 
+	/* Add the new contexts-only view */
 	fsc->debugfs_cephsan_contexts = debugfs_create_file("cephsan_contexts",
 							0444,
 							fsc->client->debugfs_dir,
 							fsc,
 							&ceph_san_contexts_fops);
-
 
 	fsc->debugfs_metrics_dir = debugfs_create_dir("metrics",
 						      fsc->client->debugfs_dir);

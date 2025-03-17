@@ -1,8 +1,8 @@
-// SPDX-License-Identifier: GPL-2.0-only
+
 
 #include "linux/mm_types.h"
 #include <linux/ceph/ceph_debug.h>
-#include <linux/ceph/ceph_san.h>
+#include <linux/ceph/ceph_san_logger.h>
 
 #include <linux/backing-dev.h>
 #include <linux/ctype.h>
@@ -1639,15 +1639,18 @@ static int __init init_ceph(void)
 		goto out;
 
 	ceph_flock_init();
-	ret = cephsan_init();
-	ret = register_filesystem(&ceph_fs_type);
+	ret = ceph_san_logger_init();
 	if (ret)
 		goto out_caches;
+	ret = register_filesystem(&ceph_fs_type);
+	if (ret)
+		goto out_logger;
 
 	pr_info("loaded (mds proto %d)\n", CEPH_MDSC_PROTOCOL);
 
 	return 0;
-
+out_logger:
+	ceph_san_logger_cleanup();
 out_caches:
 	destroy_caches();
 out:
@@ -1657,7 +1660,7 @@ out:
 static void __exit exit_ceph(void)
 {
 	dout("exit_ceph\n");
-	cephsan_cleanup();
+	ceph_san_logger_cleanup();
 	unregister_filesystem(&ceph_fs_type);
 	destroy_caches();
 }

@@ -6,7 +6,7 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/string.h>
-#include <linux/ceph/ceph_san.h>
+#include <linux/ceph/ceph_san_logger.h>
 
 #ifdef CONFIG_CEPH_LIB_PRETTYDEBUG
 
@@ -51,9 +51,9 @@
 /*
  * or, just wrap pr_debug
  */
-# define dout(fmt, ...)	pr_debug(" " fmt, ##__VA_ARGS__)
+# define dout(fmt, ...)	CEPH_SAN_LOG(fmt, ##__VA_ARGS__)
 # define doutc(client, fmt, ...)					\
-	pr_debug(" [%pU %llu] %s: " fmt, &client->fsid,			\
+	CEPH_SAN_LOG(" [%pU %llu] %s: " fmt, &client->fsid,			\
 		 client->monc.auth->global_id, __func__, ##__VA_ARGS__)
 
 #endif
