@@ -386,35 +386,9 @@ static int jiffies_to_formatted_time(unsigned long jiffies_value, char *buffer, 
     tm_time.tm_year = (seconds / 365 / 12) + 70; // Simplified year since 1970
 
     // Format the time into the buffer
-    return snprintf(buffer, buffer_len, "%04d-%02d-%02d %02d:%02d:%02d",
+    return snprintf(buffer, buffer_len, "%04ld-%02d-%02d %02d:%02d:%02d",
                    tm_time.tm_year + 1900, tm_time.tm_mon + 1, tm_time.tm_mday,
                    tm_time.tm_hour, tm_time.tm_min, tm_time.tm_sec);
-}
-
-static void jiffies_to_datetime_str(unsigned long input_jiffies, char *buffer, size_t buf_size)
-{
-    static time64_t boot_time_sec = 0;
-    struct rtc_time tm;
-    time64_t timestamp;
-
-    // Initialize boot_time_sec only once
-    if (boot_time_sec == 0) {
-        struct timespec64 boot_ts;
-        ktime_get_boottime_ts64(&boot_ts);
-        boot_time_sec = boot_ts.tv_sec;
-    }
-
-	//use ktime_get_boottime_ts64() to get the boot time
-    // Convert jiffies to absolute timestamp
-    timestamp = boot_time_sec + (input_jiffies / HZ);
-
-    // Convert timestamp to human-readable format
-    rtc_time64_to_tm(timestamp, &tm);
-
-    // Format the output string
-    snprintf(buffer, buf_size, "%04d-%02d-%02d %02d:%02d:%02d",
-             tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
-             tm.tm_hour, tm.tm_min, tm.tm_sec);
 }
 
 static int status_show(struct seq_file *s, void *p)

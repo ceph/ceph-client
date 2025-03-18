@@ -268,12 +268,12 @@ struct ceph_san_log_entry *ceph_san_log_iter_next(struct ceph_san_log_iter *iter
         /* Get previous entry if available */
         struct ceph_san_log_entry *prev_entry = NULL;
         prev_entry = cephsan_pagefrag_get_ptr(iter->pf, iter->prev_offset);
-        pr_err("Previous entry: entry=%px poison=%x len=%u prev_offset=%llu\n",
+        pr_err("Previous entry: entry=%px poison=%llx len=%u prev_offset=%llu\n",
                 prev_entry, prev_entry->debug_poison, prev_entry->len, iter->prev_offset);
 
         iter->prev_offset = iter->current_offset;
         iter->current_offset = iter->end_offset;
-        pr_err("Pagefrag corruption detected: entry=%px poison=%x len=%u\n"
+        pr_err("Pagefrag corruption detected: entry=%px poison=%llx len=%u\n"
                "pf: head=%u tail=%u buffer=%px alloc_count=%u prev_offset=%llu\n",
                entry, entry->debug_poison, entry->len,
                iter->pf->head, iter->pf->tail, iter->pf->buffer,
