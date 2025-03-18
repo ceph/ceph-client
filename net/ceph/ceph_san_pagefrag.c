@@ -20,6 +20,8 @@ int cephsan_pagefrag_init(struct cephsan_pagefrag *pf)
     pf->buffer = page_address(pf->pages);
     pf->head = 0;
     pf->tail = 0;
+    pf->active_elements = 0;
+    pf->alloc_count = 0;
     return 0;
 }
 EXPORT_SYMBOL(cephsan_pagefrag_init);
@@ -39,6 +41,8 @@ int cephsan_pagefrag_init_with_buffer(struct cephsan_pagefrag *pf, void *buffer,
     pf->buffer = buffer;
     pf->head = 0;
     pf->tail = 0;
+    pf->active_elements = 0;
+    pf->alloc_count = 0;
     return 0;
 }
 EXPORT_SYMBOL(cephsan_pagefrag_init_with_buffer);
@@ -62,6 +66,7 @@ u64 cephsan_pagefrag_alloc(struct cephsan_pagefrag *pf, unsigned int n)
         if (pf->tail - pf->head > n) {
             pf->head += n;
             pf->alloc_count++;
+            pf->active_elements++;
             return ((u64)n << 32) | prev_head;
         } else {
             return 0;
@@ -71,10 +76,11 @@ u64 cephsan_pagefrag_alloc(struct cephsan_pagefrag *pf, unsigned int n)
     if (delta >= 0) {
         /* Normal allocation */
         /* make sure we have enough space to allocate next entry */
+        pf->alloc_count++;
+        pf->active_elements++;
         if (unlikely(delta < 64)) {
             n += delta;
             pf->head = 0;
-            pf->alloc_count++;
             return ((u64)n << 32) | prev_head;
         }
         pf->head += n;
@@ -84,6 +90,7 @@ u64 cephsan_pagefrag_alloc(struct cephsan_pagefrag *pf, unsigned int n)
             /* Need to wrap around return a partial allocation*/
             pf->head = n;
             pf->alloc_count++;
+            pf->active_elements++;
             return ((u64)(delta + n) << 32) | prev_head;
         } else {
             return 0;
@@ -150,6 +157,7 @@ EXPORT_SYMBOL(cephsan_pagefrag_get_ptr_from_tail);
 void cephsan_pagefrag_free(struct cephsan_pagefrag *pf, unsigned int n)
 {
     pf->tail = (pf->tail + n) & (CEPHSAN_PAGEFRAG_SIZE - 1);
+    pf->active_elements--;
 }
 EXPORT_SYMBOL(cephsan_pagefrag_free);
 
@@ -181,6 +189,7 @@ void cephsan_pagefrag_reset(struct cephsan_pagefrag *pf)
     pf->head = 0;
     pf->tail = 0;
     pf->alloc_count = 0;
+    pf->active_elements = 0;
     spin_unlock(&pf->lock);
 }
 EXPORT_SYMBOL(cephsan_pagefrag_reset);

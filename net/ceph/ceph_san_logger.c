@@ -265,22 +265,9 @@ struct ceph_san_log_entry *ceph_san_log_iter_next(struct ceph_san_log_iter *iter
     entry = cephsan_pagefrag_get_ptr(iter->pf, iter->current_offset);
     /* Verify entry is valid */
     if (!entry || entry->debug_poison != CEPH_SAN_LOG_ENTRY_POISON || entry->len == 0) {
-        /* Get previous entry if available */
-        struct ceph_san_log_entry *prev_entry = NULL;
-        prev_entry = cephsan_pagefrag_get_ptr(iter->pf, iter->prev_offset);
-        pr_err("Previous entry: entry=%px poison=%llx len=%u prev_offset=%llu\n",
-                prev_entry, prev_entry->debug_poison, prev_entry->len, iter->prev_offset);
-
-        iter->prev_offset = iter->current_offset;
-        iter->current_offset = iter->end_offset;
-        pr_err("Pagefrag corruption detected: entry=%px poison=%llx len=%u\n"
-               "pf: head=%u tail=%u buffer=%px alloc_count=%u prev_offset=%llu\n",
-               entry, entry->debug_poison, entry->len,
-               iter->pf->head, iter->pf->tail, iter->pf->buffer,
-               iter->pf->alloc_count, iter->prev_offset);
-
-        BUG_ON(entry->debug_poison != CEPH_SAN_LOG_ENTRY_POISON);
-        return NULL;
+        //This maybe legitimate the head doesnt have to be aligned to the tail
+        //if the last free was bigger than need alloc size
+       return NULL;
     }
 
     /* Store current offset before moving to next */

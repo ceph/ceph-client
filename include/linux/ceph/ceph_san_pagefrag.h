@@ -16,6 +16,7 @@ struct cephsan_pagefrag {
     unsigned int head;
     unsigned int tail;
     unsigned int alloc_count;
+    int active_elements;
 };
 
 int cephsan_pagefrag_init(struct cephsan_pagefrag *pf);
