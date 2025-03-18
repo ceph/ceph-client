@@ -244,6 +244,7 @@ void ceph_san_log_iter_init(struct ceph_san_log_iter *iter, struct cephsan_pagef
     iter->pf = pf;
     iter->current_offset = pf->tail;
     iter->end_offset = pf->head;
+    iter->prev_offset = pf->tail;
 }
 EXPORT_SYMBOL(ceph_san_log_iter_init);
 
@@ -257,18 +258,33 @@ struct ceph_san_log_entry *ceph_san_log_iter_next(struct ceph_san_log_iter *iter
 {
     struct ceph_san_log_entry *entry;
 
-    if (!iter->pf || iter->current_offset== iter->end_offset)
+    if (!iter->pf || iter->current_offset == iter->end_offset)
         return NULL;
 
     /* Get current entry */
     entry = cephsan_pagefrag_get_ptr(iter->pf, iter->current_offset);
     /* Verify entry is valid */
     if (!entry || entry->debug_poison != CEPH_SAN_LOG_ENTRY_POISON || entry->len == 0) {
+        /* Get previous entry if available */
+        struct ceph_san_log_entry *prev_entry = NULL;
+        prev_entry = cephsan_pagefrag_get_ptr(iter->pf, iter->prev_offset);
+        pr_err("Previous entry: entry=%px poison=%x len=%u prev_offset=%llu\n",
+                prev_entry, prev_entry->debug_poison, prev_entry->len, iter->prev_offset);
+
+        iter->prev_offset = iter->current_offset;
         iter->current_offset = iter->end_offset;
+        pr_err("Pagefrag corruption detected: entry=%px poison=%x len=%u\n"
+               "pf: head=%u tail=%u buffer=%px alloc_count=%u prev_offset=%llu\n",
+               entry, entry->debug_poison, entry->len,
+               iter->pf->head, iter->pf->tail, iter->pf->buffer,
+               iter->pf->alloc_count, iter->prev_offset);
+
         BUG_ON(entry->debug_poison != CEPH_SAN_LOG_ENTRY_POISON);
         return NULL;
     }
 
+    /* Store current offset before moving to next */
+    iter->prev_offset = iter->current_offset;
     /* Move to next entry */
     iter->current_offset += entry->len & CEPHSAN_PAGEFRAG_MASK;
 

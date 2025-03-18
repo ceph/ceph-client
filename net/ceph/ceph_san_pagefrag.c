@@ -61,6 +61,7 @@ u64 cephsan_pagefrag_alloc(struct cephsan_pagefrag *pf, unsigned int n)
     if (pf->tail > pf->head) {
         if (pf->tail - pf->head > n) {
             pf->head += n;
+            pf->alloc_count++;
             return ((u64)n << 32) | prev_head;
         } else {
             return 0;
@@ -73,6 +74,7 @@ u64 cephsan_pagefrag_alloc(struct cephsan_pagefrag *pf, unsigned int n)
         if (unlikely(delta < 64)) {
             n += delta;
             pf->head = 0;
+            pf->alloc_count++;
             return ((u64)n << 32) | prev_head;
         }
         pf->head += n;
@@ -81,6 +83,7 @@ u64 cephsan_pagefrag_alloc(struct cephsan_pagefrag *pf, unsigned int n)
         if (pf->tail > n) {
             /* Need to wrap around return a partial allocation*/
             pf->head = n;
+            pf->alloc_count++;
             return ((u64)(delta + n) << 32) | prev_head;
         } else {
             return 0;
@@ -177,6 +180,7 @@ void cephsan_pagefrag_reset(struct cephsan_pagefrag *pf)
     spin_lock(&pf->lock);
     pf->head = 0;
     pf->tail = 0;
+    pf->alloc_count = 0;
     spin_unlock(&pf->lock);
 }
 EXPORT_SYMBOL(cephsan_pagefrag_reset);

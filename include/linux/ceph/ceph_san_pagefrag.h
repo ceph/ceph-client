@@ -15,6 +15,7 @@ struct cephsan_pagefrag {
     spinlock_t lock;        /* protects head and tail */
     unsigned int head;
     unsigned int tail;
+    unsigned int alloc_count;
 };
 
 int cephsan_pagefrag_init(struct cephsan_pagefrag *pf);
