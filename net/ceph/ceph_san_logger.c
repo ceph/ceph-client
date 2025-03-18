@@ -47,6 +47,7 @@ static void ceph_san_tls_release(void *ptr)
         return;
 
     /* Add context to log batch */
+    ctx->task = NULL;
     ceph_san_batch_put(&g_logger.log_batch, ctx);
 
     /* If log_batch has too many full magazines, move one to alloc_batch */
@@ -100,7 +101,8 @@ struct ceph_san_tls_ctx *ceph_san_get_tls_ctx(void)
     /* Set up TLS */
     current->tls.state = ctx;
     current->tls.release = ceph_san_tls_release;
-
+    task_state_to_char(current);
+    ctx->task = current;
     return ctx;
 }
 EXPORT_SYMBOL(ceph_san_get_tls_ctx);
@@ -113,7 +115,7 @@ EXPORT_SYMBOL(ceph_san_get_tls_ctx);
  *
  * Logs a message to the current TLS context's log buffer
  */
-void ceph_san_log(const char *file, unsigned int line, const char *fmt, ...)
+void ceph_san_log(const char *file, const char *func, unsigned int line, const char *fmt, ...)
 {
     /* Format the message into local buffer first */
     char buf[256];
@@ -158,6 +160,8 @@ void ceph_san_log(const char *file, unsigned int line, const char *fmt, ...)
     entry->ts = jiffies;
     entry->line = line;
     entry->file = file;
+    entry->func = func;
+    entry->buffer = (char *)(entry + 1);
     entry->len = cephsan_pagefrag_get_alloc_size(alloc);
     spin_unlock(&ctx->pf.lock);
 

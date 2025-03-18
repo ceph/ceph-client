@@ -18,7 +18,8 @@ struct ceph_san_log_entry {
     unsigned int line;          /* Line number */
     unsigned int len;           /* Length of the message */
     const char *file;          /* Source file */
-    char buffer[0];            /* Flexible array for inline buffer */
+    const char *func;          /* Source function */
+    char *buffer;            /* Flexible array for inline buffer */
 };
 
 /* TLS context structure */
@@ -58,14 +59,14 @@ int ceph_san_logger_init(void);
 void ceph_san_logger_cleanup(void);
 
 /* Log a message */
-void ceph_san_log(const char *file, unsigned int line, const char *fmt, ...);
+void ceph_san_log(const char *file, const char *func, unsigned int line, const char *fmt, ...);
 
 /* Get current TLS context, creating if necessary */
 struct ceph_san_tls_ctx *ceph_san_get_tls_ctx(void);
 
 /* Helper macro for logging */
 #define CEPH_SAN_LOG(fmt, ...) \
-    ceph_san_log(__FILE__, __LINE__, fmt, ##__VA_ARGS__)
+    ceph_san_log(kbasename(__FILE__), __func__, __LINE__, fmt, ##__VA_ARGS__)
 
 /* Global logger instance */
 extern struct ceph_san_logger g_logger;

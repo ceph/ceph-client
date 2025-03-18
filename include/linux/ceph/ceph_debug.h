@@ -22,8 +22,7 @@
 	pr_debug("%.*s %12.12s:%-4d:" fmt,				\
 		 8 - (int)sizeof(KBUILD_MODNAME), "    ",		\
 		 kbasename(__FILE__), __LINE__, ##__VA_ARGS__); 	\
-	CEPH_SAN_LOG("%12.12s:%-4d : " fmt,				\
-		 kbasename(__FILE__), __LINE__, ##__VA_ARGS__);		\
+	CEPH_SAN_LOG(fmt,  ##__VA_ARGS__);		\
 	} while (0)
 #  define doutc(client, fmt, ...)					\
 	do { 								\
@@ -32,8 +31,8 @@
 		 kbasename(__FILE__), __LINE__,				\
 		 &client->fsid, client->monc.auth->global_id,		\
 		 ##__VA_ARGS__); 					\
-	CEPH_SAN_LOG("%12.12s:%-4d:" fmt,				\
-		 kbasename(__FILE__), __LINE__, ##__VA_ARGS__);		\
+	CEPH_SAN_LOG("[%pU:%llu] " fmt, &client->fsid,			\
+		 client->monc.auth->global_id, ##__VA_ARGS__);		\
 	} while (0)
 # else
 /* faux printk call just to see any compiler warnings. */
@@ -53,7 +52,7 @@
  */
 # define dout(fmt, ...)	CEPH_SAN_LOG(fmt, ##__VA_ARGS__)
 # define doutc(client, fmt, ...)					\
-	CEPH_SAN_LOG(" [%pU %llu] %s: " fmt, &client->fsid,			\
+	CEPH_SAN_LOG(" [%pU:%llu] %s: " fmt, &client->fsid,			\
 		 client->monc.auth->global_id, __func__, ##__VA_ARGS__)
 
 #endif
