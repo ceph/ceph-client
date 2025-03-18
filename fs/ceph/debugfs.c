@@ -470,13 +470,14 @@ static int ceph_san_contexts_show(struct seq_file *s, void *p)
 
     list_for_each_entry(ctx, &g_logger.contexts, list) {
         int rc = print_task_cgroup(ctx->task, cgroup_path, sizeof(cgroup_path));
+        char task_state = ctx->task ? task_state_to_char(ctx->task) : 'N';
 
-        seq_printf(s, "%-8d %-15s : %s\n",
+        seq_printf(s, "%-8d %-15s [%c] : %s\n",
                   ctx->pid,
                   ctx->comm,
+                  task_state,
                   rc ? cgroup_path : "N/A");
     }
-
     spin_unlock_irqrestore(&g_logger.lock, flags);
     return 0;
 }
