@@ -9,6 +9,8 @@
 #include <linux/seq_file.h>
 #include <linux/math64.h>
 #include <linux/ktime.h>
+#include <linux/cgroup.h>
+#include <linux/cgroup-defs.h>
 
 #include <linux/ceph/libceph.h>
 #include <linux/ceph/ceph_san_logger.h>
@@ -405,32 +407,43 @@ static int ceph_san_tls_show(struct seq_file *s, void *p)
 	return 0;
 }
 
+static int print_task_cgroup(struct task_struct *task, char *cgroup_path, size_t size)
+{
+    struct cgroup_subsys_state *css;
+    if (!task || !task->cgroups)
+        return 0;
+
+    css = task->cgroups->subsys[0];
+    if (css) {
+        cgroup_path_from_kernfs_id(css->cgroup->kn->id, cgroup_path, size);
+    }
+    return 1;
+}
+
 static int ceph_san_contexts_show(struct seq_file *s, void *p)
 {
-	struct ceph_san_tls_ctx *ctx;
-	unsigned long flags;
+    struct ceph_san_tls_ctx *ctx;
+    unsigned long flags;
+    char cgroup_path[256];
 
-	/* Lock the logger to safely traverse the contexts list */
-	spin_lock_irqsave(&g_logger.lock, flags);
+    /* Lock the logger to safely traverse the contexts list */
+    spin_lock_irqsave(&g_logger.lock, flags);
 
-	seq_puts(s, "Active TLS Contexts:\n");
-	seq_puts(s, "PID      Command          Buffer Size\n");
-	seq_puts(s, "----------------------------------------\n");
+    seq_puts(s, "Active TLS Contexts:\n");
+    seq_puts(s, "PID      Command          Buffer Size\n");
+    seq_puts(s, "----------------------------------------\n");
 
-	list_for_each_entry(ctx, &g_logger.contexts, list) {
-		unsigned int buffer_size = ctx->pf.head - ctx->pf.tail;
-		if (ctx->pf.head < ctx->pf.tail) {
-			buffer_size = CEPHSAN_PAGEFRAG_SIZE - ctx->pf.tail + ctx->pf.head;
-		}
+    list_for_each_entry(ctx, &g_logger.contexts, list) {
+        int rc = print_task_cgroup(ctx->task, cgroup_path, sizeof(cgroup_path));
 
-		seq_printf(s, "%-8d %-15s %u bytes\n",
-				  ctx->pid,
-				  ctx->comm,
-				  buffer_size);
-	}
+        seq_printf(s, "%-8d %-15s : %s\n",
+                  ctx->pid,
+                  ctx->comm,
+                  rc ? cgroup_path : "N/A");
+    }
 
-	spin_unlock_irqrestore(&g_logger.lock, flags);
-	return 0;
+    spin_unlock_irqrestore(&g_logger.lock, flags);
+    return 0;
 }
 
 DEFINE_SHOW_ATTRIBUTE(mdsmap);
