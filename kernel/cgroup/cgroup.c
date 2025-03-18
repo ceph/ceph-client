@@ -6281,6 +6281,7 @@ void cgroup_path_from_kernfs_id(u64 id, char *buf, size_t buflen)
 	kernfs_path(kn, buf, buflen);
 	kernfs_put(kn);
 }
+EXPORT_SYMBOL_GPL(cgroup_path_from_kernfs_id);
 
 /*
  * cgroup_get_from_id : get the cgroup associated with cgroup id
