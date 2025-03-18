@@ -2665,24 +2665,64 @@ static int ceph_zero_objects(struct inode *inode, loff_t offset, loff_t length)
 	return ret;
 }
 
-static long ceph_fallocate(struct file *file, int mode,
+static inline
+void ceph_fallocate_mark_dirty(struct inode *inode,
+				struct ceph_cap_flush **prealloc_cf)
+{
+	struct ceph_inode_info *ci = ceph_inode(inode);
+	int dirty;
+
+	spin_lock(&ci->i_ceph_lock);
+	dirty = __ceph_mark_dirty_caps(ci, CEPH_CAP_FILE_WR,
+					prealloc_cf);
+	spin_unlock(&ci->i_ceph_lock);
+
+	if (dirty)
+		__mark_inode_dirty(inode, dirty);
+}
+
+static inline
+int ceph_fallocate_invalidate(struct inode *inode,
+				struct ceph_cap_flush **prealloc_cf,
 				loff_t offset, loff_t length)
+{
+	int ret = 0;
+
+	filemap_invalidate_lock(inode->i_mapping);
+	ceph_fscache_invalidate(inode, false);
+	ceph_zero_pagecache_range(inode, offset, length);
+	ret = ceph_zero_objects(inode, offset, length);
+	if (!ret)
+		ceph_fallocate_mark_dirty(inode, prealloc_cf);
+	filemap_invalidate_unlock(inode->i_mapping);
+
+	return ret;
+}
+
+static long ceph_fallocate(struct file *file, int mode,
+			   loff_t offset, loff_t length)
 {
 	struct ceph_file_info *fi = file->private_data;
 	struct inode *inode = file_inode(file);
 	struct ceph_inode_info *ci = ceph_inode(inode);
 	struct ceph_cap_flush *prealloc_cf;
 	struct ceph_client *cl = ceph_inode_to_client(inode);
+	struct ceph_fs_client *fsc = ceph_inode_to_fs_client(inode);
 	int want, got = 0;
-	int dirty;
-	int ret = 0;
 	loff_t endoff = 0;
 	loff_t size;
+	loff_t new_size;
+	int ret = 0;
 
 	doutc(cl, "%p %llx.%llx mode %x, offset %llu length %llu\n",
 	      inode, ceph_vinop(inode), mode, offset, length);
 
-	if (mode != (FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE))
+	if (mode == FALLOC_FL_ALLOCATE_RANGE ||
+	    mode == (FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE)) {
+		/*
+		 * Supported modes. Continue logic.
+		 */
+	} else
 		return -EOPNOTSUPP;
 
 	if (!S_ISREG(inode->i_mode))
@@ -2697,18 +2737,35 @@ static long ceph_fallocate(struct file *file, int mode,
 
 	inode_lock(inode);
 
+	size = i_size_read(inode);
+	new_size = offset + length;
+
+	if (!(mode & FALLOC_FL_KEEP_SIZE) && new_size > size) {
+		ret = inode_newsize_ok(inode, new_size);
+		if (ret)
+			goto unlock;
+
+		if (new_size > max(size, fsc->max_file_size)) {
+			ret = -ENOSPC;
+			goto unlock;
+		}
+
+		if (ceph_quota_is_max_bytes_exceeded(inode, offset + length)) {
+			ret = -EDQUOT;
+			goto unlock;
+		}
+	}
+
 	if (ceph_snap(inode) != CEPH_NOSNAP) {
 		ret = -EROFS;
 		goto unlock;
 	}
 
-	size = i_size_read(inode);
-
-	/* Are we punching a hole beyond EOF? */
-	if (offset >= size)
-		goto unlock;
-	if ((offset + length) > size)
-		length = size - offset;
+	if ((mode & FALLOC_FL_KEEP_SIZE) || (mode & FALLOC_FL_PUNCH_HOLE)) {
+		/* Are we punching a hole beyond EOF? */
+		if (offset >= size)
+			goto unlock;
+	}
 
 	if (fi->fmode & CEPH_FILE_MODE_LAZY)
 		want = CEPH_CAP_FILE_BUFFER | CEPH_CAP_FILE_LAZYIO;
@@ -2723,20 +2780,31 @@ static long ceph_fallocate(struct file *file, int mode,
 	if (ret)
 		goto put_caps;
 
-	filemap_invalidate_lock(inode->i_mapping);
-	ceph_fscache_invalidate(inode, false);
-	ceph_zero_pagecache_range(inode, offset, length);
-	ret = ceph_zero_objects(inode, offset, length);
+	if (mode & FALLOC_FL_PUNCH_HOLE) {
+		if ((offset + length) > size)
+			length = size - offset;
 
-	if (!ret) {
-		spin_lock(&ci->i_ceph_lock);
-		dirty = __ceph_mark_dirty_caps(ci, CEPH_CAP_FILE_WR,
-					       &prealloc_cf);
-		spin_unlock(&ci->i_ceph_lock);
-		if (dirty)
-			__mark_inode_dirty(inode, dirty);
+		ret = ceph_fallocate_invalidate(inode, &prealloc_cf,
+						offset, length);
+	} else if (mode & FALLOC_FL_KEEP_SIZE) {
+		/*
+		 * If the FALLOC_FL_KEEP_SIZE flag is specified in mode,
+		 * then the file size will not be changed even
+		 * if offset+size is greater than the file size.
+		 */
+	} else {
+		/*
+		 * FALLOC_FL_ALLOCATE_RANGE case:
+		 * The default operation (i.e., mode is zero) of fallocate()
+		 * allocates the disk space within the range specified by
+		 * offset and size.  The file size will be changed if
+		 * offset+size is greater than the file size.
+		 */
+		if ((offset + length) > size) {
+			ceph_inode_set_size(inode, offset + length);
+			ceph_fallocate_mark_dirty(inode, &prealloc_cf);
+		}
 	}
-	filemap_invalidate_unlock(inode->i_mapping);
 
 put_caps:
 	ceph_put_cap_refs(ci, got);
