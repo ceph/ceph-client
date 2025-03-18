@@ -143,6 +143,7 @@ void ceph_san_log(const char *file, const char *func, unsigned int line, const c
     alloc = cephsan_pagefrag_alloc(&ctx->pf, needed_size);
     int loop_count = 0;
     while (!alloc) {
+        entry = cephsan_pagefrag_get_ptr_from_tail(&ctx->pf);
         if (loop_count++ >= 32) {
             pr_err("ceph_san_log: pagefrag stats - head: %u, tail: %u, size: %u, free: %d\n",
                   ctx->pf.head, ctx->pf.tail,
@@ -153,9 +154,16 @@ void ceph_san_log(const char *file, const char *func, unsigned int line, const c
 
             panic("ceph_san_log: failed to allocate entry after 8 retries");
         }
-        entry = cephsan_pagefrag_get_ptr_from_tail(&ctx->pf);
-        BUG_ON(entry->debug_poison != CEPH_SAN_LOG_ENTRY_POISON);
-        BUG_ON(entry->len == 0);
+        if (entry->debug_poison != CEPH_SAN_LOG_ENTRY_POISON || entry->len == 0) {
+            pr_err("ceph_san_log: pagefrag corruption detected\n");
+            pr_err("  head: %u, tail: %u, size: %u\n",
+                  ctx->pf.head, ctx->pf.tail, CEPHSAN_PAGEFRAG_SIZE);
+            pr_err("  active_elements: %u, alloc_count: %u\n",
+                  ctx->pf.active_elements, ctx->pf.alloc_count);
+            pr_err("  entry poison: %llx, len: %u\n",
+                  entry->debug_poison, entry->len);
+            BUG();
+        }
         cephsan_pagefrag_free(&ctx->pf, entry->len);
         alloc = cephsan_pagefrag_alloc(&ctx->pf, needed_size);
     }
