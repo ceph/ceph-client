@@ -103,6 +103,8 @@ struct ceph_san_tls_ctx *ceph_san_get_tls_ctx(void)
     current->tls.release = ceph_san_tls_release;
     task_state_to_char(current);
     ctx->task = current;
+    ctx->pid = current->pid;
+    strncpy(ctx->comm, current->comm, sizeof(ctx->comm));
     return ctx;
 }
 EXPORT_SYMBOL(ceph_san_get_tls_ctx);

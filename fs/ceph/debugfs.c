@@ -404,8 +404,6 @@ static int ceph_san_tls_show(struct seq_file *s, void *p)
 	spin_lock(&g_logger.lock);
 
 	list_for_each_entry(ctx, &g_logger.contexts, list) {
-		/* Print context information */
-		seq_printf(s, "Context: PID=%d Command=%s\n", ctx->pid, ctx->comm);
 
 		/* Initialize iterator for this context's pagefrag */
 		ceph_san_log_iter_init(&iter, &ctx->pf);
