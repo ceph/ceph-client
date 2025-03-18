@@ -15,6 +15,8 @@
 #include <linux/timekeeping.h>
 #include <linux/rtc.h>
 #include <linux/printk.h>
+#include <linux/time.h>
+#include <linux/time_types.h>
 
 #include <linux/ceph/libceph.h>
 #include <linux/ceph/ceph_san_logger.h>
@@ -356,6 +358,39 @@ static int mds_sessions_show(struct seq_file *s, void *ptr)
 	return 0;
 }
 
+/* @buffer: The buffer to store the formatted date and time string.
+ * @buffer_len: The length of the buffer.
+ *
+ * Returns: The number of characters written to the buffer, or a negative error code.
+ */
+static int jiffies_to_formatted_time(unsigned long jiffies_value, char *buffer, size_t buffer_len)
+{
+    unsigned long seconds;
+    struct tm tm_time;
+
+    // Convert jiffies to seconds
+    seconds = jiffies_value / HZ;
+
+    // Manually convert seconds to struct tm
+    // This is a simplified conversion without timezone handling
+    tm_time.tm_sec = seconds % 60;
+    seconds /= 60;
+    tm_time.tm_min = seconds % 60;
+    seconds /= 60;
+    tm_time.tm_hour = seconds % 24;
+    seconds /= 24;
+
+    // Simplified date calculation (assuming Unix epoch start at 1970-01-01)
+    tm_time.tm_mday = (seconds % 365) + 1; // Simplified day of month
+    tm_time.tm_mon = (seconds / 365) % 12; // Simplified month
+    tm_time.tm_year = (seconds / 365 / 12) + 70; // Simplified year since 1970
+
+    // Format the time into the buffer
+    return snprintf(buffer, buffer_len, "%04d-%02d-%02d %02d:%02d:%02d",
+                   tm_time.tm_year + 1900, tm_time.tm_mon + 1, tm_time.tm_mday,
+                   tm_time.tm_hour, tm_time.tm_min, tm_time.tm_sec);
+}
+
 static void jiffies_to_datetime_str(unsigned long input_jiffies, char *buffer, size_t buf_size)
 {
     static time64_t boot_time_sec = 0;
@@ -369,6 +404,7 @@ static void jiffies_to_datetime_str(unsigned long input_jiffies, char *buffer, s
         boot_time_sec = boot_ts.tv_sec;
     }
 
+	//use ktime_get_boottime_ts64() to get the boot time
     // Convert jiffies to absolute timestamp
     timestamp = boot_time_sec + (input_jiffies / HZ);
 
@@ -421,7 +457,7 @@ static int ceph_san_tls_show(struct seq_file *s, void *p)
 			}
 
 			char datetime_str[32];
-			jiffies_to_datetime_str(entry->ts, datetime_str, sizeof(datetime_str));
+			jiffies_to_formatted_time(entry->ts, datetime_str, sizeof(datetime_str));
 
 			seq_printf(s, "[%d][%s][%s]:%s:%s:%u: %.*s",
 					  pid,
@@ -463,11 +499,10 @@ static int ceph_san_contexts_show(struct seq_file *s, void *p)
 
     /* Lock the logger to safely traverse the contexts list */
     spin_lock_irqsave(&g_logger.lock, flags);
-
+    ktime_get();
     seq_puts(s, "Active TLS Contexts:\n");
-    seq_puts(s, "PID      Command          Buffer Size\n");
-    seq_puts(s, "----------------------------------------\n");
-
+    seq_puts(s, "PID      Command          State    Buffer Size\n");
+    seq_puts(s, "------------------------------------------------\n");
     list_for_each_entry(ctx, &g_logger.contexts, list) {
         int rc = print_task_cgroup(ctx->task, cgroup_path, sizeof(cgroup_path));
         char task_state = ctx->task ? task_state_to_char(ctx->task) : 'N';
