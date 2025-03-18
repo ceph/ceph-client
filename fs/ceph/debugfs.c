@@ -11,6 +11,10 @@
 #include <linux/ktime.h>
 #include <linux/cgroup.h>
 #include <linux/cgroup-defs.h>
+#include <linux/jiffies.h>
+#include <linux/timekeeping.h>
+#include <linux/rtc.h>
+#include <linux/printk.h>
 
 #include <linux/ceph/libceph.h>
 #include <linux/ceph/ceph_san_logger.h>
@@ -352,6 +356,31 @@ static int mds_sessions_show(struct seq_file *s, void *ptr)
 	return 0;
 }
 
+static void jiffies_to_datetime_str(unsigned long input_jiffies, char *buffer, size_t buf_size)
+{
+    static time64_t boot_time_sec = 0;
+    struct rtc_time tm;
+    time64_t timestamp;
+
+    // Initialize boot_time_sec only once
+    if (boot_time_sec == 0) {
+        struct timespec64 boot_ts;
+        ktime_get_boottime_ts64(&boot_ts);
+        boot_time_sec = boot_ts.tv_sec;
+    }
+
+    // Convert jiffies to absolute timestamp
+    timestamp = boot_time_sec + (input_jiffies / HZ);
+
+    // Convert timestamp to human-readable format
+    rtc_time64_to_tm(timestamp, &tm);
+
+    // Format the output string
+    snprintf(buffer, buf_size, "%04d-%02d-%02d %02d:%02d:%02d",
+             tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+             tm.tm_hour, tm.tm_min, tm.tm_sec);
+}
+
 static int status_show(struct seq_file *s, void *p)
 {
 	struct ceph_fs_client *fsc = s->private;
@@ -380,6 +409,8 @@ static int ceph_san_tls_show(struct seq_file *s, void *p)
 
 		/* Initialize iterator for this context's pagefrag */
 		ceph_san_log_iter_init(&iter, &ctx->pf);
+		int pid = ctx->pid;
+		char *comm = ctx->comm;
 
 		/* Lock the pagefrag before accessing entries */
 		spin_lock(&ctx->pf.lock);
@@ -391,8 +422,13 @@ static int ceph_san_tls_show(struct seq_file *s, void *p)
 				continue;
 			}
 
-			seq_printf(s, "    [%llu] %s:%s:%u: %.*s",
-					  entry->ts,
+			char datetime_str[32];
+			jiffies_to_datetime_str(entry->ts, datetime_str, sizeof(datetime_str));
+
+			seq_printf(s, "[%d][%s][%s]:%s:%s:%u: %.*s",
+					  pid,
+					  comm,
+					  datetime_str,
 					  entry->file,
 					  entry->func,
 					  entry->line,
