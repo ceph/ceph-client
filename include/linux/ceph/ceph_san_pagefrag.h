@@ -25,6 +25,7 @@ void cephsan_pagefrag_free(struct cephsan_pagefrag *pf, unsigned int n);
 void cephsan_pagefrag_deinit(struct cephsan_pagefrag *pf);
 void cephsan_pagefrag_reset(struct cephsan_pagefrag *pf);
 void *cephsan_pagefrag_get_ptr(struct cephsan_pagefrag *pf, u64 val);
+bool cephsan_pagefrag_is_wraparound(u64 val);
 
 /* Get allocation size from pagefrag allocation result */
 u64 cephsan_pagefrag_get_alloc_size(u64 val);

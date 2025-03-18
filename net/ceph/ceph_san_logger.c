@@ -147,13 +147,6 @@ void ceph_san_log(const char *file, const char *func, unsigned int line, const c
         BUG_ON(entry->len == 0);
         cephsan_pagefrag_free(&ctx->pf, entry->len);
         alloc = cephsan_pagefrag_alloc(&ctx->pf, needed_size);
-        //In case we hit the wrap around, we may get a partial allocation that should be marked as used
-        if (alloc && cephsan_pagefrag_get_alloc_size(alloc) < needed_size) {
-            entry = cephsan_pagefrag_get_ptr(&ctx->pf, alloc);
-            memset(entry->buffer, 0, sizeof(entry->buffer));
-            entry->len = cephsan_pagefrag_get_alloc_size(alloc);
-            alloc = 0;
-        }
     }
     entry = cephsan_pagefrag_get_ptr(&ctx->pf, alloc);
 
@@ -163,7 +156,11 @@ void ceph_san_log(const char *file, const char *func, unsigned int line, const c
     entry->line = line;
     entry->file = file;
     entry->func = func;
-    entry->buffer = (char *)(entry + 1);
+    if (unlikely(cephsan_pagefrag_is_wraparound(alloc))) {
+        entry->buffer = cephsan_pagefrag_get_ptr(&ctx->pf, 0);
+    } else {
+        entry->buffer = (char *)(entry + 1);
+    }
     entry->len = cephsan_pagefrag_get_alloc_size(alloc);
     spin_unlock(&ctx->pf.lock);
 

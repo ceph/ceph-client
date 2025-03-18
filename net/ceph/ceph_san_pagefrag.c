@@ -78,9 +78,13 @@ u64 cephsan_pagefrag_alloc(struct cephsan_pagefrag *pf, unsigned int n)
         pf->head += n;
         return ((u64)n << 32) | prev_head;
     } else {
-        /* Need to wrap around return a partial allocation*/
-        pf->head = 0;
-        return ((u64)delta << 32) | prev_head;
+        if (pf->tail > n) {
+            /* Need to wrap around return a partial allocation*/
+            pf->head = n;
+            return ((u64)(delta + n) << 32) | prev_head;
+        } else {
+            return 0;
+        }
     }
 }
 EXPORT_SYMBOL(cephsan_pagefrag_alloc);
@@ -103,6 +107,23 @@ u64 cephsan_pagefrag_get_alloc_size(u64 val)
     return val >> 32;
 }
 EXPORT_SYMBOL(cephsan_pagefrag_get_alloc_size);
+
+/**
+ * cephsan_pagefrag_is_wraparound - Check if allocation wraps around buffer end
+ * @val: Return value from cephsan_pagefrag_alloc
+ *
+ * Checks if the allocation represented by @val wraps around the end of the
+ * pagefrag buffer by verifying if alloc_size + address > CEPHSAN_PAGEFRAG_SIZE.
+ *
+ * Return: true if allocation wraps around, false otherwise
+ */
+bool cephsan_pagefrag_is_wraparound(u64 val)
+{
+    u32 addr = val & 0xFFFFFFFF;
+    u32 size = val >> 32;
+    return (addr + size) > CEPHSAN_PAGEFRAG_SIZE;
+}
+EXPORT_SYMBOL(cephsan_pagefrag_is_wraparound);
 
 /**
  * cephsan_pagefrag_get_ptr_from_tail - Get buffer pointer from pagefrag tail
