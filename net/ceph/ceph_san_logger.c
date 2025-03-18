@@ -141,7 +141,10 @@ void ceph_san_log(const char *file, const char *func, unsigned int line, const c
     /* Allocate entry from pagefrag - We need a spinlock here to protect access iterators */
     spin_lock(&ctx->pf.lock);
     alloc = cephsan_pagefrag_alloc(&ctx->pf, needed_size);
+    int loop_count = 0;
     while (!alloc) {
+        if (loop_count++ >= 8)
+            panic("ceph_san_log: failed to allocate entry after 8 retries");
         entry = cephsan_pagefrag_get_ptr_from_tail(&ctx->pf);
         BUG_ON(entry->debug_poison != CEPH_SAN_LOG_ENTRY_POISON);
         BUG_ON(entry->len == 0);
