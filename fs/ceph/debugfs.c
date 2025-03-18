@@ -391,9 +391,10 @@ static int ceph_san_tls_show(struct seq_file *s, void *p)
 				continue;
 			}
 
-			seq_printf(s, "    [%llu] %s:%u: %.*s\n",
+			seq_printf(s, "    [%llu] %s:%s:%u: %.*s",
 					  entry->ts,
 					  entry->file,
+					  entry->func,
 					  entry->line,
 					  entry->len,
 					  entry->buffer);
