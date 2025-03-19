@@ -139,7 +139,7 @@ void ceph_san_log(const char *file, const char *func, unsigned int line, const c
 
     needed_size = sizeof(*entry) + len + 1;
     /* Allocate entry from pagefrag - We need a spinlock here to protect access iterators */
-    spin_lock(&ctx->pf.lock);
+    spin_lock_bh(&ctx->pf.lock);
     alloc = cephsan_pagefrag_alloc(&ctx->pf, needed_size);
     int loop_count = 0;
     while (!alloc) {
@@ -183,7 +183,7 @@ void ceph_san_log(const char *file, const char *func, unsigned int line, const c
         entry->buffer = (char *)(entry + 1);
     }
     entry->len = cephsan_pagefrag_get_alloc_size(alloc);
-    spin_unlock(&ctx->pf.lock);
+    spin_unlock_bh(&ctx->pf.lock);
 
     /* Copy to entry buffer */
     memcpy(entry->buffer, buf, len + 1);

@@ -421,7 +421,7 @@ static int ceph_san_tls_show(struct seq_file *s, void *p)
 		char *comm = ctx->comm;
 
 		/* Lock the pagefrag before accessing entries */
-		spin_lock(&ctx->pf.lock);
+		spin_lock_bh(&ctx->pf.lock);
 
 		/* Iterate through all log entries in this context */
 		while ((entry = ceph_san_log_iter_next(&iter)) != NULL) {
@@ -445,7 +445,7 @@ static int ceph_san_tls_show(struct seq_file *s, void *p)
 		}
 
 		/* Unlock the pagefrag after we're done with this context */
-		spin_unlock(&ctx->pf.lock);
+		spin_unlock_bh(&ctx->pf.lock);
 	}
 
 	spin_unlock(&g_logger.lock);
