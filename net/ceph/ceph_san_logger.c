@@ -288,7 +288,7 @@ struct ceph_san_log_entry *ceph_san_log_iter_next(struct ceph_san_log_iter *iter
     iter->current_offset = (iter->current_offset + entry->len) & CEPHSAN_PAGEFRAG_MASK;
 
     if (iter->steps > iter->pf->active_elements || iter->current_offset == iter->prev_offset) {
-        pr_err("ceph_san_log_iter_next: steps: %u, active_elements: %u, entry_len: %u\n",
+        pr_err("ceph_san_log_iter_next: steps: %llu, active_elements: %u, entry_len: %u\n",
                iter->steps, iter->pf->active_elements, entry->len);
         pr_err("ceph_san_log_iter_next: pagefrag details:\n"
                "  head: %u, tail: %u, current: %llu\n"
