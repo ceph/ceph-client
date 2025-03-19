@@ -45,6 +45,7 @@ struct ceph_san_log_iter {
     u64 current_offset;             /* Current offset in pagefrag */
     u64 end_offset;                 /* End offset in pagefrag */
     u64 prev_offset;               /* Previous offset for debugging */
+    u64 steps;                     /* Number of steps taken */
 };
 
 /* Initialize the iterator for a specific pagefrag */

@@ -252,6 +252,7 @@ void ceph_san_log_iter_init(struct ceph_san_log_iter *iter, struct cephsan_pagef
 {
     /* Initialize iterator state */
     iter->pf = pf;
+    iter->steps = 0;
     iter->current_offset = pf->tail;
     iter->end_offset = pf->head;
     iter->prev_offset = pf->tail;
@@ -279,11 +280,27 @@ struct ceph_san_log_entry *ceph_san_log_iter_next(struct ceph_san_log_iter *iter
         //if the last free was bigger than need alloc size
        return NULL;
     }
+    if (iter->steps > iter->pf->active_elements) {
+        pr_err("ceph_san_log_iter_next: steps: %u, active_elements: %u\n",
+               iter->steps, iter->pf->active_elements);
+        pr_err("ceph_san_log_iter_next: pagefrag details:\n"
+               "  head: %u, tail: %u, current: %llu\n"
+               "  prev_offset: %llu, end_offset: %llu\n"
+               "  active_elements: %d, alloc_count: %u\n"
+               "  wrap_to_end: %u, wrap_around: %u\n",
+               iter->pf->head, iter->pf->tail, iter->current_offset,
+               iter->prev_offset, iter->end_offset,
+               iter->pf->active_elements, iter->pf->alloc_count,
+               iter->pf->wrap_to_end, iter->pf->wrap_around);
 
+        BUG();
+    }
+
+    iter->steps++;
     /* Store current offset before moving to next */
     iter->prev_offset = iter->current_offset;
     /* Move to next entry */
-    iter->current_offset += entry->len & CEPHSAN_PAGEFRAG_MASK;
+    iter->current_offset = (iter->current_offset + entry->len) & CEPHSAN_PAGEFRAG_MASK;
 
     return entry;
 }
