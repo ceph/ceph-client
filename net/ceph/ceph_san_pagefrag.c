@@ -22,6 +22,8 @@ int cephsan_pagefrag_init(struct cephsan_pagefrag *pf)
     pf->tail = 0;
     pf->active_elements = 0;
     pf->alloc_count = 0;
+    pf->wrap_to_end = 0;
+    pf->wrap_around = 0;
     return 0;
 }
 EXPORT_SYMBOL(cephsan_pagefrag_init);
@@ -43,6 +45,8 @@ int cephsan_pagefrag_init_with_buffer(struct cephsan_pagefrag *pf, void *buffer,
     pf->tail = 0;
     pf->active_elements = 0;
     pf->alloc_count = 0;
+    pf->wrap_to_end = 0;
+    pf->wrap_around = 0;
     return 0;
 }
 EXPORT_SYMBOL(cephsan_pagefrag_init_with_buffer);
@@ -81,6 +85,7 @@ u64 cephsan_pagefrag_alloc(struct cephsan_pagefrag *pf, unsigned int n)
         if (unlikely(delta < 64)) {
             n += delta;
             pf->head = 0;
+            pf->wrap_to_end++;
             return ((u64)n << 32) | prev_head;
         }
         pf->head += n;
@@ -91,6 +96,7 @@ u64 cephsan_pagefrag_alloc(struct cephsan_pagefrag *pf, unsigned int n)
             pf->head = n;
             pf->alloc_count++;
             pf->active_elements++;
+            pf->wrap_around++;
             return ((u64)(delta + n) << 32) | prev_head;
         } else {
             return 0;
@@ -190,6 +196,8 @@ void cephsan_pagefrag_reset(struct cephsan_pagefrag *pf)
     pf->tail = 0;
     pf->alloc_count = 0;
     pf->active_elements = 0;
+    pf->wrap_to_end = 0;
+    pf->wrap_around = 0;
     spin_unlock(&pf->lock);
 }
 EXPORT_SYMBOL(cephsan_pagefrag_reset);

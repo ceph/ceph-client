@@ -17,6 +17,8 @@ struct cephsan_pagefrag {
     unsigned int tail;
     unsigned int alloc_count;
     int active_elements;
+    unsigned int wrap_to_end;   /* Count of allocations that filled to end */
+    unsigned int wrap_around;    /* Count of allocations that wrapped around */
 };
 
 int cephsan_pagefrag_init(struct cephsan_pagefrag *pf);

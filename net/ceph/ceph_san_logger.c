@@ -162,6 +162,8 @@ void ceph_san_log(const char *file, const char *func, unsigned int line, const c
                   ctx->pf.active_elements, ctx->pf.alloc_count);
             pr_err("  entry poison: %llx, len: %u\n",
                   entry->debug_poison, entry->len);
+            pr_err("  wrap_to_end: %u, wrap_around: %u\n",
+                  ctx->pf.wrap_to_end, ctx->pf.wrap_around);
             BUG();
         }
         cephsan_pagefrag_free(&ctx->pf, entry->len);
