@@ -31,6 +31,9 @@
 #include "mds_client.h"
 #include "metric.h"
 
+/* Export the g_registrations array for debugfs code */
+extern struct ceph_san_log_registration g_registrations[];
+
 static int mdsmap_show(struct seq_file *s, void *p)
 {
 	int i;
@@ -358,34 +361,15 @@ static int mds_sessions_show(struct seq_file *s, void *ptr)
 	return 0;
 }
 
-/* @buffer: The buffer to store the formatted date and time string.
- * @buffer_len: The length of the buffer.
- *
- * Returns: The number of characters written to the buffer, or a negative error code.
- */
-static int jiffies_to_formatted_time(unsigned long jiffies_value, char *buffer, size_t buffer_len)
+/* Simple wrapper to format jiffies to a human-readable timestamp */
+int jiffies_to_formatted_time(unsigned long jiffies_value, char *buffer, size_t buffer_len)
 {
-    unsigned long seconds;
+    struct timespec64 ts;
     struct tm tm_time;
 
-    // Convert jiffies to seconds
-    seconds = jiffies_value / HZ;
+    jiffies_to_timespec64(jiffies_value, &ts);
+    time64_to_tm(ts.tv_sec, 0, &tm_time);
 
-    // Manually convert seconds to struct tm
-    // This is a simplified conversion without timezone handling
-    tm_time.tm_sec = seconds % 60;
-    seconds /= 60;
-    tm_time.tm_min = seconds % 60;
-    seconds /= 60;
-    tm_time.tm_hour = seconds % 24;
-    seconds /= 24;
-
-    // Simplified date calculation (assuming Unix epoch start at 1970-01-01)
-    tm_time.tm_mday = (seconds % 365) + 1; // Simplified day of month
-    tm_time.tm_mon = (seconds / 365) % 12; // Simplified month
-    tm_time.tm_year = (seconds / 365 / 12) + 70; // Simplified year since 1970
-
-    // Format the time into the buffer
     return snprintf(buffer, buffer_len, "%04ld-%02d-%02d %02d:%02d:%02d",
                    tm_time.tm_year + 1900, tm_time.tm_mon + 1, tm_time.tm_mday,
                    tm_time.tm_hour, tm_time.tm_min, tm_time.tm_sec);
@@ -406,50 +390,56 @@ static int status_show(struct seq_file *s, void *p)
 
 static int ceph_san_tls_show(struct seq_file *s, void *p)
 {
-	struct ceph_san_tls_ctx *ctx;
-	struct ceph_san_log_iter iter;
-	struct ceph_san_log_entry *entry;
+    struct ceph_san_tls_ctx *ctx;
+    struct ceph_san_log_iter iter;
+    struct ceph_san_log_entry *entry;
+    struct ceph_san_log_registration *reg;
+    char time_str[32];
+    char cmdline[TASK_COMM_LEN];
+    int count = 0;
 
-	/* Lock the logger to safely traverse the contexts list */
-	spin_lock(&g_logger.lock);
+    ctx = ceph_san_get_tls_ctx();
+    if (!ctx)
+        return -ENOENT;
 
-	list_for_each_entry(ctx, &g_logger.contexts, list) {
+    get_task_comm(cmdline, current);
 
-		/* Initialize iterator for this context's pagefrag */
-		ceph_san_log_iter_init(&iter, &ctx->pf);
-		int pid = ctx->pid;
-		char *comm = ctx->comm;
-
-		/* Lock the pagefrag before accessing entries */
-		spin_lock_bh(&ctx->pf.lock);
-
-		/* Iterate through all log entries in this context */
-		while ((entry = ceph_san_log_iter_next(&iter)) != NULL) {
-			if (entry->debug_poison != CEPH_SAN_LOG_ENTRY_POISON) {
-				seq_puts(s, "    [Corrupted Entry]\n");
-				continue;
-			}
-
-			char datetime_str[32];
-			jiffies_to_formatted_time(entry->ts, datetime_str, sizeof(datetime_str));
-
-			seq_printf(s, "[%d][%s][%s]:%s:%s:%u: %.*s",
-					  pid,
-					  comm,
-					  datetime_str,
-					  entry->file,
-					  entry->func,
-					  entry->line,
-					  entry->len,
-					  entry->buffer);
-		}
-
-		/* Unlock the pagefrag after we're done with this context */
-		spin_unlock_bh(&ctx->pf.lock);
-	}
-
-	spin_unlock(&g_logger.lock);
-	return 0;
+    seq_printf(s, "Thread: %s [%d]\n", cmdline, task_pid_nr(current));
+    seq_printf(s, "---------------------------------------------------------\n");
+    
+    ceph_san_log_iter_init(&iter, &ctx->pf);
+    
+    while ((entry = ceph_san_log_iter_next(&iter)) != NULL) {
+        if (entry->debug_poison != CEPH_SAN_LOG_ENTRY_POISON) {
+            seq_printf(s, "ERROR: Corrupted log entry at offset %llu\n", iter.prev_offset);
+            continue;
+        }
+        
+        /* Get registration for this entry */
+        if (entry->reg_id >= CEPH_SAN_LOG_MAX_REGISTRATIONS) {
+            seq_printf(s, "ERROR: Invalid registration ID %u\n", entry->reg_id);
+            continue;
+        }
+        
+        reg = &g_registrations[entry->reg_id];
+        
+        /* Format timestamp */
+        jiffies_to_formatted_time(entry->ts, time_str, sizeof(time_str));
+        
+        /* Output the log entry with all registration info */
+        seq_printf(s, "[%s] %s:%s:%u - %s\n",
+                 time_str,
+                 reg->file, reg->func, reg->line,
+                 entry->buffer);
+        count++;
+    }
+    
+    if (count == 0)
+        seq_printf(s, "No log entries found\n");
+    else
+        seq_printf(s, "----- End of log: %d entries -----\n", count);
+    
+    return 0;
 }
 
 static int print_task_cgroup(struct task_struct *task, char *cgroup_path, size_t size)
