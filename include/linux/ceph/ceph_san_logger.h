@@ -79,7 +79,7 @@ u32 ceph_san_get_source_id(const char *file, const char *func, unsigned int line
 const struct ceph_san_source_info *ceph_san_get_source_info(u32 id);
 
 /* Log a message */
-void ceph_san_log(u32 source_id, ...);
+void* ceph_san_log(u32 source_id, size_t size);
 
 /* Get current TLS context, creating if necessary */
 struct ceph_san_tls_ctx *ceph_san_get_tls_ctx(void);
@@ -89,11 +89,15 @@ struct ceph_san_tls_ctx *ceph_san_get_tls_ctx(void);
     do { \
         static u32 __source_id = 0; \
         static size_t __size = 0; \
+        void *__buffer = NULL; \
         if (unlikely(__source_id == 0)) { \
             __source_id = ceph_san_get_source_id(kbasename(__FILE__), __func__, __LINE__, fmt); \
             __size = ceph_san_cnt(__VA_ARGS__); \
         } \
-        ceph_san_log(__source_id, ##__VA_ARGS__); \
+        __buffer = ceph_san_log(__source_id, __size); \
+        if (__buffer) { \
+            ceph_san_ser(__buffer, ##__VA_ARGS__); \
+        } \
     } while (0)
 
 /* Global logger instance */

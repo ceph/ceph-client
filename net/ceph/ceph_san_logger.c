@@ -159,35 +159,19 @@ EXPORT_SYMBOL(ceph_san_get_source_info);
  * Logs a message to the current TLS context's log buffer
  * Format string is retrieved from the source_map
  */
-void ceph_san_log(u32 source_id, ...)
+void* ceph_san_log(u32 source_id, size_t needed_size)
 {
     /* Format the message into local buffer first */
-    char buf[256];
     struct ceph_san_tls_ctx *ctx;
     struct ceph_san_log_entry *entry;
-    va_list args;
     u64 alloc;
-    int len, needed_size;
-    const struct ceph_san_source_info *source_info;
 
     ctx = ceph_san_get_tls_ctx();
     if (!ctx) {
         pr_err("Failed to get TLS context\n");
-        return;
+        return NULL;
     }
 
-    /* Get format string from source info */
-    source_info = ceph_san_get_source_info(source_id);
-    if (!source_info || !source_info->fmt) {
-        pr_err("Invalid source ID or missing format string\n");
-        return;
-    }
-
-    va_start(args, source_id);
-    len = vsnprintf(buf, sizeof(buf), source_info->fmt, args);
-    va_end(args);
-
-    needed_size = sizeof(*entry) + len + 1;
     /* Allocate entry from pagefrag - We need a spinlock here to protect access iterators */
     spin_lock_bh(&ctx->pf.lock);
     alloc = cephsan_pagefrag_alloc(&ctx->pf, needed_size);
@@ -233,9 +217,7 @@ void ceph_san_log(u32 source_id, ...)
     entry->len = cephsan_pagefrag_get_alloc_size(alloc);
     spin_unlock_bh(&ctx->pf.lock);
 
-    /* Copy to entry buffer */
-    memcpy(entry->buffer, buf, len + 1);
-    entry->buffer[len] = '\0';
+    return entry->buffer;
 }
 EXPORT_SYMBOL(ceph_san_log);
 
