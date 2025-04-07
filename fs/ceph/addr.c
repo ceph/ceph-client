@@ -2044,11 +2044,12 @@ static int __ceph_pool_perm_get(struct ceph_inode_info *ci,
 	if (*p)
 		goto out;
 
-	if (pool_ns)
+	if (pool_ns) {
 		doutc(cl, "pool %lld ns %.*s no perm cached\n", pool,
-		      (int)pool_ns->len, pool_ns->str);
-	else
+		      (int)pool_ns->len, "FIXME");
+	} else {
 		doutc(cl, "pool %lld no perm cached\n", pool);
+	}
 
 	down_write(&mdsc->pool_perm_rwsem);
 	p = &mdsc->pool_perm_tree.rb_node;
@@ -2172,11 +2173,12 @@ out_unlock:
 out:
 	if (!err)
 		err = have;
-	if (pool_ns)
+	if (pool_ns) {
 		doutc(cl, "pool %lld ns %.*s result = %d\n", pool,
-		      (int)pool_ns->len, pool_ns->str, err);
-	else
+		      (int)pool_ns->len, "FIXME", err);
+	} else {
 		doutc(cl, "pool %lld result = %d\n", pool, err);
+	}
 	return err;
 }
 

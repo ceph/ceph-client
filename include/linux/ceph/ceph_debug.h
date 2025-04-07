@@ -52,8 +52,8 @@
  */
 # define dout(fmt, ...)	CEPH_SAN_LOG(fmt, ##__VA_ARGS__)
 # define doutc(client, fmt, ...)					\
-	CEPH_SAN_LOG(" [%pU:%llu] %s: " fmt, &client->fsid,			\
-		 client->monc.auth->global_id, __func__, ##__VA_ARGS__)
+	CEPH_SAN_LOG("[%pU:%llu] " fmt, &client->fsid,			\
+		 client->monc.auth->global_id, ##__VA_ARGS__);
 
 #endif
 

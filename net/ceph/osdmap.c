@@ -2401,7 +2401,7 @@ void __ceph_object_locator_to_pg(struct ceph_pg_pool_info *pi,
 		raw_pgid->pool = oloc->pool;
 		raw_pgid->seed = ceph_str_hash(pi->object_hash, oid->name,
 					     oid->name_len);
-		dout("%s %s -> raw_pgid %llu.%x\n", __func__, oid->name,
+		dout("%s -> raw_pgid %llu.%x\n", oid->name,
 		     raw_pgid->pool, raw_pgid->seed);
 	} else {
 		char stack_buf[256];
@@ -2418,8 +2418,8 @@ void __ceph_object_locator_to_pg(struct ceph_pg_pool_info *pi,
 		raw_pgid->seed = ceph_str_hash(pi->object_hash, buf, total);
 		if (buf != stack_buf)
 			kfree(buf);
-		dout("%s %s ns %.*s -> raw_pgid %llu.%x\n", __func__,
-		     oid->name, nsl, oloc->pool_ns->str,
+		dout("%s ns %.*s -> raw_pgid %llu.%x\n",
+		     oid->name, nsl, "FIXME -- POOL NS name",//oloc->pool_ns->str,
 		     raw_pgid->pool, raw_pgid->seed);
 	}
 }

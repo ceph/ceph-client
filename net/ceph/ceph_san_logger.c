@@ -114,10 +114,11 @@ EXPORT_SYMBOL(ceph_san_get_tls_ctx);
  * @file: Source file name
  * @func: Function name
  * @line: Line number
+ * @fmt: Format string
  *
  * Returns a unique ID for this source location
  */
-u32 ceph_san_get_source_id(const char *file, const char *func, unsigned int line)
+u32 ceph_san_get_source_id(const char *file, const char *func, unsigned int line, const char *fmt)
 {
     u32 id = atomic_inc_return(&g_logger.next_source_id);
 
@@ -131,6 +132,7 @@ u32 ceph_san_get_source_id(const char *file, const char *func, unsigned int line
     g_logger.source_map[id].file = file;
     g_logger.source_map[id].func = func;
     g_logger.source_map[id].line = line;
+    g_logger.source_map[id].fmt = fmt;
 
     return id;
 }
@@ -153,11 +155,11 @@ EXPORT_SYMBOL(ceph_san_get_source_info);
 /**
  * ceph_san_log - Log a message
  * @source_id: Source ID for this location
- * @fmt: Format string
  *
  * Logs a message to the current TLS context's log buffer
+ * Format string is retrieved from the source_map
  */
-void ceph_san_log(u32 source_id, const char *fmt, ...)
+void ceph_san_log(u32 source_id, ...)
 {
     /* Format the message into local buffer first */
     char buf[256];
@@ -166,6 +168,7 @@ void ceph_san_log(u32 source_id, const char *fmt, ...)
     va_list args;
     u64 alloc;
     int len, needed_size;
+    const struct ceph_san_source_info *source_info;
 
     ctx = ceph_san_get_tls_ctx();
     if (!ctx) {
@@ -173,8 +176,15 @@ void ceph_san_log(u32 source_id, const char *fmt, ...)
         return;
     }
 
-    va_start(args, fmt);
-    len = vsnprintf(buf, sizeof(buf), fmt, args);
+    /* Get format string from source info */
+    source_info = ceph_san_get_source_info(source_id);
+    if (!source_info || !source_info->fmt) {
+        pr_err("Invalid source ID or missing format string\n");
+        return;
+    }
+
+    va_start(args, source_id);
+    len = vsnprintf(buf, sizeof(buf), source_info->fmt, args);
     va_end(args);
 
     needed_size = sizeof(*entry) + len + 1;
