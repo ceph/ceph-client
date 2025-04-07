@@ -577,7 +577,7 @@ static int decode_con_secret(void **p, void *end, u8 *con_secret,
 	ceph_decode_32_safe(p, end, len, bad);
 	ceph_decode_need(p, end, len, bad);
 
-	dout("%s len %d\n", __func__, len);
+	dout("len %d\n", len);
 	if (con_secret) {
 		if (len > CEPH_MAX_CON_SECRET_LEN) {
 			pr_err("connection secret too big %d\n", len);
@@ -631,14 +631,14 @@ static int handle_auth_session_key(struct ceph_auth_client *ac, u64 global_id,
 
 	/* connection secret */
 	ceph_decode_32_safe(p, end, len, e_inval);
-	dout("%s connection secret blob len %d\n", __func__, len);
+	dout("connection secret blob len %d\n", len);
 	if (len > 0) {
 		dp = *p + ceph_x_encrypt_offset();
 		ret = ceph_x_decrypt(&th->session_key, p, *p + len);
 		if (ret < 0)
 			return ret;
 
-		dout("%s decrypted %d bytes\n", __func__, ret);
+		dout("decrypted %d bytes\n", ret);
 		dend = dp + ret;
 
 		ret = decode_con_secret(&dp, dend, con_secret, con_secret_len);
@@ -648,7 +648,7 @@ static int handle_auth_session_key(struct ceph_auth_client *ac, u64 global_id,
 
 	/* service tickets */
 	ceph_decode_32_safe(p, end, len, e_inval);
-	dout("%s service tickets blob len %d\n", __func__, len);
+	dout("service tickets blob len %d\n", len);
 	if (len > 0) {
 		ret = ceph_x_proc_ticket_reply(ac, &th->session_key,
 					       p, *p + len);
@@ -801,13 +801,13 @@ static int decrypt_authorizer_challenge(struct ceph_crypto_key *secret,
 	if (ret < 0)
 		return ret;
 
-	dout("%s decrypted %d bytes\n", __func__, ret);
+	dout("decrypted %d bytes\n", ret);
 	dp = challenge + sizeof(struct ceph_x_encrypt_header);
 	dend = dp + ret;
 
 	ceph_decode_skip_8(&dp, dend, e_inval);  /* struct_v */
 	ceph_decode_64_safe(&dp, dend, *server_challenge, e_inval);
-	dout("%s server_challenge %llu\n", __func__, *server_challenge);
+	dout("server_challenge %llu\n", *server_challenge);
 	return 0;
 
 e_inval:
@@ -854,12 +854,12 @@ static int decrypt_authorizer_reply(struct ceph_crypto_key *secret,
 	if (ret < 0)
 		return ret;
 
-	dout("%s decrypted %d bytes\n", __func__, ret);
+	dout("decrypted %d bytes\n", ret);
 	dend = dp + ret;
 
 	ceph_decode_8_safe(&dp, dend, struct_v, e_inval);
 	ceph_decode_64_safe(&dp, dend, *nonce_plus_one, e_inval);
-	dout("%s nonce_plus_one %llu\n", __func__, *nonce_plus_one);
+	dout("nonce_plus_one %llu\n", *nonce_plus_one);
 	if (struct_v >= 2) {
 		ret = decode_con_secret(&dp, dend, con_secret, con_secret_len);
 		if (ret)
