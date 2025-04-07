@@ -12,15 +12,22 @@
 /* Maximum length of a log entry buffer */
 #define CEPH_SAN_LOG_MAX_LEN 256
 #define CEPH_SAN_LOG_ENTRY_POISON 0xDEADBEEF
+#define CEPH_SAN_MAX_SOURCE_IDS 4096
+
+/* Source information mapping structure */
+struct ceph_san_source_info {
+    const char *file;
+    const char *func;
+    unsigned int line;
+};
+
 /* Log entry structure */
 struct ceph_san_log_entry {
     u64 debug_poison;           /* Debug poison value */
     u64 ts;                     /* Timestamp (jiffies) */
-    unsigned int line;          /* Line number */
+    u32 source_id;              /* ID for source file/function/line */
     unsigned int len;           /* Length of the message */
-    const char *file;          /* Source file */
-    const char *func;          /* Source function */
-    char *buffer;            /* Flexible array for inline buffer */
+    char *buffer;               /* Flexible array for inline buffer */
 };
 
 /* TLS context structure */
@@ -38,6 +45,8 @@ struct ceph_san_logger {
     spinlock_t lock;            /* Protects contexts list */
     struct ceph_san_batch alloc_batch;  /* Batch for allocating new entries */
     struct ceph_san_batch log_batch;    /* Batch for storing log entries */
+    struct ceph_san_source_info source_map[CEPH_SAN_MAX_SOURCE_IDS]; /* Source info mapping */
+    atomic_t next_source_id;    /* Next source ID to assign */
 };
 
 /* Iterator for log entries in a single pagefrag */
@@ -61,15 +70,27 @@ int ceph_san_logger_init(void);
 /* Clean up the logging system */
 void ceph_san_logger_cleanup(void);
 
+/* Get or create source ID */
+u32 ceph_san_get_source_id(const char *file, const char *func, unsigned int line);
+
+/* Get source information for ID */
+const struct ceph_san_source_info *ceph_san_get_source_info(u32 id);
+
 /* Log a message */
-void ceph_san_log(const char *file, const char *func, unsigned int line, const char *fmt, ...);
+void ceph_san_log(u32 source_id, const char *fmt, ...);
 
 /* Get current TLS context, creating if necessary */
 struct ceph_san_tls_ctx *ceph_san_get_tls_ctx(void);
 
 /* Helper macro for logging */
 #define CEPH_SAN_LOG(fmt, ...) \
-    ceph_san_log(kbasename(__FILE__), __func__, __LINE__, fmt, ##__VA_ARGS__)
+    do { \
+        static u32 __source_id = 0; \
+        if (__source_id == 0) { \
+            __source_id = ceph_san_get_source_id(kbasename(__FILE__), __func__, __LINE__); \
+        } \
+        ceph_san_log(__source_id, fmt, ##__VA_ARGS__); \
+    } while (0)
 
 /* Global logger instance */
 extern struct ceph_san_logger g_logger;

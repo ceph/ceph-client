@@ -409,12 +409,12 @@ static int ceph_san_tls_show(struct seq_file *s, void *p)
 	struct ceph_san_tls_ctx *ctx;
 	struct ceph_san_log_iter iter;
 	struct ceph_san_log_entry *entry;
+	const struct ceph_san_source_info *source;
 
 	/* Lock the logger to safely traverse the contexts list */
 	spin_lock(&g_logger.lock);
 
 	list_for_each_entry(ctx, &g_logger.contexts, list) {
-
 		/* Initialize iterator for this context's pagefrag */
 		ceph_san_log_iter_init(&iter, &ctx->pf);
 		int pid = ctx->pid;
@@ -433,14 +433,17 @@ static int ceph_san_tls_show(struct seq_file *s, void *p)
 			char datetime_str[32];
 			jiffies_to_formatted_time(entry->ts, datetime_str, sizeof(datetime_str));
 
-			seq_printf(s, "[%d][%s][%s]:%s:%s:%u: %.*s",
-					  pid,
-					  comm,
-					  datetime_str,
-					  entry->file,
-					  entry->func,
-					  entry->line,
-					  entry->len,
+			/* Get source information for this ID */
+			source = ceph_san_get_source_info(entry->source_id);
+			if (!source) {
+				seq_printf(s, "[%d][%s][%s]:[Unknown Source ID %u]: %s\n",
+						  pid, comm, datetime_str, entry->source_id, entry->buffer);
+				continue;
+			}
+
+			seq_printf(s, "[%d][%s][%s]:%s:%s:%u: %s\n",
+					  pid, comm, datetime_str,
+					  source->file, source->func, source->line,
 					  entry->buffer);
 		}
 

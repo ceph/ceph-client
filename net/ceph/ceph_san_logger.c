@@ -110,14 +110,54 @@ struct ceph_san_tls_ctx *ceph_san_get_tls_ctx(void)
 EXPORT_SYMBOL(ceph_san_get_tls_ctx);
 
 /**
- * ceph_san_log - Log a message
+ * ceph_san_get_source_id - Get or create a source ID for the given location
  * @file: Source file name
+ * @func: Function name
  * @line: Line number
+ *
+ * Returns a unique ID for this source location
+ */
+u32 ceph_san_get_source_id(const char *file, const char *func, unsigned int line)
+{
+    u32 id = atomic_inc_return(&g_logger.next_source_id);
+
+    if (id >= CEPH_SAN_MAX_SOURCE_IDS) {
+        /* If we run out of IDs, just use the first one */
+        pr_warn("ceph_san_logger: source ID overflow, reusing ID 1\n");
+        id = 1;
+    }
+
+    /* Store the source information in the global map */
+    g_logger.source_map[id].file = file;
+    g_logger.source_map[id].func = func;
+    g_logger.source_map[id].line = line;
+
+    return id;
+}
+EXPORT_SYMBOL(ceph_san_get_source_id);
+
+/**
+ * ceph_san_get_source_info - Get source info for a given ID
+ * @id: Source ID
+ *
+ * Returns the source information for this ID
+ */
+const struct ceph_san_source_info *ceph_san_get_source_info(u32 id)
+{
+    if (id == 0 || id >= CEPH_SAN_MAX_SOURCE_IDS)
+        return NULL;
+    return &g_logger.source_map[id];
+}
+EXPORT_SYMBOL(ceph_san_get_source_info);
+
+/**
+ * ceph_san_log - Log a message
+ * @source_id: Source ID for this location
  * @fmt: Format string
  *
  * Logs a message to the current TLS context's log buffer
  */
-void ceph_san_log(const char *file, const char *func, unsigned int line, const char *fmt, ...)
+void ceph_san_log(u32 source_id, const char *fmt, ...)
 {
     /* Format the message into local buffer first */
     char buf[256];
@@ -174,9 +214,7 @@ void ceph_san_log(const char *file, const char *func, unsigned int line, const c
     /* Fill in entry details */
     entry->debug_poison = CEPH_SAN_LOG_ENTRY_POISON;
     entry->ts = jiffies;
-    entry->line = line;
-    entry->file = file;
-    entry->func = func;
+    entry->source_id = source_id;
     if (unlikely(cephsan_pagefrag_is_wraparound(alloc))) {
         entry->buffer = cephsan_pagefrag_get_ptr(&ctx->pf, 0);
     } else {
@@ -203,6 +241,7 @@ int ceph_san_logger_init(void)
     /* Initialize global state */
     INIT_LIST_HEAD(&g_logger.contexts);
     spin_lock_init(&g_logger.lock);
+    atomic_set(&g_logger.next_source_id, 0);
 
     /* Initialize allocation batch */
     ret = ceph_san_batch_init(&g_logger.alloc_batch);

@@ -1,9 +1,6 @@
 #ifndef CEPH_SAN_SER_H
 #define CEPH_SAN_SER_H
 
-#include <stddef.h>
-#include <stdarg.h>
-
 #define ___ceph_san_concat(__a, __b) __a ## __b
 #define ___ceph_san_apply(__fn, __n) ___ceph_san_concat(__fn, __n)
 
