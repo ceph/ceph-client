@@ -431,7 +431,7 @@ static int ceph_parse_mount_param(struct fs_context *fc,
 		return ret;
 
 	token = fs_parse(fc, ceph_mount_parameters, param, &result);
-	dout("%s: fs_parse '%s' token %d\n",__func__, param->key, token);
+	dout("fs_parse '%s' token %d\n", param->key, token);
 	if (token < 0)
 		return token;
 
@@ -916,7 +916,7 @@ static void destroy_fs_client(struct ceph_fs_client *fsc)
 	ceph_destroy_client(fsc->client);
 
 	kfree(fsc);
-	dout("%s: %p done\n", __func__, fsc);
+	dout("%p done\n", fsc);
 }
 
 /*

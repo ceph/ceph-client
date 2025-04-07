@@ -23,7 +23,7 @@ static u32 supported_protocols[] = {
 
 static int init_protocol(struct ceph_auth_client *ac, int proto)
 {
-	dout("%s proto %d\n", __func__, proto);
+	dout("proto %d\n", proto);
 
 	switch (proto) {
 	case CEPH_AUTH_NONE:
@@ -38,7 +38,7 @@ static int init_protocol(struct ceph_auth_client *ac, int proto)
 
 void ceph_auth_set_global_id(struct ceph_auth_client *ac, u64 global_id)
 {
-	dout("%s global_id %llu\n", __func__, global_id);
+	dout("global_id %llu\n", global_id);
 
 	if (!global_id)
 		pr_err("got zero global_id\n");
@@ -73,7 +73,7 @@ struct ceph_auth_client *ceph_auth_init(const char *name,
 	ac->preferred_mode = con_modes[0];
 	ac->fallback_mode = con_modes[1];
 
-	dout("%s name '%s' preferred_mode %d fallback_mode %d\n", __func__,
+	dout("name '%s' preferred_mode %d fallback_mode %d\n",
 	     ac->name, ac->preferred_mode, ac->fallback_mode);
 	return ac;
 }

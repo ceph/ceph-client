@@ -86,7 +86,7 @@ static struct ceph_monmap *ceph_monmap_decode(void **p, void *end, bool msgr2)
 	if (ret)
 		goto fail;
 
-	dout("%s struct_v %d\n", __func__, struct_v);
+	dout("struct_v %d\n", struct_v);
 	ceph_decode_copy_safe(p, end, &fsid, sizeof(fsid), e_inval);
 	ceph_decode_32_safe(p, end, epoch, e_inval);
 	if (struct_v >= 6) {
@@ -112,8 +112,7 @@ static struct ceph_monmap *ceph_monmap_decode(void **p, void *end, bool msgr2)
 	}
 	ceph_decode_32_safe(p, end, num_mon, e_inval);
 
-	dout("%s fsid %pU epoch %u num_mon %d\n", __func__, &fsid, epoch,
-	     num_mon);
+	dout("fsid %pU epoch %u num_mon %d\n", &fsid, epoch, num_mon);
 	if (num_mon > CEPH_MAX_MON)
 		goto e_inval;
 
@@ -141,8 +140,7 @@ static struct ceph_monmap *ceph_monmap_decode(void **p, void *end, bool msgr2)
 		if (ret)
 			goto fail;
 
-		dout("%s mon%d addr %s\n", __func__, i,
-		     ceph_pr_addr(&inst->addr));
+		dout("mon%d addr %s\n", i, ceph_pr_addr(&inst->addr));
 	}
 
 	return monmap;
@@ -229,8 +227,8 @@ static void pick_new_mon(struct ceph_mon_client *monc)
 		monc->cur_mon = n;
 	}
 
-	dout("%s mon%d -> mon%d out of %d mons\n", __func__, old_mon,
-	     monc->cur_mon, monc->monmap->num_mon);
+	dout("mon%d -> mon%d out of %d mons\n", old_mon, monc->cur_mon,
+	     monc->monmap->num_mon);
 }
 
 /*
@@ -252,7 +250,7 @@ static void __open_session(struct ceph_mon_client *monc)
 	monc->sub_renew_after = jiffies; /* i.e., expired */
 	monc->sub_renew_sent = 0;
 
-	dout("%s opening mon%d\n", __func__, monc->cur_mon);
+	dout("opening mon%d\n", monc->cur_mon);
 	ceph_con_open(&monc->con, CEPH_ENTITY_TYPE_MON, monc->cur_mon,
 		      &monc->monmap->mon_inst[monc->cur_mon].addr);
 
@@ -298,7 +296,7 @@ static void un_backoff(struct ceph_mon_client *monc)
 	monc->hunt_mult /= 2; /* reduce by 50% */
 	if (monc->hunt_mult < 1)
 		monc->hunt_mult = 1;
-	dout("%s hunt_mult now %d\n", __func__, monc->hunt_mult);
+	dout("hunt_mult now %d\n", monc->hunt_mult);
 }
 
 /*
@@ -337,7 +335,7 @@ static void __send_subscribe(struct ceph_mon_client *monc)
 	int num = 0;
 	int i;
 
-	dout("%s sent %lu\n", __func__, monc->sub_renew_sent);
+	dout("sent %lu\n", monc->sub_renew_sent);
 
 	BUG_ON(monc->cur_mon < 0);
 
@@ -364,7 +362,7 @@ static void __send_subscribe(struct ceph_mon_client *monc)
 		    monc->fs_cluster_id != CEPH_FS_CLUSTER_ID_NONE)
 			len += sprintf(buf + len, ".%d", monc->fs_cluster_id);
 
-		dout("%s %s start %llu flags 0x%x\n", __func__, buf,
+		dout("%s %s start %llu flags 0x%x\n", buf,
 		     le64_to_cpu(monc->subs[i].item.start),
 		     monc->subs[i].item.flags);
 		ceph_encode_string(&p, end, buf, len);
@@ -397,11 +395,11 @@ static void handle_subscribe_ack(struct ceph_mon_client *monc,
 		 */
 		monc->sub_renew_after = monc->sub_renew_sent +
 					    (seconds >> 1) * HZ - 1;
-		dout("%s sent %lu duration %d renew after %lu\n", __func__,
+		dout("sent %lu duration %d renew after %lu\n",
 		     monc->sub_renew_sent, seconds, monc->sub_renew_after);
 		monc->sub_renew_sent = 0;
 	} else {
-		dout("%s sent %lu renew after %lu, ignoring\n", __func__,
+		dout("sent %lu renew after %lu, ignoring\n",
 		     monc->sub_renew_sent, monc->sub_renew_after);
 	}
 	mutex_unlock(&monc->mutex);
@@ -423,8 +421,8 @@ static bool __ceph_monc_want_map(struct ceph_mon_client *monc, int sub,
 	__le64 start = cpu_to_le64(epoch);
 	u8 flags = !continuous ? CEPH_SUBSCRIBE_ONETIME : 0;
 
-	dout("%s %s epoch %u continuous %d\n", __func__, ceph_sub_str[sub],
-	     epoch, continuous);
+	dout("%s %s epoch %u continuous %d\n", ceph_sub_str[sub], epoch,
+	     continuous);
 
 	if (monc->subs[sub].want &&
 	    monc->subs[sub].item.start == start &&
@@ -459,7 +457,7 @@ EXPORT_SYMBOL(ceph_monc_want_map);
 static void __ceph_monc_got_map(struct ceph_mon_client *monc, int sub,
 				u32 epoch)
 {
-	dout("%s %s epoch %u\n", __func__, ceph_sub_str[sub], epoch);
+	dout("%s %s epoch %u\n", ceph_sub_str[sub], epoch);
 
 	if (monc->subs[sub].want) {
 		if (monc->subs[sub].item.flags & CEPH_SUBSCRIBE_ONETIME)
@@ -583,8 +581,7 @@ static void release_generic_request(struct kref *kref)
 	struct ceph_mon_generic_request *req =
 		container_of(kref, struct ceph_mon_generic_request, kref);
 
-	dout("%s greq %p request %p reply %p\n", __func__, req, req->request,
-	     req->reply);
+	dout("greq %p request %p reply %p\n", req, req->request, req->reply);
 	WARN_ON(!RB_EMPTY_NODE(&req->node));
 
 	if (req->reply)
@@ -620,7 +617,7 @@ alloc_generic_request(struct ceph_mon_client *monc, gfp_t gfp)
 	RB_CLEAR_NODE(&req->node);
 	init_completion(&req->completion);
 
-	dout("%s greq %p\n", __func__, req);
+	dout("greq %p\n", req);
 	return req;
 }
 
@@ -640,7 +637,7 @@ static void send_generic_request(struct ceph_mon_client *monc,
 {
 	WARN_ON(!req->tid);
 
-	dout("%s greq %p tid %llu\n", __func__, req, req->tid);
+	dout("greq %p tid %llu\n", req, req->tid);
 	req->request->hdr.tid = cpu_to_le64(req->tid);
 	ceph_con_send(&monc->con, ceph_msg_get(req->request));
 }
@@ -649,7 +646,7 @@ static void __finish_generic_request(struct ceph_mon_generic_request *req)
 {
 	struct ceph_mon_client *monc = req->monc;
 
-	dout("%s greq %p tid %llu\n", __func__, req, req->tid);
+	dout("greq %p tid %llu\n", req, req->tid);
 	erase_generic_request(&monc->generic_request_tree, req);
 
 	ceph_msg_revoke(req->request);
@@ -676,7 +673,7 @@ static void cancel_generic_request(struct ceph_mon_generic_request *req)
 	struct ceph_mon_client *monc = req->monc;
 	struct ceph_mon_generic_request *lookup_req;
 
-	dout("%s greq %p tid %llu\n", __func__, req, req->tid);
+	dout("greq %p tid %llu\n", req, req->tid);
 
 	mutex_lock(&monc->mutex);
 	lookup_req = lookup_generic_request(&monc->generic_request_tree,
@@ -693,7 +690,7 @@ static int wait_generic_request(struct ceph_mon_generic_request *req)
 {
 	int ret;
 
-	dout("%s greq %p tid %llu\n", __func__, req, req->tid);
+	dout("greq %p tid %llu\n", req, req->tid);
 	ret = wait_for_completion_interruptible(&req->completion);
 	if (ret)
 		cancel_generic_request(req);
@@ -742,7 +739,7 @@ static void handle_statfs_reply(struct ceph_mon_client *monc,
 	struct ceph_mon_statfs_reply *reply = msg->front.iov_base;
 	u64 tid = le64_to_cpu(msg->hdr.tid);
 
-	dout("%s msg %p tid %llu\n", __func__, msg, tid);
+	dout("msg %p tid %llu\n", msg, tid);
 
 	if (msg->front.iov_len != sizeof(*reply))
 		goto bad;
@@ -822,7 +819,7 @@ static void handle_get_version_reply(struct ceph_mon_client *monc,
 	void *end = p + msg->front_alloc_len;
 	u64 handle;
 
-	dout("%s msg %p tid %llu\n", __func__, msg, tid);
+	dout("msg %p tid %llu\n", msg, tid);
 
 	ceph_decode_need(&p, end, 2*sizeof(u64), bad);
 	handle = ceph_decode_64(&p);
@@ -944,7 +941,7 @@ static void handle_command_ack(struct ceph_mon_client *monc,
 	void *const end = p + msg->front_alloc_len;
 	u64 tid = le64_to_cpu(msg->hdr.tid);
 
-	dout("%s msg %p tid %llu\n", __func__, msg, tid);
+	dout("msg %p tid %llu\n", msg, tid);
 
 	ceph_decode_need(&p, end, sizeof(struct ceph_mon_request_header) +
 							    sizeof(u32), bad);
@@ -1086,18 +1083,18 @@ static void delayed_work(struct work_struct *work)
 		container_of(work, struct ceph_mon_client, delayed_work.work);
 
 	mutex_lock(&monc->mutex);
-	dout("%s mon%d\n", __func__, monc->cur_mon);
+	dout("mon%d\n", monc->cur_mon);
 	if (monc->cur_mon < 0) {
 		goto out;
 	}
 
 	if (monc->hunting) {
-		dout("%s continuing hunt\n", __func__);
+		dout("continuing hunt\n");
 		reopen_session(monc);
 	} else {
 		int is_auth = ceph_auth_is_authenticated(monc->auth);
 
-		dout("%s is_authed %d\n", __func__, is_auth);
+		dout("is_authed %d\n", is_auth);
 		if (ceph_con_keepalive_expired(&monc->con,
 					       CEPH_MONC_PING_TIMEOUT)) {
 			dout("monc keepalive timeout\n");
@@ -1115,8 +1112,8 @@ static void delayed_work(struct work_struct *work)
 		    !(monc->con.peer_features & CEPH_FEATURE_MON_STATEFUL_SUB)) {
 			unsigned long now = jiffies;
 
-			dout("%s renew subs? now %lu renew after %lu\n",
-			     __func__, now, monc->sub_renew_after);
+			dout("renew subs? now %lu renew after %lu\n",
+			     now, monc->sub_renew_after);
 			if (time_after_eq(now, monc->sub_renew_after))
 				__send_subscribe(monc);
 		}
@@ -1273,7 +1270,7 @@ EXPORT_SYMBOL(ceph_monc_stop);
 static void finish_hunting(struct ceph_mon_client *monc)
 {
 	if (monc->hunting) {
-		dout("%s found mon%d\n", __func__, monc->cur_mon);
+		dout("found mon%d\n", monc->cur_mon);
 		monc->hunting = false;
 		monc->had_a_connection = true;
 		un_backoff(monc);
@@ -1284,7 +1281,7 @@ static void finish_hunting(struct ceph_mon_client *monc)
 static void finish_auth(struct ceph_mon_client *monc, int auth_err,
 			bool was_authed)
 {
-	dout("%s auth_err %d was_authed %d\n", __func__, auth_err, was_authed);
+	dout("auth_err %d was_authed %d\n", auth_err, was_authed);
 	WARN_ON(auth_err > 0);
 
 	monc->pending_auth = 0;
@@ -1295,8 +1292,8 @@ static void finish_auth(struct ceph_mon_client *monc, int auth_err,
 	}
 
 	if (!was_authed && ceph_auth_is_authenticated(monc->auth)) {
-		dout("%s authenticated, starting session global_id %llu\n",
-		     __func__, monc->auth->global_id);
+		dout("authenticated, starting session global_id %llu\n",
+		     monc->auth->global_id);
 
 		monc->client->msgr.inst.name.type = CEPH_ENTITY_TYPE_CLIENT;
 		monc->client->msgr.inst.name.num =
@@ -1556,14 +1553,14 @@ static void mon_fault(struct ceph_connection *con)
 	struct ceph_mon_client *monc = con->private;
 
 	mutex_lock(&monc->mutex);
-	dout("%s mon%d\n", __func__, monc->cur_mon);
+	dout("mon%d\n", monc->cur_mon);
 	if (monc->cur_mon >= 0) {
 		if (!monc->hunting) {
-			dout("%s hunting for new mon\n", __func__);
+			dout("hunting for new mon\n");
 			reopen_session(monc);
 			__schedule_delayed(monc);
 		} else {
-			dout("%s already hunting\n", __func__);
+			dout("already hunting\n");
 		}
 	}
 	mutex_unlock(&monc->mutex);
