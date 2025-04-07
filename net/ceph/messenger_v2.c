@@ -2257,12 +2257,12 @@ static int process_hello(struct ceph_connection *con, void *p, void *end)
 		memcpy(&my_addr->in_addr, &addr_for_me.in_addr,
 		       sizeof(my_addr->in_addr));
 		ceph_addr_set_port(my_addr, 0);
-		dout("%s con %p set my addr %s, as seen by peer %s\n",
+		dout("con %p set my addr %s, as seen by peer %s\n",
 		     con, ceph_pr_addr(my_addr),
 		     ceph_pr_addr(&con->peer_addr));
 	} else {
-		dout("%s con %p my addr already set %s\n",
-		     __func__, con, ceph_pr_addr(my_addr));
+		dout("con %p my addr already set %s\n",
+		     con, ceph_pr_addr(my_addr));
 	}
 
 	WARN_ON(ceph_addr_is_blank(my_addr) || ceph_addr_port(my_addr));
@@ -2404,8 +2404,8 @@ static int process_auth_done(struct ceph_connection *con, void *p, void *end)
 	ceph_decode_32_safe(&p, end, con->v2.con_mode, bad);
 	ceph_decode_32_safe(&p, end, payload_len, bad);
 
-	dout("%s con %p global_id %llu con_mode %d payload_len %d\n",
-	     __func__, con, global_id, con->v2.con_mode, payload_len);
+	dout("con %p global_id %llu con_mode %d payload_len %d\n",
+	     con, global_id, con->v2.con_mode, payload_len);
 
 	mutex_unlock(&con->mutex);
 	session_key_len = 0;
@@ -2529,8 +2529,8 @@ static int process_server_ident(struct ceph_connection *con,
 	ceph_decode_64_safe(&p, end, flags, bad);
 	ceph_decode_64_safe(&p, end, cookie, bad);
 
-	dout("%s con %p addr %s/%u global_id %llu global_seq %llu features 0x%llx required_features 0x%llx flags 0x%llx cookie 0x%llx\n",
-	     __func__, con, ceph_pr_addr(&addr), le32_to_cpu(addr.nonce),
+	dout("con %p addr %s/%u global_id %llu global_seq %llu features 0x%llx required_features 0x%llx flags 0x%llx cookie 0x%llx\n",
+	     con, ceph_pr_addr(&addr), le32_to_cpu(addr.nonce),
 	     global_id, global_seq, features, required_features, flags, cookie);
 
 	/* is this who we intended to talk to? */
@@ -3582,8 +3582,7 @@ static void revoke_at_finish_message(struct ceph_connection *con)
 	if (!front_len(con->out_msg) && !middle_len(con->out_msg) &&
 	    !data_len(con->out_msg)) {
 		WARN_ON(!resid || resid > MESSAGE_HEAD_PLAIN_LEN);
-		dout("%s con %p was sending head (empty message) - noop\n",
-		     __func__, con);
+		dout("con %p was sending head (empty message) - noop\n", con);
 		return;
 	}
 
