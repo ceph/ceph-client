@@ -70,13 +70,13 @@ int ceph_cls_lock(struct ceph_osd_client *osdc,
 	p += sizeof(struct ceph_timespec);
 	ceph_encode_8(&p, flags);
 
-	dout("%s lock_name %s type %d cookie %s tag %s desc %s flags 0x%x\n",
-	     __func__, lock_name, type, cookie, tag, desc, flags);
+	dout("lock_name %s type %d cookie %s tag %s desc %s flags 0x%x\n",
+	     lock_name, type, cookie, tag, desc, flags);
 	ret = ceph_osdc_call(osdc, oid, oloc, "lock", "lock",
 			     CEPH_OSD_FLAG_WRITE, lock_op_page,
 			     lock_op_buf_size, NULL, NULL);
 
-	dout("%s: status %d\n", __func__, ret);
+	dout("status %d\n", ret);
 	__free_page(lock_op_page);
 	return ret;
 }
@@ -121,12 +121,12 @@ int ceph_cls_unlock(struct ceph_osd_client *osdc,
 	ceph_encode_string(&p, end, lock_name, name_len);
 	ceph_encode_string(&p, end, cookie, cookie_len);
 
-	dout("%s lock_name %s cookie %s\n", __func__, lock_name, cookie);
+	dout("lock_name %s cookie %s\n", lock_name, cookie);
 	ret = ceph_osdc_call(osdc, oid, oloc, "lock", "unlock",
 			     CEPH_OSD_FLAG_WRITE, unlock_op_page,
 			     unlock_op_buf_size, NULL, NULL);
 
-	dout("%s: status %d\n", __func__, ret);
+	dout("status %d\n", ret);
 	__free_page(unlock_op_page);
 	return ret;
 }
@@ -175,13 +175,13 @@ int ceph_cls_break_lock(struct ceph_osd_client *osdc,
 	ceph_encode_copy(&p, locker, sizeof(*locker));
 	ceph_encode_string(&p, end, cookie, cookie_len);
 
-	dout("%s lock_name %s cookie %s locker %s%llu\n", __func__, lock_name,
+	dout("lock_name %s cookie %s locker %s%llu\n", lock_name,
 	     cookie, ENTITY_NAME(*locker));
 	ret = ceph_osdc_call(osdc, oid, oloc, "lock", "break_lock",
 			     CEPH_OSD_FLAG_WRITE, break_op_page,
 			     break_op_buf_size, NULL, NULL);
 
-	dout("%s: status %d\n", __func__, ret);
+	dout("status %d\n", ret);
 	__free_page(break_op_page);
 	return ret;
 }
@@ -226,13 +226,13 @@ int ceph_cls_set_cookie(struct ceph_osd_client *osdc,
 	ceph_encode_string(&p, end, tag, tag_len);
 	ceph_encode_string(&p, end, new_cookie, new_cookie_len);
 
-	dout("%s lock_name %s type %d old_cookie %s tag %s new_cookie %s\n",
-	     __func__, lock_name, type, old_cookie, tag, new_cookie);
+	dout("lock_name %s type %d old_cookie %s tag %s new_cookie %s\n",
+	     lock_name, type, old_cookie, tag, new_cookie);
 	ret = ceph_osdc_call(osdc, oid, oloc, "lock", "set_cookie",
 			     CEPH_OSD_FLAG_WRITE, cookie_op_page,
 			     cookie_op_buf_size, NULL, NULL);
 
-	dout("%s: status %d\n", __func__, ret);
+	dout("status %d\n", ret);
 	__free_page(cookie_op_page);
 	return ret;
 }
@@ -279,9 +279,7 @@ static int decode_locker(void **p, void *end, struct ceph_locker *locker)
 	len = ceph_decode_32(p);
 	*p += len; /* skip description */
 
-	dout("%s %s%llu cookie %s addr %s\n", __func__,
-	     ENTITY_NAME(locker->id.name), locker->id.cookie,
-	     ceph_pr_addr(&locker->info.addr));
+	dout("%s%llu cookie %s addr %s\n", ENTITY_NAME(locker->id.name), locker->id.cookie, ceph_pr_addr(&locker->info.addr));
 	return 0;
 }
 
@@ -367,12 +365,12 @@ int ceph_cls_lock_info(struct ceph_osd_client *osdc,
 			    get_info_op_buf_size - CEPH_ENCODING_START_BLK_LEN);
 	ceph_encode_string(&p, end, lock_name, name_len);
 
-	dout("%s lock_name %s\n", __func__, lock_name);
+	dout("lock_name %s\n", lock_name);
 	ret = ceph_osdc_call(osdc, oid, oloc, "lock", "get_info",
 			     CEPH_OSD_FLAG_READ, get_info_op_page,
 			     get_info_op_buf_size, &reply_page, &reply_len);
 
-	dout("%s: status %d\n", __func__, ret);
+	dout("status %d\n", ret);
 	if (ret >= 0) {
 		p = page_address(reply_page);
 		end = p + reply_len;

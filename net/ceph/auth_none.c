@@ -53,7 +53,7 @@ static int ceph_auth_none_build_authorizer(struct ceph_auth_client *ac,
 
 	ceph_encode_64_safe(&p, end, ac->global_id, e_range);
 	au->buf_len = p - (void *)au->buf;
-	dout("%s built authorizer len %d\n", __func__, au->buf_len);
+	dout("built authorizer len %d\n", au->buf_len);
 	return 0;
 
 e_range:

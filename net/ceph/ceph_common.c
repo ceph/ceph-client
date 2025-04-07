@@ -197,7 +197,7 @@ int ceph_parse_fsid(const char *str, struct ceph_fsid *fsid)
 	int err = -EINVAL;
 	int d;
 
-	dout("%s '%s'\n", __func__, str);
+	dout("'%s'\n", str);
 	tmp[2] = 0;
 	while (*str && i < 16) {
 		if (ispunct(*str)) {
@@ -217,7 +217,7 @@ int ceph_parse_fsid(const char *str, struct ceph_fsid *fsid)
 
 	if (i == 16)
 		err = 0;
-	dout("%s ret %d got fsid %pU\n", __func__, err, fsid);
+	dout("ret %d got fsid %pU\n", err, fsid);
 	return err;
 }
 EXPORT_SYMBOL(ceph_parse_fsid);
@@ -423,7 +423,7 @@ int ceph_parse_param(struct fs_parameter *param, struct ceph_options *opt,
 	struct p_log log = {.prefix = "libceph", .log = l};
 
 	token = __fs_parse(&log, ceph_parameters, param, &result);
-	dout("%s fs_parse '%s' token %d\n", __func__, param->key, token);
+	dout("fs_parse '%s' token %d\n", param->key, token);
 	if (token < 0)
 		return token;
 
