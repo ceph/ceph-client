@@ -994,7 +994,7 @@ static struct crush_work *alloc_workspace(const struct crush_map *c)
 
 	WARN_ON(!c->working_size);
 	work_size = crush_work_size(c, CEPH_PG_MAX_SIZE);
-	dout("%s work_size %zu bytes\n", __func__, work_size);
+	dout("work_size %zu bytes\n", work_size);
 
 	work = kvmalloc(work_size, GFP_NOIO);
 	if (!work)
@@ -1202,7 +1202,7 @@ static int osdmap_set_max_osd(struct ceph_osdmap *map, u32 max)
 	u32 to_copy;
 	int i;
 
-	dout("%s old %u new %u\n", __func__, map->max_osd, max);
+	dout("old %u new %u\n", map->max_osd, max);
 	if (max == map->max_osd)
 		return 0;
 
@@ -1673,7 +1673,7 @@ static int osdmap_decode(void **p, void *end, bool msgr2,
 	u32 len, i;
 	int err;
 
-	dout("%s %p to %p len %d\n", __func__, *p, end, (int)(end - *p));
+	dout("%p to %p len %d\n", *p, end, (int)(end - *p));
 
 	err = get_osdmap_client_data_v(p, end, "full", &struct_v);
 	if (err)
@@ -1744,7 +1744,7 @@ static int osdmap_decode(void **p, void *end, bool msgr2,
 		if (err)
 			goto bad;
 
-		dout("%s osd%d addr %s\n", __func__, i, ceph_pr_addr(addr));
+		dout("osd%d addr %s\n", i, ceph_pr_addr(addr));
 	}
 
 	/* pg_temp */
@@ -1945,7 +1945,7 @@ static int decode_new_up_state_weight(void **p, void *end, u8 struct_v,
 		if (ret)
 			return ret;
 
-		dout("%s osd%d addr %s\n", __func__, osd, ceph_pr_addr(&addr));
+		dout("osd%d addr %s\n", osd, ceph_pr_addr(&addr));
 
 		osdmap_info(map, "osd%d up\n", osd);
 		map->osd_state[osd] |= CEPH_OSD_EXISTS | CEPH_OSD_UP;
@@ -1976,7 +1976,7 @@ struct ceph_osdmap *osdmap_apply_incremental(void **p, void *end, bool msgr2,
 	int err;
 	u8 struct_v;
 
-	dout("%s %p to %p len %d\n", __func__, *p, end, (int)(end - *p));
+	dout("%p to %p len %d\n", *p, end, (int)(end - *p));
 
 	err = get_osdmap_client_data_v(p, end, "inc", &struct_v);
 	if (err)
@@ -2929,7 +2929,7 @@ int ceph_parse_crush_location(char *crush_location, struct rb_root *locs)
 	const char *type_name, *name, *colon;
 	size_t type_name_len, name_len;
 
-	dout("%s '%s'\n", __func__, crush_location);
+	dout("'%s'\n", crush_location);
 	while ((type_name = strsep(&crush_location, "|"))) {
 		colon = strchr(type_name, ':');
 		if (!colon)
@@ -2961,7 +2961,7 @@ int ceph_parse_crush_location(char *crush_location, struct rb_root *locs)
 			return -EEXIST;
 		}
 
-		dout("%s type_name '%s' name '%s'\n", __func__,
+		dout("type_name '%s' name '%s'\n",
 		     loc->cl_loc.cl_type_name, loc->cl_loc.cl_name);
 	}
 
