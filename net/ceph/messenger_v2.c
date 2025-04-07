@@ -1950,7 +1950,7 @@ static int prepare_sparse_read_cont(struct ceph_connection *con)
 
 		ceph_msg_data_advance(cursor, con->v2.in_bvec.bv_len);
 		cursor->sr_resid -= con->v2.in_bvec.bv_len;
-		dout("%s: advance by 0x%x sr_resid 0x%x\n", __func__,
+		dout("advance by 0x%x sr_resid 0x%x\n",
 		     con->v2.in_bvec.bv_len, cursor->sr_resid);
 		WARN_ON_ONCE(cursor->sr_resid > cursor->total_resid);
 		if (cursor->sr_resid) {
