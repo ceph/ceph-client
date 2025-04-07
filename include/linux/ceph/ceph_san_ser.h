@@ -46,16 +46,50 @@
 #define ___ceph_san_cnt32(__t, __args...)	(___ceph_san_cnt31(__args) + sizeof(__t))
 #define ceph_san_cnt(...)	 ___ceph_san_apply(___ceph_san_cnt, ceph_san_narg(__VA_ARGS__))(__VA_ARGS__)
 
-#define __ceph_san_ser_type(__buffer, __t)                               \
+#define __ceph_san_ser_const_type(__buffer, __t)                               \
     (__builtin_choose_expr(                                         \
         __builtin_types_compatible_p(typeof(__t), const char *),    \
-        (*(char **)(__buffer) = (char *)(__t), printf("const")),                     \
-        (*(typeof(__t) *)(__buffer) = (__t), printf("other"))                        \
+        (*(char **)(__buffer) = (char *)(__t)),                     \
+        (*(typeof(__t) *)(__buffer) = (__t))                        \
     ))
 
+#define __ceph_san_ser_type_size(__buffer, __t)                     \
+    (__builtin_choose_expr(sizeof(__t) == 1,                   \
+        (*(uint8_t *)(__buffer) = (uint8_t)(__t)),             \
+    __builtin_choose_expr(sizeof(__t) == 2,                    \
+        (*(uint16_t *)(__buffer) = (uint16_t)(__t)),           \
+    __builtin_choose_expr(sizeof(__t) == 4,                    \
+        (*(uint32_t *)(__buffer) = (uint32_t)(__t)),           \
+    __builtin_choose_expr(sizeof(__t) == 8,                    \
+        (*(uint64_t *)(__buffer) = (uint64_t)(__t)),           \
+        (*(typeof(__t) *)(__buffer) = (__t))                   \
+    )))))
+
+#define __ceph_san_ser_type_memcpy(__buffer, __t) \
+    (__builtin_memcpy(__buffer, &(__t), sizeof(__t)), \
+     __buffer = (void *)((char *)__buffer + sizeof(__t)))
+
+#define __suppress_cast_warning(type, value) \
+    _Pragma("GCC diagnostic push") \
+    _Pragma("GCC diagnostic ignored \"-Wint-to-pointer-cast\"") \
+    _Pragma("GCC diagnostic ignored \"-Wpointer-to-int-cast\"") \
+    ((type)(value)) \
+    _Pragma("GCC diagnostic pop")
+
+#define __ceph_san_ser_type(__buffer, __t)                     \
+    (__builtin_choose_expr(sizeof(__t) == 1,                   \
+        (*(uint8_t *)(__buffer) = __suppress_cast_warning(uint8_t, __t)),  \
+    __builtin_choose_expr(sizeof(__t) == 2,                    \
+        (*(uint16_t *)(__buffer) = __suppress_cast_warning(uint16_t, __t)), \
+    __builtin_choose_expr(sizeof(__t) == 4,                    \
+        (*(uint32_t *)(__buffer) = __suppress_cast_warning(uint32_t, __t)), \
+    __builtin_choose_expr(sizeof(__t) == 8,                    \
+        (*(uint64_t *)(__buffer) = __suppress_cast_warning(uint64_t, __t)), \
+        (*(typeof(__t) *)(__buffer) = __suppress_cast_warning(typeof(__t), __t)) \
+    )))))
 
 #define __ceph_san_ser(__buffer, __t) (__ceph_san_ser_type(__buffer, __t), __buffer = (void*)((typeof(__t)*)__buffer + 1))
-#define ___ceph_san_ser0(__buffer)		(__buffer)
+#define ___ceph_san_ser0(__buffer)
 #define ___ceph_san_ser1(__buffer, __t)		(__ceph_san_ser(__buffer, __t))
 #define ___ceph_san_ser2(__buffer, __t, __args...)	(__ceph_san_ser(__buffer, __t), ___ceph_san_ser1(__buffer, __args))
 #define ___ceph_san_ser3(__buffer, __t, __args...)	(__ceph_san_ser(__buffer, __t), ___ceph_san_ser2(__buffer, __args))

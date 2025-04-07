@@ -89,12 +89,15 @@ struct ceph_san_tls_ctx *ceph_san_get_tls_ctx(void);
     do { \
         static u32 __source_id = 0; \
         static size_t __size = 0; \
-        void *__buffer = NULL; \
+        void *___buffer = NULL; \
         if (unlikely(__source_id == 0)) { \
             __source_id = ceph_san_get_source_id(kbasename(__FILE__), __func__, __LINE__, fmt); \
             __size = ceph_san_cnt(__VA_ARGS__); \
         } \
-        __buffer = ceph_san_log(__source_id, __size); \
+        ___buffer = ceph_san_log(__source_id, __size); \
+	if (likely(___buffer)) {	\
+		ceph_san_ser(___buffer, ##__VA_ARGS__);\
+	} \
     } while (0)
 
 /* Global logger instance */
