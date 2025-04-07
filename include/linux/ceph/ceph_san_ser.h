@@ -6,9 +6,10 @@
 
 #define ___ceph_san_nth(_, __1, __2, __3, __4, __5, __6, __7, __8, __9, __10, __11, __12, __13, __14, __15, \
     __16, __17, __18, __19, __20, __21, __22, __23, __24, __25, __26, __27, __28, __29, __30, __31, __32, __N, ...) __N
-#define ceph_san_narg(...) ___ceph_san_nth(_, ##__VA_ARGS__, \
+#define ___ceph_san_narg(...) ___ceph_san_nth(_, ##__VA_ARGS__, \
     32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, \
     16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
+#define ceph_san_narg(...) ___ceph_san_narg(__VA_ARGS__)
 
 #define ___ceph_san_cnt0()		(0)
 #define ___ceph_san_cnt1(__t)		(sizeof(__t))
@@ -45,9 +46,17 @@
 #define ___ceph_san_cnt32(__t, __args...)	(___ceph_san_cnt31(__args) + sizeof(__t))
 #define ceph_san_cnt(...)	 ___ceph_san_apply(___ceph_san_cnt, ceph_san_narg(__VA_ARGS__))(__VA_ARGS__)
 
-#define __ceph_san_ser(__buffer, __t) (*(typeof(__t)*)__buffer = (__t), __buffer = (void*)((typeof(__t)*)__buffer + 1))
-#define ___ceph_san_ser0(__buffer)
-#define ___ceph_san_ser1(__buffer, __t)      		(__ceph_san_ser(__buffer, __t))
+#define __ceph_san_ser_type(__buffer, __t)                               \
+    (__builtin_choose_expr(                                         \
+        __builtin_types_compatible_p(typeof(__t), const char *),    \
+        (*(char **)(__buffer) = (char *)(__t), printf("const")),                     \
+        (*(typeof(__t) *)(__buffer) = (__t), printf("other"))                        \
+    ))
+
+
+#define __ceph_san_ser(__buffer, __t) (__ceph_san_ser_type(__buffer, __t), __buffer = (void*)((typeof(__t)*)__buffer + 1))
+#define ___ceph_san_ser0(__buffer)		(__buffer)
+#define ___ceph_san_ser1(__buffer, __t)		(__ceph_san_ser(__buffer, __t))
 #define ___ceph_san_ser2(__buffer, __t, __args...)	(__ceph_san_ser(__buffer, __t), ___ceph_san_ser1(__buffer, __args))
 #define ___ceph_san_ser3(__buffer, __t, __args...)	(__ceph_san_ser(__buffer, __t), ___ceph_san_ser2(__buffer, __args))
 #define ___ceph_san_ser4(__buffer, __t, __args...)	(__ceph_san_ser(__buffer, __t), ___ceph_san_ser3(__buffer, __args))
@@ -79,7 +88,8 @@
 #define ___ceph_san_ser30(__buffer, __t, __args...)	(__ceph_san_ser(__buffer, __t), ___ceph_san_ser29(__buffer, __args))
 #define ___ceph_san_ser31(__buffer, __t, __args...)	(__ceph_san_ser(__buffer, __t), ___ceph_san_ser30(__buffer, __args))
 #define ___ceph_san_ser32(__buffer, __t, __args...)	(__ceph_san_ser(__buffer, __t), ___ceph_san_ser31(__buffer, __args))
-#define ceph_san_ser(__buffer, ...)	 ___ceph_san_apply(___ceph_san_ser, ceph_san_narg(__VA_ARGS__))(__buffer, ##__VA_ARGS__)
+#define ___ceph_san_ser(__buffer, ...)	 ___ceph_san_apply(___ceph_san_ser, ceph_san_narg(__VA_ARGS__))(__buffer, ##__VA_ARGS__)
+#define ceph_san_ser(...)	 ___ceph_san_ser(__VA_ARGS__)
 
 #endif /* CEPH_SAN_SER_H */
 
