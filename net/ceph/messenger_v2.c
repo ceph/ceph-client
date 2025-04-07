@@ -2258,7 +2258,7 @@ static int process_hello(struct ceph_connection *con, void *p, void *end)
 		       sizeof(my_addr->in_addr));
 		ceph_addr_set_port(my_addr, 0);
 		dout("%s con %p set my addr %s, as seen by peer %s\n",
-		     __func__, con, ceph_pr_addr(my_addr),
+		     con, ceph_pr_addr(my_addr),
 		     ceph_pr_addr(&con->peer_addr));
 	} else {
 		dout("%s con %p my addr already set %s\n",
