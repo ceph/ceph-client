@@ -88,7 +88,7 @@ struct ceph_san_tls_ctx *ceph_san_get_tls_ctx(void);
     do { \
         static u32 __source_id = 0; \
         static size_t __size = 0; \
-        if (__source_id == 0) { \
+        if (unlikely(__source_id == 0)) { \
             __source_id = ceph_san_get_source_id(kbasename(__FILE__), __func__, __LINE__, fmt); \
             __size = ceph_san_cnt(__VA_ARGS__); \
         } \
