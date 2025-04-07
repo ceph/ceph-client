@@ -111,7 +111,7 @@ int ceph_decode_entity_addrvec(void **p, void *end, bool msgr2,
 	}
 
 	ceph_decode_32_safe(p, end, addr_cnt, e_inval);
-	dout("%s addr_cnt %d\n", __func__, addr_cnt);
+	dout("addr_cnt %d\n", addr_cnt);
 
 	found = false;
 	for (i = 0; i < addr_cnt; i++) {
@@ -119,7 +119,7 @@ int ceph_decode_entity_addrvec(void **p, void *end, bool msgr2,
 		if (ret)
 			return ret;
 
-		dout("%s i %d addr %s\n", __func__, i, ceph_pr_addr(&tmp_addr));
+		dout("i %d addr %s\n", i, ceph_pr_addr(&tmp_addr));
 		if (tmp_addr.type == my_type) {
 			if (found) {
 				pr_err("another match of type %d in addrvec\n",

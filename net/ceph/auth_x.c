@@ -28,7 +28,7 @@ static int ceph_x_is_authenticated(struct ceph_auth_client *ac)
 	ceph_x_validate_tickets(ac, &need);
 	missing = ac->want_keys & ~xi->have_keys;
 	WARN_ON((need & missing) != missing);
-	dout("%s want 0x%x have 0x%x missing 0x%x -> %d\n", __func__,
+	dout("want 0x%x have 0x%x missing 0x%x -> %d\n",
 	     ac->want_keys, xi->have_keys, missing, !missing);
 	return !missing;
 }
@@ -39,7 +39,7 @@ static int ceph_x_should_authenticate(struct ceph_auth_client *ac)
 	int need;
 
 	ceph_x_validate_tickets(ac, &need);
-	dout("%s want 0x%x have 0x%x need 0x%x -> %d\n", __func__,
+	dout("want 0x%x have 0x%x need 0x%x -> %d\n",
 	     ac->want_keys, xi->have_keys, need, !!need);
 	return !!need;
 }
@@ -87,7 +87,7 @@ static int __ceph_x_decrypt(struct ceph_crypto_key *secret, void *p,
 		return ret;
 
 	if (le64_to_cpu(hdr->magic) != CEPHX_ENC_MAGIC) {
-		pr_err("%s bad magic\n", __func__);
+		pr_err("bad magic\n");
 		return -EINVAL;
 	}
 
@@ -500,7 +500,7 @@ static int ceph_x_build_request(struct ceph_auth_client *ac,
 		return PTR_ERR(th);
 
 	ceph_x_validate_tickets(ac, &need);
-	dout("%s want 0x%x have 0x%x need 0x%x\n", __func__, ac->want_keys,
+	dout("want 0x%x have 0x%x need 0x%x\n", ac->want_keys,
 	     xi->have_keys, need);
 
 	if (need & CEPH_ENTITY_TYPE_AUTH) {
@@ -1068,6 +1068,7 @@ static int ceph_x_check_message_signature(struct ceph_auth_handshake *auth,
 }
 
 static const struct ceph_auth_client_ops ceph_x_ops = {
+	.name = "x",
 	.is_authenticated = ceph_x_is_authenticated,
 	.should_authenticate = ceph_x_should_authenticate,
 	.build_request = ceph_x_build_request,
@@ -1077,12 +1078,11 @@ static const struct ceph_auth_client_ops ceph_x_ops = {
 	.add_authorizer_challenge = ceph_x_add_authorizer_challenge,
 	.verify_authorizer_reply = ceph_x_verify_authorizer_reply,
 	.invalidate_authorizer = ceph_x_invalidate_authorizer,
-	.reset =  ceph_x_reset,
+	.reset = ceph_x_reset,
 	.destroy = ceph_x_destroy,
 	.sign_message = ceph_x_sign_message,
 	.check_message_signature = ceph_x_check_message_signature,
 };
-
 
 int ceph_x_init(struct ceph_auth_client *ac)
 {

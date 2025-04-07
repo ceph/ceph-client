@@ -175,7 +175,7 @@ static void prepare_write_message_footer(struct ceph_connection *con)
 
 	m->footer.flags |= CEPH_MSG_FOOTER_COMPLETE;
 
-	dout("prepare_write_message_footer %p\n", con);
+	dout("%p msg %p\n", con, m);
 	con_out_kvec_add(con, sizeof_footer(con), &m->footer);
 	if (con->peer_features & CEPH_FEATURE_MSG_AUTH) {
 		if (con->ops->sign_message)
@@ -213,7 +213,7 @@ static void prepare_write_message(struct ceph_connection *con)
 	ceph_con_get_out_msg(con);
 	m = con->out_msg;
 
-	dout("prepare_write_message %p seq %lld type %d len %d+%d+%zd\n",
+	dout("%p seq %lld type %d len %d+%d+%zd\n",
 	     m, con->out_seq, le16_to_cpu(m->hdr.type),
 	     le32_to_cpu(m->hdr.front_len), le32_to_cpu(m->hdr.middle_len),
 	     m->data_length);
@@ -243,7 +243,7 @@ static void prepare_write_message(struct ceph_connection *con)
 		con->out_msg->footer.middle_crc = cpu_to_le32(crc);
 	} else
 		con->out_msg->footer.middle_crc = 0;
-	dout("%s front_crc %u middle_crc %u\n", __func__,
+	dout("front_crc %u middle_crc %u\n",
 	     le32_to_cpu(con->out_msg->footer.front_crc),
 	     le32_to_cpu(con->out_msg->footer.middle_crc));
 	con->out_msg->footer.flags = 0;
@@ -266,7 +266,7 @@ static void prepare_write_message(struct ceph_connection *con)
  */
 static void prepare_write_ack(struct ceph_connection *con)
 {
-	dout("prepare_write_ack %p %llu -> %llu\n", con,
+	dout("%p %llu -> %llu\n", con,
 	     con->in_seq_acked, con->in_seq);
 	con->in_seq_acked = con->in_seq;
 
@@ -287,7 +287,7 @@ static void prepare_write_ack(struct ceph_connection *con)
  */
 static void prepare_write_seq(struct ceph_connection *con)
 {
-	dout("prepare_write_seq %p %llu -> %llu\n", con,
+	dout("%p %llu -> %llu\n", con,
 	     con->in_seq_acked, con->in_seq);
 	con->in_seq_acked = con->in_seq;
 
@@ -305,7 +305,7 @@ static void prepare_write_seq(struct ceph_connection *con)
  */
 static void prepare_write_keepalive(struct ceph_connection *con)
 {
-	dout("prepare_write_keepalive %p\n", con);
+	dout("%p\n", con);
 	con_out_kvec_reset(con);
 	if (con->peer_features & CEPH_FEATURE_MSGR_KEEPALIVE2) {
 		struct timespec64 now;
@@ -393,7 +393,7 @@ static int prepare_write_connect(struct ceph_connection *con)
 		BUG();
 	}
 
-	dout("prepare_write_connect %p cseq=%d gseq=%d proto=%d\n", con,
+	dout("%p cseq=%d gseq=%d proto=%d\n", con,
 	     con->v1.connect_seq, global_seq, proto);
 
 	con->v1.out_connect.features =
@@ -422,7 +422,7 @@ static int write_partial_kvec(struct ceph_connection *con)
 {
 	int ret;
 
-	dout("write_partial_kvec %p %d left\n", con, con->v1.out_kvec_bytes);
+	dout("%p %d left\n", con, con->v1.out_kvec_bytes);
 	while (con->v1.out_kvec_bytes > 0) {
 		ret = ceph_tcp_sendmsg(con->sock, con->v1.out_kvec_cur,
 				       con->v1.out_kvec_left,
@@ -450,7 +450,7 @@ static int write_partial_kvec(struct ceph_connection *con)
 	con->v1.out_kvec_left = 0;
 	ret = 1;
 out:
-	dout("write_partial_kvec %p %d left in %d kvecs ret = %d\n", con,
+	dout("%p %d left in %d kvecs ret = %d\n", con,
 	     con->v1.out_kvec_bytes, con->v1.out_kvec_left, ret);
 	return ret;  /* done! */
 }
@@ -469,7 +469,7 @@ static int write_partial_message_data(struct ceph_connection *con)
 	bool do_datacrc = !ceph_test_opt(from_msgr(con->msgr), NOCRC);
 	u32 crc;
 
-	dout("%s %p msg %p\n", __func__, con, msg);
+	dout("%p msg %p\n", con, msg);
 
 	if (!msg->num_data_items)
 		return -EINVAL;
@@ -508,7 +508,7 @@ static int write_partial_message_data(struct ceph_connection *con)
 		ceph_msg_data_advance(cursor, (size_t)ret);
 	}
 
-	dout("%s %p msg %p done\n", __func__, con, msg);
+	dout("%p msg %p done\n", con, msg);
 
 	/* prepare and queue up footer, too */
 	if (do_datacrc)
@@ -528,7 +528,7 @@ static int write_partial_skip(struct ceph_connection *con)
 {
 	int ret;
 
-	dout("%s %p %d left\n", __func__, con, con->v1.out_skip);
+	dout("%p %d left\n", con, con->v1.out_skip);
 	while (con->v1.out_skip > 0) {
 		size_t size = min(con->v1.out_skip, (int)PAGE_SIZE);
 
@@ -548,39 +548,39 @@ out:
  */
 static void prepare_read_banner(struct ceph_connection *con)
 {
-	dout("prepare_read_banner %p\n", con);
+	dout("%p\n", con);
 	con->v1.in_base_pos = 0;
 }
 
 static void prepare_read_connect(struct ceph_connection *con)
 {
-	dout("prepare_read_connect %p\n", con);
+	dout("%p\n", con);
 	con->v1.in_base_pos = 0;
 }
 
 static void prepare_read_ack(struct ceph_connection *con)
 {
-	dout("prepare_read_ack %p\n", con);
+	dout("%p\n", con);
 	con->v1.in_base_pos = 0;
 }
 
 static void prepare_read_seq(struct ceph_connection *con)
 {
-	dout("prepare_read_seq %p\n", con);
+	dout("%p\n", con);
 	con->v1.in_base_pos = 0;
 	con->v1.in_tag = CEPH_MSGR_TAG_SEQ;
 }
 
 static void prepare_read_tag(struct ceph_connection *con)
 {
-	dout("prepare_read_tag %p\n", con);
+	dout("%p\n", con);
 	con->v1.in_base_pos = 0;
 	con->v1.in_tag = CEPH_MSGR_TAG_READY;
 }
 
 static void prepare_read_keepalive_ack(struct ceph_connection *con)
 {
-	dout("prepare_read_keepalive_ack %p\n", con);
+	dout("%p\n", con);
 	con->v1.in_base_pos = 0;
 }
 
@@ -589,7 +589,7 @@ static void prepare_read_keepalive_ack(struct ceph_connection *con)
  */
 static int prepare_read_message(struct ceph_connection *con)
 {
-	dout("prepare_read_message %p\n", con);
+	dout("%p\n", con);
 	BUG_ON(con->in_msg != NULL);
 	con->v1.in_base_pos = 0;
 	con->in_front_crc = con->in_middle_crc = con->in_data_crc = 0;
@@ -1156,7 +1156,7 @@ static int read_partial_message(struct ceph_connection *con)
 	u64 seq;
 	u32 crc;
 
-	dout("read_partial_message con %p msg %p\n", con, m);
+	dout("%p msg %p\n", con, m);
 
 	/* header */
 	size = sizeof(con->v1.in_hdr);
@@ -1583,7 +1583,7 @@ void ceph_con_v1_revoke(struct ceph_connection *con)
 		con->v1.out_skip += con_out_kvec_skip(con);
 	con->v1.out_skip += con_out_kvec_skip(con);
 
-	dout("%s con %p out_kvec_bytes %d out_skip %d\n", __func__, con,
+	dout("con %p out_kvec_bytes %d out_skip %d\n", con,
 	     con->v1.out_kvec_bytes, con->v1.out_skip);
 }
 
@@ -1604,7 +1604,7 @@ void ceph_con_v1_revoke_incoming(struct ceph_connection *con)
 	con->v1.in_tag = CEPH_MSGR_TAG_READY;
 	con->in_seq++;
 
-	dout("%s con %p in_base_pos %d\n", __func__, con, con->v1.in_base_pos);
+	dout("con %p in_base_pos %d\n", con, con->v1.in_base_pos);
 }
 
 bool ceph_con_v1_opened(struct ceph_connection *con)
