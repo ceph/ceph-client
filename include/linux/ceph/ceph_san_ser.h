@@ -99,7 +99,7 @@
         (*(uint32_t *)(__buffer) = __suppress_cast_warning(uint32_t, __t)), \
     __builtin_choose_expr(sizeof(__t) == 8,                         \
         (*(uint64_t *)(__buffer) = __suppress_cast_warning(uint64_t, __t)), \
-        (*(typeof(__t) *)(__buffer) = __suppress_cast_warning(typeof(__t), __t)) \
+        ((void)0 ) \
     ))))))
 
 #define __ceph_san_ser(__buffer, __t) (__ceph_san_ser_type(__buffer, __t), __buffer = (void*)((typeof(__t)*)__buffer + 1))
