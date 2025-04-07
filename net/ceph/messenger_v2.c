@@ -110,11 +110,11 @@ static int ceph_tcp_recv(struct ceph_connection *con)
 {
 	int ret;
 
-	dout("%s con %p %s %zu\n", __func__, con,
+	dout("con %p %s %zu\n", con,
 	     iov_iter_is_discard(&con->v2.in_iter) ? "discard" : "need",
 	     iov_iter_count(&con->v2.in_iter));
 	ret = do_recvmsg(con->sock, &con->v2.in_iter);
-	dout("%s con %p ret %d left %zu\n", __func__, con, ret,
+	dout("con %p ret %d left %zu\n", con, ret,
 	     iov_iter_count(&con->v2.in_iter));
 	return ret;
 }
@@ -241,7 +241,7 @@ static void set_in_skip(struct ceph_connection *con, int len)
 {
 	WARN_ON(iov_iter_count(&con->v2.in_iter));
 
-	dout("%s con %p len %d\n", __func__, con, len);
+	dout("con %p len %d\n", con, len);
 	iov_iter_discard(&con->v2.in_iter, ITER_DEST, len);
 }
 
@@ -296,7 +296,7 @@ static void set_out_bvec_zero(struct ceph_connection *con)
 
 static void out_zero_add(struct ceph_connection *con, int len)
 {
-	dout("%s con %p len %d\n", __func__, con, len);
+	dout("con %p len %d\n", con, len);
 	con->v2.out_zero += len;
 }
 
@@ -678,11 +678,11 @@ static int verify_epilogue_crcs(struct ceph_connection *con, u32 front_crc,
 	if (!data_len(con->in_msg))
 		con->in_data_crc = 0;
 
-	dout("%s con %p msg %p crcs %u %u %u\n", __func__, con, con->in_msg,
+	dout("con %p msg %p crcs %u %u %u\n", con, con->in_msg,
 	     con->in_front_crc, con->in_middle_crc, con->in_data_crc);
 
 	if (con->in_front_crc != front_crc) {
-		pr_err("bad front crc, calculated %u, expected %u\n",
+			pr_err("bad front crc, calculated %u, expected %u\n",
 		       con->in_front_crc, front_crc);
 		return -EBADMSG;
 	}
@@ -707,8 +707,8 @@ static int setup_crypto(struct ceph_connection *con,
 	unsigned int noio_flag;
 	int ret;
 
-	dout("%s con %p con_mode %d session_key_len %d con_secret_len %d\n",
-	     __func__, con, con->v2.con_mode, session_key_len, con_secret_len);
+	dout("con %p con_mode %d session_key_len %d con_secret_len %d\n",
+	     con, con->v2.con_mode, session_key_len, con_secret_len);
 	WARN_ON(con->v2.hmac_tfm || con->v2.gcm_tfm || con->v2.gcm_req);
 
 	if (con->v2.con_mode != CEPH_CON_MODE_CRC &&
@@ -800,7 +800,7 @@ static int hmac_sha256(struct ceph_connection *con, const struct kvec *kvecs,
 	int ret;
 	int i;
 
-	dout("%s con %p hmac_tfm %p kvec_cnt %d\n", __func__, con,
+	dout("con %p hmac_tfm %p kvec_cnt %d\n", con,
 	     con->v2.hmac_tfm, kvec_cnt);
 
 	if (!con->v2.hmac_tfm) {
@@ -1151,7 +1151,7 @@ static int decrypt_tail(struct ceph_connection *con)
 	if (ret)
 		goto out;
 
-	dout("%s con %p msg %p enc_page_cnt %d sg_cnt %d\n", __func__, con,
+	dout("con %p msg %p enc_page_cnt %d sg_cnt %d\n", con,
 	     con->in_msg, con->v2.in_enc_page_cnt, sgt.orig_nents);
 	ret = gcm_crypt(con, false, enc_sgt.sgl, sgt.sgl, tail_len);
 	if (ret)
@@ -1713,7 +1713,7 @@ static int prepare_message_secure(struct ceph_connection *con)
 	if (ret)
 		goto out;
 
-	dout("%s con %p msg %p sg_cnt %d enc_page_cnt %d\n", __func__, con,
+	dout("con %p msg %p sg_cnt %d enc_page_cnt %d\n", con,
 	     con->out_msg, sgt.orig_nents, enc_page_cnt);
 	con->v2.out_state = OUT_S_QUEUE_ENC_PAGE;
 
