@@ -2147,7 +2147,7 @@ void ceph_con_get_out_msg(struct ceph_connection *con)
  */
 static void ceph_msg_free(struct ceph_msg *m)
 {
-	dout("%s %p\n", __func__, m);
+	dout("%p\n", m);
 	kvfree(m->front.iov_base);
 	kfree(m->data);
 	kmem_cache_free(ceph_msg_cache, m);
@@ -2158,7 +2158,7 @@ static void ceph_msg_release(struct kref *kref)
 	struct ceph_msg *m = container_of(kref, struct ceph_msg, kref);
 	int i;
 
-	dout("%s %p\n", __func__, m);
+	dout("%p\n", m);
 	WARN_ON(!list_empty(&m->list_head));
 
 	msg_con_set(m, NULL);
@@ -2180,7 +2180,7 @@ static void ceph_msg_release(struct kref *kref)
 
 struct ceph_msg *ceph_msg_get(struct ceph_msg *msg)
 {
-	dout("%s %p (was %d)\n", __func__, msg,
+	dout("%p (was %d)\n", msg,
 	     kref_read(&msg->kref));
 	kref_get(&msg->kref);
 	return msg;
@@ -2189,7 +2189,7 @@ EXPORT_SYMBOL(ceph_msg_get);
 
 void ceph_msg_put(struct ceph_msg *msg)
 {
-	dout("%s %p (was %d)\n", __func__, msg,
+	dout("%p (was %d)\n", msg,
 	     kref_read(&msg->kref));
 	kref_put(&msg->kref, ceph_msg_release);
 }
