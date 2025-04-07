@@ -1998,8 +1998,8 @@ static int prepare_sparse_read_cont(struct ceph_connection *con)
 	}
 
 	if (ret > cursor->total_resid) {
-		pr_warn("%s: ret 0x%x total_resid 0x%zx resid 0x%zx\n",
-			__func__, ret, cursor->total_resid, cursor->resid);
+		pr_warn("ret 0x%x total_resid 0x%zx resid 0x%zx\n",
+			ret, cursor->total_resid, cursor->resid);
 		return -EIO;
 	}
 	get_bvec_at(cursor, &bv);
@@ -2026,7 +2026,7 @@ static int prepare_sparse_read_data(struct ceph_connection *con)
 {
 	struct ceph_msg *msg = con->in_msg;
 
-	dout("%s: starting sparse read\n", __func__);
+	dout("starting sparse read\n");
 
 	if (WARN_ON_ONCE(!con->ops->sparse_read))
 		return -EOPNOTSUPP;
@@ -2078,7 +2078,7 @@ static void prepare_read_enc_page(struct ceph_connection *con)
 {
 	struct bio_vec bv;
 
-	dout("%s con %p i %d resid %d\n", __func__, con, con->v2.in_enc_i,
+	dout("con %p i %d resid %d\n", con, con->v2.in_enc_i,
 	     con->v2.in_enc_resid);
 	WARN_ON(!con->v2.in_enc_resid);
 
