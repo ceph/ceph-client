@@ -1534,8 +1534,8 @@ static int prepare_session_reconnect(struct ceph_connection *con)
 	WARN_ON(!con->v2.connect_seq);
 	WARN_ON(!con->v2.peer_global_seq);
 
-	dout("%s con %p my_addr %s/%u client_cookie 0x%llx server_cookie 0x%llx global_seq %llu connect_seq %llu in_seq %llu\n",
-	     __func__, con, ceph_pr_addr(my_addr), le32_to_cpu(my_addr->nonce),
+	dout("con %p my_addr %s/%u client_cookie 0x%llx server_cookie 0x%llx global_seq %llu connect_seq %llu in_seq %llu\n",
+	     con, ceph_pr_addr(my_addr), le32_to_cpu(my_addr->nonce),
 	     con->v2.client_cookie, con->v2.server_cookie, con->v2.global_seq,
 	     con->v2.connect_seq, con->in_seq);
 
@@ -1564,7 +1564,7 @@ static int prepare_keepalive2(struct ceph_connection *con)
 	struct timespec64 now;
 
 	ktime_get_real_ts64(&now);
-	dout("%s con %p timestamp %lld.%09ld\n", __func__, con, now.tv_sec,
+	dout("con %p timestamp %lld.%09ld\n", con, now.tv_sec,
 	     now.tv_nsec);
 
 	ceph_encode_timespec64(ts, &now);
@@ -1578,7 +1578,7 @@ static int prepare_ack(struct ceph_connection *con)
 {
 	void *p;
 
-	dout("%s con %p in_seq_acked %llu -> %llu\n", __func__, con,
+	dout("con %p in_seq_acked %llu -> %llu\n", con,
 	     con->in_seq_acked, con->in_seq);
 	con->in_seq_acked = con->in_seq;
 
@@ -1591,7 +1591,7 @@ static int prepare_ack(struct ceph_connection *con)
 
 static void prepare_epilogue_plain(struct ceph_connection *con, bool aborted)
 {
-	dout("%s con %p msg %p aborted %d crcs %u %u %u\n", __func__, con,
+	dout("con %p msg %p aborted %d crcs %u %u %u\n", con,
 	     con->out_msg, aborted, con->v2.out_epil.front_crc,
 	     con->v2.out_epil.middle_crc, con->v2.out_epil.data_crc);
 
@@ -1734,11 +1734,11 @@ static int prepare_message(struct ceph_connection *con)
 	struct ceph_frame_desc desc;
 	int ret;
 
-	dout("%s con %p msg %p logical %d+%d+%d+%d\n", __func__, con,
+	dout("con %p msg %p logical %d+%d+%d+%d\n", con,
 	     con->out_msg, lens[0], lens[1], lens[2], lens[3]);
 
 	if (con->in_seq > con->in_seq_acked) {
-		dout("%s con %p in_seq_acked %llu -> %llu\n", __func__, con,
+		dout("con %p in_seq_acked %llu -> %llu\n", con,
 		     con->in_seq_acked, con->in_seq);
 		con->in_seq_acked = con->in_seq;
 	}
