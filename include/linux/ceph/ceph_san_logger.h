@@ -7,6 +7,7 @@
 #include <linux/spinlock.h>
 #include <linux/ceph/ceph_san_batch.h>
 #include <linux/ceph/ceph_san_pagefrag.h>
+#include <linux/ceph/ceph_san_ser.h>
 
 /* Maximum length of a log entry buffer */
 #define CEPH_SAN_LOG_MAX_LEN 256
