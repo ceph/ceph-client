@@ -197,13 +197,13 @@ static int ceph_tcp_send(struct ceph_connection *con)
 {
 	int ret;
 
-	//dout("%s con %p have %zu try_sendpage %d\n", __func__, con,
+	//dout("con %p have %zu try_sendpage %d\n", con,
 	//     iov_iter_count(&con->v2.out_iter), con->v2.out_iter_sendpage);
 	if (con->v2.out_iter_sendpage)
 		ret = do_try_sendpage(con->sock, &con->v2.out_iter);
 	else
 		ret = do_sendmsg(con->sock, &con->v2.out_iter);
-	//dout("%s con %p ret %d left %zu\n", __func__, con, ret,
+	//dout("con %p ret %d left %zu\n", con, ret,
 	//     iov_iter_count(&con->v2.out_iter));
 	return ret;
 }
@@ -304,7 +304,7 @@ static void *alloc_conn_buf(struct ceph_connection *con, int len)
 {
 	void *buf;
 
-	dout("%s con %p len %d\n", __func__, con, len);
+	dout("con %p len %d\n", con, len);
 
 	if (WARN_ON(con->v2.conn_buf_cnt >= ARRAY_SIZE(con->v2.conn_bufs)))
 		return NULL;
@@ -1097,7 +1097,7 @@ static int process_v2_sparse_read(struct ceph_connection *con,
 		if (ret <= 0)
 			return ret;
 
-		dout("%s: sparse_read return %x buf %p\n", __func__, ret, buf);
+		dout("sparse_read return %x buf %p\n", ret, buf);
 
 		do {
 			int idx = spos >> PAGE_SHIFT;
@@ -1325,7 +1325,7 @@ static int __prepare_control(struct ceph_connection *con, int tag,
 	struct ceph_frame_desc desc;
 	int ret;
 
-	dout("%s con %p tag %d len %d (%d+%d)\n", __func__, con, tag,
+	dout("con %p tag %d len %d (%d+%d)\n", con, tag,
 	     total_len, ctrl_len, extdata_len);
 
 	/* extdata may be vmalloc'ed but not base */
@@ -1401,12 +1401,12 @@ static int prepare_auth_request(struct ceph_connection *con)
 					 &authorizer, &authorizer_len);
 	mutex_lock(&con->mutex);
 	if (con->state != CEPH_CON_S_V2_HELLO) {
-		dout("%s con %p state changed to %d\n", __func__, con,
+		dout("con %p state changed to %d\n", con,
 		     con->state);
 		return -EAGAIN;
 	}
 
-	dout("%s con %p get_auth_request ret %d\n", __func__, con, ret);
+	dout("con %p get_auth_request ret %d\n", con, ret);
 	if (ret)
 		return ret;
 
@@ -1439,12 +1439,12 @@ static int prepare_auth_request_more(struct ceph_connection *con,
 					       &authorizer, &authorizer_len);
 	mutex_lock(&con->mutex);
 	if (con->state != CEPH_CON_S_V2_AUTH) {
-		dout("%s con %p state changed to %d\n", __func__, con,
+		dout("con %p state changed to %d\n", con,
 		     con->state);
 		return -EAGAIN;
 	}
 
-	dout("%s con %p handle_auth_reply_more ret %d\n", __func__, con, ret);
+	dout("con %p handle_auth_reply_more ret %d\n", con, ret);
 	if (ret)
 		return ret;
 
@@ -1488,15 +1488,15 @@ static int prepare_client_ident(struct ceph_connection *con)
 			get_random_bytes(&con->v2.client_cookie,
 					 sizeof(con->v2.client_cookie));
 		} while (!con->v2.client_cookie);
-		dout("%s con %p generated cookie 0x%llx\n", __func__, con,
+		dout("con %p generated cookie 0x%llx\n", con,
 		     con->v2.client_cookie);
 	} else {
-		dout("%s con %p cookie already set 0x%llx\n", __func__, con,
+		dout("con %p cookie already set 0x%llx\n", con,
 		     con->v2.client_cookie);
 	}
 
 	dout("%s con %p my_addr %s/%u peer_addr %s/%u global_id %llu global_seq %llu features 0x%llx required_features 0x%llx cookie 0x%llx\n",
-	     __func__, con, ceph_pr_addr(my_addr), le32_to_cpu(my_addr->nonce),
+	     con, ceph_pr_addr(my_addr), le32_to_cpu(my_addr->nonce),
 	     ceph_pr_addr(&con->peer_addr), le32_to_cpu(con->peer_addr.nonce),
 	     global_id, con->v2.global_seq, client->supported_features,
 	     client->required_features, con->v2.client_cookie);
@@ -2137,7 +2137,7 @@ static void prepare_skip_message(struct ceph_connection *con)
 	struct ceph_frame_desc *desc = &con->v2.in_desc;
 	int tail_len;
 
-	dout("%s con %p %d+%d+%d\n", __func__, con, desc->fd_lens[1],
+	dout("con %p %d+%d+%d\n", con, desc->fd_lens[1],
 	     desc->fd_lens[2], desc->fd_lens[3]);
 
 	tail_len = __tail_onwire_len(desc->fd_lens[1], desc->fd_lens[2],
@@ -2168,7 +2168,7 @@ static int process_banner_prefix(struct ceph_connection *con)
 
 	p += CEPH_BANNER_V2_LEN;
 	payload_len = ceph_decode_16(&p);
-	dout("%s con %p payload_len %d\n", __func__, con, payload_len);
+	dout("con %p payload_len %d\n", con, payload_len);
 
 	return prepare_read_banner_payload(con, payload_len);
 }
@@ -2187,7 +2187,7 @@ static int process_banner_payload(struct ceph_connection *con)
 	ceph_decode_64_safe(&p, end, server_req_feat, bad);
 
 	dout("%s con %p server_feat 0x%llx server_req_feat 0x%llx\n",
-	     __func__, con, server_feat, server_req_feat);
+	     con, server_feat, server_req_feat);
 
 	if (req_feat & ~server_feat) {
 		pr_err("msgr2 feature set mismatch: my required > server's supported 0x%llx, need 0x%llx\n",
@@ -2237,7 +2237,7 @@ static int process_hello(struct ceph_connection *con, void *p, void *end)
 		return ret;
 	}
 
-	dout("%s con %p entity_type %d addr_for_me %s\n", __func__, con,
+	dout("con %p entity_type %d addr_for_me %s\n", con,
 	     entity_type, ceph_pr_addr(&addr_for_me));
 
 	if (entity_type != con->peer_name.type) {
@@ -2301,7 +2301,7 @@ static int process_auth_bad_method(struct ceph_connection *con,
 
 	ceph_decode_32_safe(&p, end, used_proto, bad);
 	ceph_decode_32_safe(&p, end, result, bad);
-	dout("%s con %p used_proto %d result %d\n", __func__, con, used_proto,
+	dout("con %p used_proto %d result %d\n", con, used_proto,
 	     result);
 
 	ceph_decode_32_safe(&p, end, allowed_proto_cnt, bad);
@@ -2311,7 +2311,7 @@ static int process_auth_bad_method(struct ceph_connection *con,
 	}
 	for (i = 0; i < allowed_proto_cnt; i++) {
 		ceph_decode_32_safe(&p, end, allowed_protos[i], bad);
-		dout("%s con %p allowed_protos[%d] %d\n", __func__, con,
+		dout("con %p allowed_protos[%d] %d\n", con,
 		     i, allowed_protos[i]);
 	}
 
@@ -2322,7 +2322,7 @@ static int process_auth_bad_method(struct ceph_connection *con,
 	}
 	for (i = 0; i < allowed_mode_cnt; i++) {
 		ceph_decode_32_safe(&p, end, allowed_modes[i], bad);
-		dout("%s con %p allowed_modes[%d] %d\n", __func__, con,
+		dout("con %p allowed_modes[%d] %d\n", con,
 		     i, allowed_modes[i]);
 	}
 
@@ -2334,12 +2334,12 @@ static int process_auth_bad_method(struct ceph_connection *con,
 					       allowed_mode_cnt);
 	mutex_lock(&con->mutex);
 	if (con->state != CEPH_CON_S_V2_AUTH) {
-		dout("%s con %p state changed to %d\n", __func__, con,
+		dout("con %p state changed to %d\n", con,
 		     con->state);
 		return -EAGAIN;
 	}
 
-	dout("%s con %p handle_auth_bad_method ret %d\n", __func__, con, ret);
+	dout("con %p handle_auth_bad_method ret %d\n", con, ret);
 	return ret;
 
 bad:
@@ -2361,7 +2361,7 @@ static int process_auth_reply_more(struct ceph_connection *con,
 	ceph_decode_32_safe(&p, end, payload_len, bad);
 	ceph_decode_need(&p, end, payload_len, bad);
 
-	dout("%s con %p payload_len %d\n", __func__, con, payload_len);
+	dout("con %p payload_len %d\n", con, payload_len);
 
 	reset_out_kvecs(con);
 	ret = prepare_auth_request_more(con, p, payload_len);
@@ -2415,13 +2415,13 @@ static int process_auth_done(struct ceph_connection *con, void *p, void *end)
 					 con_secret, &con_secret_len);
 	mutex_lock(&con->mutex);
 	if (con->state != CEPH_CON_S_V2_AUTH) {
-		dout("%s con %p state changed to %d\n", __func__, con,
+		dout("con %p state changed to %d\n", con,
 		     con->state);
 		ret = -EAGAIN;
 		goto out;
 	}
 
-	dout("%s con %p handle_auth_done ret %d\n", __func__, con, ret);
+	dout("con %p handle_auth_done ret %d\n", con, ret);
 	if (ret)
 		goto out;
 
@@ -2471,7 +2471,7 @@ static int process_auth_signature(struct ceph_connection *con,
 		return -EBADMSG;
 	}
 
-	dout("%s con %p auth signature ok\n", __func__, con);
+	dout("con %p auth signature ok\n", con);
 
 	/* no reset_out_kvecs() as our auth_signature may still be pending */
 	if (!con->v2.server_cookie) {
@@ -2617,7 +2617,7 @@ static int process_session_reconnect_ok(struct ceph_connection *con,
 
 	ceph_decode_64_safe(&p, end, seq, bad);
 
-	dout("%s con %p seq %llu\n", __func__, con, seq);
+	dout("con %p seq %llu\n", con, seq);
 	ceph_con_discard_requeued(con, seq);
 
 	clear_in_sign_kvecs(con);
@@ -2647,7 +2647,7 @@ static int process_session_retry(struct ceph_connection *con,
 
 	ceph_decode_64_safe(&p, end, connect_seq, bad);
 
-	dout("%s con %p connect_seq %llu\n", __func__, con, connect_seq);
+	dout("con %p connect_seq %llu\n", con, connect_seq);
 	WARN_ON(connect_seq <= con->v2.connect_seq);
 	con->v2.connect_seq = connect_seq + 1;
 
@@ -2680,7 +2680,7 @@ static int process_session_retry_global(struct ceph_connection *con,
 
 	ceph_decode_64_safe(&p, end, global_seq, bad);
 
-	dout("%s con %p global_seq %llu\n", __func__, con, global_seq);
+	dout("con %p global_seq %llu\n", con, global_seq);
 	WARN_ON(global_seq <= con->v2.global_seq);
 	con->v2.global_seq = ceph_get_global_seq(con->msgr, global_seq);
 
@@ -2726,7 +2726,7 @@ static int process_session_reset(struct ceph_connection *con,
 		con->ops->peer_reset(con);
 	mutex_lock(&con->mutex);
 	if (con->state != CEPH_CON_S_V2_SESSION_RECONNECT) {
-		dout("%s con %p state changed to %d\n", __func__, con,
+		dout("con %p state changed to %d\n", con,
 		     con->state);
 		return -EAGAIN;
 	}
@@ -2759,7 +2759,7 @@ static int process_keepalive2_ack(struct ceph_connection *con,
 	ceph_decode_need(&p, end, sizeof(struct ceph_timespec), bad);
 	ceph_decode_timespec64(&con->last_keepalive_ack, p);
 
-	dout("%s con %p timestamp %lld.%09ld\n", __func__, con,
+	dout("con %p timestamp %lld.%09ld\n", con,
 	     con->last_keepalive_ack.tv_sec, con->last_keepalive_ack.tv_nsec);
 
 	return 0;
@@ -2780,7 +2780,7 @@ static int process_ack(struct ceph_connection *con, void *p, void *end)
 
 	ceph_decode_64_safe(&p, end, seq, bad);
 
-	dout("%s con %p seq %llu\n", __func__, con, seq);
+	dout("con %p seq %llu\n", con, seq);
 	ceph_con_discard_sent(con, seq);
 	return 0;
 
@@ -2794,7 +2794,7 @@ static int process_control(struct ceph_connection *con, void *p, void *end)
 	int tag = con->v2.in_desc.fd_tag;
 	int ret;
 
-	dout("%s con %p tag %d len %d\n", __func__, con, tag, (int)(end - p));
+	dout("con %p tag %d len %d\n", con, tag, (int)(end - p));
 
 	switch (tag) {
 	case FRAME_TAG_HELLO:
@@ -2842,7 +2842,7 @@ static int process_control(struct ceph_connection *con, void *p, void *end)
 		return -EINVAL;
 	}
 	if (ret) {
-		dout("%s con %p error %d\n", __func__, con, ret);
+		dout("con %p error %d\n", con, ret);
 		return ret;
 	}
 
@@ -2907,7 +2907,7 @@ static int process_message(struct ceph_connection *con)
 	 * ceph_con_process_message() temporarily drops con->mutex.
 	 */
 	if (con->state != CEPH_CON_S_OPEN) {
-		dout("%s con %p state changed to %d\n", __func__, con,
+		dout("con %p state changed to %d\n", con,
 		     con->state);
 		return -EAGAIN;
 	}
@@ -2979,7 +2979,7 @@ static int handle_preamble(struct ceph_connection *con)
 		return ret;
 	}
 
-	dout("%s con %p tag %d seg_cnt %d %d+%d+%d+%d\n", __func__,
+	dout("con %p tag %d seg_cnt %d %d+%d+%d+%d\n",
 	     con, desc->fd_tag, desc->fd_seg_cnt, desc->fd_lens[0],
 	     desc->fd_lens[1], desc->fd_lens[2], desc->fd_lens[3]);
 
@@ -3075,7 +3075,7 @@ static int handle_epilogue(struct ceph_connection *con)
 
 static void finish_skip(struct ceph_connection *con)
 {
-	dout("%s con %p\n", __func__, con);
+	dout("con %p\n", con);
 
 	if (con_secure(con))
 		gcm_inc_nonce(&con->v2.in_gcm_nonce);
@@ -3087,7 +3087,7 @@ static int populate_in_iter(struct ceph_connection *con)
 {
 	int ret;
 
-	dout("%s con %p state %d in_state %d\n", __func__, con, con->state,
+	dout("con %p state %d in_state %d\n", con, con->state,
 	     con->v2.in_state);
 	WARN_ON(iov_iter_count(&con->v2.in_iter));
 
@@ -3141,13 +3141,13 @@ static int populate_in_iter(struct ceph_connection *con)
 		return -EINVAL;
 	}
 	if (ret) {
-		dout("%s con %p error %d\n", __func__, con, ret);
+		dout("con %p error %d\n", con, ret);
 		return ret;
 	}
 
 	if (WARN_ON(!iov_iter_count(&con->v2.in_iter)))
 		return -ENODATA;
-	dout("%s con %p populated %zu\n", __func__, con,
+	dout("con %p populated %zu\n", con,
 	     iov_iter_count(&con->v2.in_iter));
 	return 1;
 }
@@ -3156,7 +3156,7 @@ int ceph_con_v2_try_read(struct ceph_connection *con)
 {
 	int ret;
 
-	//dout("%s con %p state %d need %zu\n", __func__, con, con->state,
+	//dout("con %p state %d need %zu\n", con, con->state,
 	//     iov_iter_count(&con->v2.in_iter));
 
 	if (con->state == CEPH_CON_S_PREOPEN)
@@ -3226,7 +3226,7 @@ static void queue_enc_page(struct ceph_connection *con)
 {
 	struct bio_vec bv;
 
-	dout("%s con %p i %d resid %d\n", __func__, con, con->v2.out_enc_i,
+	dout("con %p i %d resid %d\n", con, con->v2.out_enc_i,
 	     con->v2.out_enc_resid);
 	WARN_ON(!con->v2.out_enc_resid);
 
@@ -3252,7 +3252,7 @@ static void queue_enc_page(struct ceph_connection *con)
 
 static void queue_zeros(struct ceph_connection *con)
 {
-	dout("%s con %p out_zero %d\n", __func__, con, con->v2.out_zero);
+	dout("con %p out_zero %d\n", con, con->v2.out_zero);
 
 	if (con->v2.out_zero) {
 		set_out_bvec_zero(con);
@@ -3273,7 +3273,7 @@ static void queue_zeros(struct ceph_connection *con)
 
 static void finish_message(struct ceph_connection *con)
 {
-	//dout("%s con %p msg %p\n", __func__, con, con->out_msg);
+	//dout("con %p msg %p\n", con, con->out_msg);
 
 	/* we end up here both plain and secure modes */
 	if (con->v2.out_enc_pages) {
@@ -3296,7 +3296,7 @@ static int populate_out_iter(struct ceph_connection *con)
 {
 	int ret;
 
-	//dout("%s con %p state %d out_state %d\n", __func__, con, con->state,
+	//dout("con %p state %d out_state %d\n", con, con->state,
 	//     con->v2.out_state);
 	WARN_ON(iov_iter_count(&con->v2.out_iter));
 
@@ -3359,13 +3359,13 @@ static int populate_out_iter(struct ceph_connection *con)
 populated:
 	if (WARN_ON(!iov_iter_count(&con->v2.out_iter)))
 		return -ENODATA;
-	//dout("%s con %p populated %zu\n", __func__, con,
+	//dout("con %p populated %zu\n", con,
 	//     iov_iter_count(&con->v2.out_iter));
 	return 1;
 
 nothing_pending:
 	WARN_ON(iov_iter_count(&con->v2.out_iter));
-	//dout("%s con %p nothing pending\n", __func__, con);
+	//dout("con %p nothing pending\n", con);
 	ceph_con_flag_clear(con, CEPH_CON_F_WRITE_PENDING);
 	return 0;
 }
@@ -3374,7 +3374,7 @@ int ceph_con_v2_try_write(struct ceph_connection *con)
 {
 	int ret;
 
-	dout("%s con %p state %d have %zu\n", __func__, con, con->state,
+	dout("con %p state %d have %zu\n", con, con->state,
 	     iov_iter_count(&con->v2.out_iter));
 
 	/* open the socket first? */
@@ -3459,7 +3459,7 @@ static void prepare_zero_front(struct ceph_connection *con, int resid)
 
 	WARN_ON(!resid || resid > front_len(con->out_msg));
 	sent = front_len(con->out_msg) - resid;
-	dout("%s con %p sent %d resid %d\n", __func__, con, sent, resid);
+	dout("con %p sent %d resid %d\n", con, sent, resid);
 
 	if (sent) {
 		con->v2.out_epil.front_crc =
@@ -3480,7 +3480,7 @@ static void prepare_zero_middle(struct ceph_connection *con, int resid)
 
 	WARN_ON(!resid || resid > middle_len(con->out_msg));
 	sent = middle_len(con->out_msg) - resid;
-	dout("%s con %p sent %d resid %d\n", __func__, con, sent, resid);
+	dout("con %p sent %d resid %d\n", con, sent, resid);
 
 	if (sent) {
 		con->v2.out_epil.middle_crc =
@@ -3497,7 +3497,7 @@ static void prepare_zero_middle(struct ceph_connection *con, int resid)
 
 static void prepare_zero_data(struct ceph_connection *con)
 {
-	dout("%s con %p\n", __func__, con);
+	dout("con %p\n", con);
 	con->v2.out_epil.data_crc = crc32c_zeros(-1, data_len(con->out_msg));
 	out_zero_add(con, data_len(con->out_msg));
 }
@@ -3515,7 +3515,7 @@ static void revoke_at_queue_data(struct ceph_connection *con)
 	if (resid > boundary) {
 		resid -= boundary;
 		WARN_ON(resid > MESSAGE_HEAD_PLAIN_LEN);
-		dout("%s con %p was sending head\n", __func__, con);
+		dout("con %p was sending head\n", con);
 		if (front_len(con->out_msg))
 			prepare_zero_front(con, front_len(con->out_msg));
 		if (middle_len(con->out_msg))
@@ -3529,7 +3529,7 @@ static void revoke_at_queue_data(struct ceph_connection *con)
 	boundary = middle_len(con->out_msg);
 	if (resid > boundary) {
 		resid -= boundary;
-		dout("%s con %p was sending front\n", __func__, con);
+		dout("con %p was sending front\n", con);
 		prepare_zero_front(con, resid);
 		if (middle_len(con->out_msg))
 			prepare_zero_middle(con, middle_len(con->out_msg));
@@ -3539,7 +3539,7 @@ static void revoke_at_queue_data(struct ceph_connection *con)
 	}
 
 	WARN_ON(!resid);
-	dout("%s con %p was sending middle\n", __func__, con);
+	dout("con %p was sending middle\n", con);
 	prepare_zero_middle(con, resid);
 	prepare_zero_data(con);
 	queue_zeros(con);
@@ -3554,7 +3554,7 @@ static void revoke_at_queue_data_cont(struct ceph_connection *con)
 	resid = iov_iter_count(&con->v2.out_iter);
 	WARN_ON(!resid || resid > con->v2.out_bvec.bv_len);
 	sent = con->v2.out_bvec.bv_len - resid;
-	dout("%s con %p sent %d resid %d\n", __func__, con, sent, resid);
+	dout("con %p sent %d resid %d\n", con, sent, resid);
 
 	if (sent) {
 		con->v2.out_epil.data_crc = ceph_crc32c_page(
@@ -3592,7 +3592,7 @@ static void revoke_at_finish_message(struct ceph_connection *con)
 	if (resid > boundary) {
 		resid -= boundary;
 		WARN_ON(resid > MESSAGE_HEAD_PLAIN_LEN);
-		dout("%s con %p was sending head\n", __func__, con);
+		dout("con %p was sending head\n", con);
 		if (front_len(con->out_msg))
 			prepare_zero_front(con, front_len(con->out_msg));
 		if (middle_len(con->out_msg))
@@ -3606,7 +3606,7 @@ static void revoke_at_finish_message(struct ceph_connection *con)
 	boundary = middle_len(con->out_msg) + CEPH_EPILOGUE_PLAIN_LEN;
 	if (resid > boundary) {
 		resid -= boundary;
-		dout("%s con %p was sending front\n", __func__, con);
+		dout("con %p was sending front\n", con);
 		prepare_zero_front(con, resid);
 		if (middle_len(con->out_msg))
 			prepare_zero_middle(con, middle_len(con->out_msg));
@@ -3618,7 +3618,7 @@ static void revoke_at_finish_message(struct ceph_connection *con)
 	boundary = CEPH_EPILOGUE_PLAIN_LEN;
 	if (resid > boundary) {
 		resid -= boundary;
-		dout("%s con %p was sending middle\n", __func__, con);
+		dout("con %p was sending middle\n", con);
 		prepare_zero_middle(con, resid);
 		con->v2.out_iter.count -= CEPH_EPILOGUE_PLAIN_LEN;
 		queue_zeros(con);
@@ -3626,7 +3626,7 @@ static void revoke_at_finish_message(struct ceph_connection *con)
 	}
 
 	WARN_ON(!resid);
-	dout("%s con %p was sending epilogue - noop\n", __func__, con);
+	dout("con %p was sending epilogue - noop\n", con);
 }
 
 void ceph_con_v2_revoke(struct ceph_connection *con)
@@ -3636,7 +3636,7 @@ void ceph_con_v2_revoke(struct ceph_connection *con)
 	if (con_secure(con)) {
 		WARN_ON(con->v2.out_state != OUT_S_QUEUE_ENC_PAGE &&
 			con->v2.out_state != OUT_S_FINISH_MESSAGE);
-		dout("%s con %p secure - noop\n", __func__, con);
+		dout("con %p secure - noop\n", con);
 		return;
 	}
 
@@ -3668,7 +3668,7 @@ static void revoke_at_prepare_read_data(struct ceph_connection *con)
 	WARN_ON(!resid);
 
 	remaining = data_len(con->in_msg) + CEPH_EPILOGUE_PLAIN_LEN;
-	dout("%s con %p resid %d remaining %d\n", __func__, con, resid,
+	dout("con %p resid %d remaining %d\n", con, resid,
 	     remaining);
 	con->v2.in_iter.count -= resid;
 	set_in_skip(con, resid + remaining);
@@ -3686,14 +3686,14 @@ static void revoke_at_prepare_read_data_cont(struct ceph_connection *con)
 	resid = iov_iter_count(&con->v2.in_iter);
 	WARN_ON(!resid || resid > con->v2.in_bvec.bv_len);
 	recved = con->v2.in_bvec.bv_len - resid;
-	dout("%s con %p recved %d resid %d\n", __func__, con, recved, resid);
+	dout("con %p recved %d resid %d\n", con, recved, resid);
 
 	if (recved)
 		ceph_msg_data_advance(&con->v2.in_cursor, recved);
 	WARN_ON(resid > con->v2.in_cursor.total_resid);
 
 	remaining = CEPH_EPILOGUE_PLAIN_LEN;
-	dout("%s con %p total_resid %zu remaining %d\n", __func__, con,
+	dout("con %p total_resid %zu remaining %d\n", con,
 	     con->v2.in_cursor.total_resid, remaining);
 	con->v2.in_iter.count -= resid;
 	set_in_skip(con, con->v2.in_cursor.total_resid + remaining);
@@ -3709,7 +3709,7 @@ static void revoke_at_prepare_read_enc_page(struct ceph_connection *con)
 	resid = iov_iter_count(&con->v2.in_iter);
 	WARN_ON(!resid || resid > con->v2.in_bvec.bv_len);
 
-	dout("%s con %p resid %d enc_resid %d\n", __func__, con, resid,
+	dout("con %p resid %d enc_resid %d\n", con, resid,
 	     con->v2.in_enc_resid);
 	con->v2.in_iter.count -= resid;
 	set_in_skip(con, resid + con->v2.in_enc_resid);
@@ -3725,7 +3725,7 @@ static void revoke_at_prepare_sparse_data(struct ceph_connection *con)
 	WARN_ON(!data_len(con->in_msg));
 	WARN_ON(!iov_iter_is_bvec(&con->v2.in_iter));
 	resid = iov_iter_count(&con->v2.in_iter);
-	dout("%s con %p resid %d\n", __func__, con, resid);
+	dout("con %p resid %d\n", con, resid);
 
 	remaining = CEPH_EPILOGUE_PLAIN_LEN + con->v2.data_len_remain;
 	con->v2.in_iter.count -= resid;
@@ -3740,7 +3740,7 @@ static void revoke_at_handle_epilogue(struct ceph_connection *con)
 	resid = iov_iter_count(&con->v2.in_iter);
 	WARN_ON(!resid);
 
-	dout("%s con %p resid %d\n", __func__, con, resid);
+	dout("con %p resid %d\n", con, resid);
 	con->v2.in_iter.count -= resid;
 	set_in_skip(con, resid);
 	con->v2.in_state = IN_S_FINISH_SKIP;
