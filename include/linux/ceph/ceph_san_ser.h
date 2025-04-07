@@ -46,8 +46,8 @@
 #define ceph_san_cnt(...)	 ___ceph_san_apply(___ceph_san_cnt, ceph_san_narg(__VA_ARGS__))(__VA_ARGS__)
 
 #define __ceph_san_ser(__buffer, __t) (*(typeof(__t)*)__buffer = (__t), __buffer = (void*)((typeof(__t)*)__buffer + 1))
-#define ___ceph_san_ser0(__buffer)		(__buffer)
-#define ___ceph_san_ser1(__buffer, __t)		(__ceph_san_ser(__buffer, __t), ___ceph_san_ser0(__buffer))
+#define ___ceph_san_ser0(__buffer)
+#define ___ceph_san_ser1(__buffer, __t)      		(__ceph_san_ser(__buffer, __t))
 #define ___ceph_san_ser2(__buffer, __t, __args...)	(__ceph_san_ser(__buffer, __t), ___ceph_san_ser1(__buffer, __args))
 #define ___ceph_san_ser3(__buffer, __t, __args...)	(__ceph_san_ser(__buffer, __t), ___ceph_san_ser2(__buffer, __args))
 #define ___ceph_san_ser4(__buffer, __t, __args...)	(__ceph_san_ser(__buffer, __t), ___ceph_san_ser3(__buffer, __args))

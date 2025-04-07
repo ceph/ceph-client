@@ -51,9 +51,9 @@
  * or, just wrap pr_debug
  */
 # define dout(fmt, ...)	CEPH_SAN_LOG(fmt, ##__VA_ARGS__)
-# define doutc(client, fmt, ...)					\
+# define doutc(client, fmt, ...) \
 	CEPH_SAN_LOG("[%pU:%llu] " fmt, &client->fsid,			\
-		 client->monc.auth->global_id, ##__VA_ARGS__);
+		 client->monc.auth->global_id, ##__VA_ARGS__)
 
 #endif
 

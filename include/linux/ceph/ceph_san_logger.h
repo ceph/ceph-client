@@ -95,9 +95,6 @@ struct ceph_san_tls_ctx *ceph_san_get_tls_ctx(void);
             __size = ceph_san_cnt(__VA_ARGS__); \
         } \
         __buffer = ceph_san_log(__source_id, __size); \
-        if (__buffer) { \
-            ceph_san_ser(__buffer, ##__VA_ARGS__); \
-        } \
     } while (0)
 
 /* Global logger instance */
