@@ -132,6 +132,7 @@ struct ceph_client {
 	struct ceph_messenger msgr;   /* messenger instance */
 	struct ceph_mon_client monc;
 	struct ceph_osd_client osdc;
+	atomic_t have_mon_and_osd_map;
 
 #ifdef CONFIG_DEBUG_FS
 	struct dentry *debugfs_dir;
@@ -140,6 +141,25 @@ struct ceph_client {
 	struct dentry *debugfs_options;
 #endif
 };
+
+/*
+ * The have_mon_and_osd_map possible states
+ */
+enum {
+	CEPH_CLIENT_HAS_NO_MON_AND_NO_OSD_MAP = 0,
+	CEPH_CLIENT_HAS_ONLY_ONE_MAP = 1,
+	CEPH_CLIENT_HAS_MON_AND_OSD_MAP = 2,
+	CEPH_CLIENT_MAP_STATE_UNKNOWN
+};
+
+static inline
+bool is_mon_and_osd_map_state_invalid(struct ceph_client *client)
+{
+	int have_mon_and_osd_map = atomic_read(&client->have_mon_and_osd_map);
+
+	return have_mon_and_osd_map < CEPH_CLIENT_HAS_NO_MON_AND_NO_OSD_MAP ||
+		have_mon_and_osd_map >= CEPH_CLIENT_MAP_STATE_UNKNOWN;
+}
 
 #define from_msgr(ms)	container_of(ms, struct ceph_client, msgr)
 

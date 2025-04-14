@@ -562,11 +562,15 @@ static void ceph_monc_handle_map(struct ceph_mon_client *monc,
 		goto out;
 	}
 
+	atomic_dec(&client->have_mon_and_osd_map);
+
 	kfree(monc->monmap);
 	monc->monmap = monmap;
 
 	__ceph_monc_got_map(monc, CEPH_SUB_MONMAP, monc->monmap->epoch);
 	client->have_fsid = true;
+
+	atomic_inc(&client->have_mon_and_osd_map);
 
 out:
 	mutex_unlock(&monc->mutex);
@@ -1220,6 +1224,9 @@ int ceph_monc_init(struct ceph_mon_client *monc, struct ceph_client *cl)
 
 	monc->fs_cluster_id = CEPH_FS_CLUSTER_ID_NONE;
 
+	atomic_inc(&monc->client->have_mon_and_osd_map);
+	WARN_ON(is_mon_and_osd_map_state_invalid(monc->client));
+
 	return 0;
 
 out_auth_reply:
@@ -1232,6 +1239,7 @@ out_auth:
 	ceph_auth_destroy(monc->auth);
 out_monmap:
 	kfree(monc->monmap);
+	monc->monmap = NULL;
 out:
 	return err;
 }
@@ -1239,6 +1247,8 @@ EXPORT_SYMBOL(ceph_monc_init);
 
 void ceph_monc_stop(struct ceph_mon_client *monc)
 {
+	struct ceph_monmap *old_monmap;
+
 	dout("stop\n");
 
 	mutex_lock(&monc->mutex);
@@ -1266,7 +1276,13 @@ void ceph_monc_stop(struct ceph_mon_client *monc)
 	ceph_msg_put(monc->m_subscribe);
 	ceph_msg_put(monc->m_subscribe_ack);
 
-	kfree(monc->monmap);
+	mutex_lock(&monc->mutex);
+	WARN_ON(is_mon_and_osd_map_state_invalid(monc->client));
+	atomic_dec(&monc->client->have_mon_and_osd_map);
+	old_monmap = monc->monmap;
+	monc->monmap = NULL;
+	mutex_unlock(&monc->mutex);
+	kfree(old_monmap);
 }
 EXPORT_SYMBOL(ceph_monc_stop);
 

@@ -4045,8 +4045,10 @@ static int handle_one_map(struct ceph_osd_client *osdc,
 			skipped_map = true;
 		}
 
+		atomic_dec(&osdc->client->have_mon_and_osd_map);
 		ceph_osdmap_destroy(osdc->osdmap);
 		osdc->osdmap = newmap;
+		atomic_inc(&osdc->client->have_mon_and_osd_map);
 	}
 
 	was_full &= !ceph_osdmap_flag(osdc, CEPH_OSDMAP_FULL);
@@ -5243,6 +5245,9 @@ int ceph_osdc_init(struct ceph_osd_client *osdc, struct ceph_client *client)
 	schedule_delayed_work(&osdc->osds_timeout_work,
 	    round_jiffies_relative(osdc->client->options->osd_idle_ttl));
 
+	atomic_inc(&osdc->client->have_mon_and_osd_map);
+	WARN_ON(is_mon_and_osd_map_state_invalid(osdc->client));
+
 	return 0;
 
 out_notify_wq:
@@ -5255,6 +5260,7 @@ out_mempool:
 	mempool_destroy(osdc->req_mempool);
 out_map:
 	ceph_osdmap_destroy(osdc->osdmap);
+	osdc->osdmap = NULL;
 out:
 	return err;
 }
@@ -5283,10 +5289,15 @@ void ceph_osdc_stop(struct ceph_osd_client *osdc)
 	WARN_ON(atomic_read(&osdc->num_requests));
 	WARN_ON(atomic_read(&osdc->num_homeless));
 
+	down_write(&osdc->lock);
+	WARN_ON(is_mon_and_osd_map_state_invalid(osdc->client));
+	atomic_dec(&osdc->client->have_mon_and_osd_map);
 	ceph_osdmap_destroy(osdc->osdmap);
+	osdc->osdmap = NULL;
 	mempool_destroy(osdc->req_mempool);
 	ceph_msgpool_destroy(&osdc->msgpool_op);
 	ceph_msgpool_destroy(&osdc->msgpool_op_reply);
+	up_write(&osdc->lock);
 }
 
 int osd_req_op_copy_from_init(struct ceph_osd_request *req,
