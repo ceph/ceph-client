@@ -723,6 +723,8 @@ struct ceph_client *ceph_create_client(struct ceph_options *opt, void *private)
 
 	mutex_init(&client->mount_mutex);
 	init_waitqueue_head(&client->auth_wq);
+	atomic_set(&client->have_mon_and_osd_map,
+		   CEPH_CLIENT_HAS_NO_MON_AND_NO_OSD_MAP);
 	client->auth_err = 0;
 
 	client->extra_mon_dispatch = NULL;
@@ -790,8 +792,8 @@ EXPORT_SYMBOL(ceph_reset_client_addr);
  */
 static bool have_mon_and_osd_map(struct ceph_client *client)
 {
-	return client->monc.monmap && client->monc.monmap->epoch &&
-	       client->osdc.osdmap && client->osdc.osdmap->epoch;
+	return atomic_read(&client->have_mon_and_osd_map) ==
+				CEPH_CLIENT_HAS_MON_AND_OSD_MAP;
 }
 
 /*
