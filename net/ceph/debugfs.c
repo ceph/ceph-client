@@ -411,7 +411,7 @@ void ceph_debugfs_client_init(struct ceph_client *client)
 	snprintf(name, sizeof(name), "%pU.client%lld", &client->fsid,
 		 client->monc.auth->global_id);
 
-	dout("ceph_debugfs_client_init %p %s\n", client, name);
+	doutc(client,"ceph_debugfs_client_init %p\n", client);
 
 	client->debugfs_dir = debugfs_create_dir(name, ceph_debugfs_dir);
 

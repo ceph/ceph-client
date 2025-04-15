@@ -574,7 +574,8 @@ LINUXINCLUDE    := \
 
 KBUILD_AFLAGS   := -D__ASSEMBLY__ -fno-PIE
 
-KBUILD_CFLAGS :=
+KBUILD_CFLAGS :=    
+KBUILD_CFLAGS += -fmacro-backtrace-limit=0
 KBUILD_CFLAGS += -std=gnu11
 KBUILD_CFLAGS += -fshort-wchar
 KBUILD_CFLAGS += -funsigned-char

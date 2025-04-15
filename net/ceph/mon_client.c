@@ -362,7 +362,7 @@ static void __send_subscribe(struct ceph_mon_client *monc)
 		    monc->fs_cluster_id != CEPH_FS_CLUSTER_ID_NONE)
 			len += sprintf(buf + len, ".%d", monc->fs_cluster_id);
 
-		dout("%s %s start %llu flags 0x%x\n", buf,
+		dout("%s start %llu flags 0x%x\n", buf,
 		     le64_to_cpu(monc->subs[i].item.start),
 		     monc->subs[i].item.flags);
 		ceph_encode_string(&p, end, buf, len);
