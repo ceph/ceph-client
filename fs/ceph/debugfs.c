@@ -441,10 +441,16 @@ static int ceph_san_tls_show(struct seq_file *s, void *p)
 				continue;
 			}
 
-			seq_printf(s, "[%d][%s][%s]:%s:%s:%u: %s\n",
+			seq_printf(s, "[%d][%s][%s]:%s:%s:%u: ",
 					  pid, comm, datetime_str,
-					  source->file, source->func, source->line,
-					  entry->buffer);
+					  source->file, source->func, source->line);
+			char reconstructed_msg[256];
+			int ret = ceph_san_log_reconstruct(entry, reconstructed_msg, sizeof(reconstructed_msg));
+			if (ret >= 0)
+				seq_puts(s, reconstructed_msg);
+			else
+				seq_printf(s, "<error reconstructing message: %d>", ret);
+			seq_putc(s, '\n');
 		}
 
 		/* Unlock the pagefrag after we're done with this context */

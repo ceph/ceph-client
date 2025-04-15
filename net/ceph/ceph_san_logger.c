@@ -410,3 +410,205 @@ struct ceph_san_log_entry *ceph_san_log_iter_next(struct ceph_san_log_iter *iter
     return entry;
 }
 EXPORT_SYMBOL(ceph_san_log_iter_next);
+
+/**
+ * ceph_san_log_reconstruct - Reconstruct a formatted string from a log entry
+ * @entry: Log entry containing serialized data
+ * @output: Buffer to write the formatted string to
+ * @output_size: Size of the output buffer
+ *
+ * Returns length of formatted string, or negative error code on failure
+ */
+int ceph_san_log_reconstruct(const struct ceph_san_log_entry *entry, char *output, size_t output_size)
+{
+    const struct ceph_san_source_info *info;
+    const char *fmt;
+    char *in_buffer, *out_ptr;
+    int ret;
+    size_t remaining = output_size - 1; // Reserve space for null terminator
+
+    if (!entry || !output || output_size == 0) {
+        pr_err("ceph_san_log_reconstruct: invalid parameters\n");
+        return -EINVAL;
+    }
+
+    // Get format string from source info
+    info = ceph_san_get_source_info(entry->source_id);
+    if (!info) {
+        pr_err("ceph_san_log_reconstruct: source info not found for ID %u\n", entry->source_id);
+        return -EINVAL;
+    }
+
+    fmt = info->fmt;
+    if (!fmt) {
+        pr_err("ceph_san_log_reconstruct: format string not found in source info for ID %u\n", entry->source_id);
+        return -EINVAL;
+    }
+
+    in_buffer = entry->buffer;
+    out_ptr = output;
+    *out_ptr = '\0';
+
+    // Process the format string
+    while (*fmt && remaining > 0) {
+        if (*fmt != '%') {
+            // Copy regular characters
+            *out_ptr++ = *fmt++;
+            remaining--;
+            continue;
+        }
+
+        fmt++; // Skip the '%'
+
+        // Handle format specifiers
+        switch (*fmt) {
+        case '%': // Literal %
+            *out_ptr++ = '%';
+            remaining--;
+            break;
+
+        case 's': { // String
+            const char *str;
+            if (*(void **)in_buffer == NULL) {
+                // Inline string
+                str = in_buffer + sizeof(void *);
+                in_buffer += sizeof(void *) + strlen(str) + 1;
+            } else {
+                // Pointer to string
+                str = *(const char **)in_buffer;
+                in_buffer += sizeof(void *);
+            }
+
+            size_t len = strlen(str);
+            if (len > remaining)
+                len = remaining;
+
+            memcpy(out_ptr, str, len);
+            out_ptr += len;
+            remaining -= len;
+            break;
+        }
+
+        case 'd': case 'i': { // Integer
+            int val = *(int *)in_buffer;
+            in_buffer += sizeof(int);
+            ret = snprintf(out_ptr, remaining, "%d", val);
+            if (ret > 0) {
+                if (ret > remaining)
+                    ret = remaining;
+                out_ptr += ret;
+                remaining -= ret;
+            }
+            break;
+        }
+
+        case 'u': { // Unsigned integer
+            unsigned int val = *(unsigned int *)in_buffer;
+            in_buffer += sizeof(unsigned int);
+            ret = snprintf(out_ptr, remaining, "%u", val);
+            if (ret > 0) {
+                if (ret > remaining)
+                    ret = remaining;
+                out_ptr += ret;
+                remaining -= ret;
+            }
+            break;
+        }
+
+        case 'x': case 'X': { // Hex
+            unsigned int val = *(unsigned int *)in_buffer;
+            in_buffer += sizeof(unsigned int);
+            ret = snprintf(out_ptr, remaining, (*fmt == 'x') ? "%x" : "%X", val);
+            if (ret > 0) {
+                if (ret > remaining)
+                    ret = remaining;
+                out_ptr += ret;
+                remaining -= ret;
+            }
+            break;
+        }
+
+        case 'p': { // Pointer
+            void *val = *(void **)in_buffer;
+            in_buffer += sizeof(void *);
+            ret = snprintf(out_ptr, remaining, "%p", val);
+            if (ret > 0) {
+                if (ret > remaining)
+                    ret = remaining;
+                out_ptr += ret;
+                remaining -= ret;
+            }
+            break;
+        }
+
+        case 'l': { // Long or long long
+            fmt++;
+            if (*fmt == 'l') { // Long long
+                fmt++;
+                if (*fmt == 'd' || *fmt == 'i') {
+                    long long val = *(long long *)in_buffer;
+                    in_buffer += sizeof(long long);
+                    ret = snprintf(out_ptr, remaining, "%lld", val);
+                } else if (*fmt == 'u') {
+                    unsigned long long val = *(unsigned long long *)in_buffer;
+                    in_buffer += sizeof(unsigned long long);
+                    ret = snprintf(out_ptr, remaining, "%llu", val);
+                } else if (*fmt == 'x') {
+                    unsigned long long val = *(unsigned long long *)in_buffer;
+                    in_buffer += sizeof(unsigned long long);
+                    ret = snprintf(out_ptr, remaining, "%llx", val);
+                } else if (*fmt == 'X') {
+                    unsigned long long val = *(unsigned long long *)in_buffer;
+                    in_buffer += sizeof(unsigned long long);
+                    ret = snprintf(out_ptr, remaining, "%llX", val);
+                } else {
+                    pr_err("ceph_san_log_reconstruct: invalid long long format specifier '%%%c%c%c'\n", 'l', 'l', *fmt);
+                    return -EINVAL;
+                }
+            } else { // Long
+                if (*fmt == 'd' || *fmt == 'i') {
+                    long val = *(long *)in_buffer;
+                    in_buffer += sizeof(long);
+                    ret = snprintf(out_ptr, remaining, "%ld", val);
+                } else if (*fmt == 'u') {
+                    unsigned long val = *(unsigned long *)in_buffer;
+                    in_buffer += sizeof(unsigned long);
+                    ret = snprintf(out_ptr, remaining, "%lu", val);
+                } else if (*fmt == 'x') {
+                    unsigned long val = *(unsigned long *)in_buffer;
+                    in_buffer += sizeof(unsigned long);
+                    ret = snprintf(out_ptr, remaining, "%lx", val);
+                } else if (*fmt == 'X') {
+                    unsigned long val = *(unsigned long *)in_buffer;
+                    in_buffer += sizeof(unsigned long);
+                    ret = snprintf(out_ptr, remaining, "%lX", val);
+                } else {
+                    pr_err("ceph_san_log_reconstruct: invalid long format specifier '%%l%c'\n", *fmt);
+                    return -EINVAL;
+                }
+            }
+
+            if (ret > 0) {
+                if (ret > remaining)
+                    ret = remaining;
+                out_ptr += ret;
+                remaining -= ret;
+            }
+            break;
+        }
+
+        default:
+            // Unknown format specifier
+            pr_err("ceph_san_log_reconstruct: unknown format specifier '%%%c' in fmt string\n", *fmt);
+            return -EINVAL;
+        }
+
+        fmt++;
+    }
+
+    // Ensure null termination
+    *out_ptr = '\0';
+
+    return output_size - remaining - 1;
+}
+EXPORT_SYMBOL(ceph_san_log_reconstruct);
