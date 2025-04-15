@@ -425,12 +425,14 @@ static int ceph_san_tls_show(struct seq_file *s, void *p)
 
 		/* Iterate through all log entries in this context */
 		while ((entry = ceph_san_log_iter_next(&iter)) != NULL) {
+			char datetime_str[32];
+			char reconstructed_msg[256];
+
 			if (entry->debug_poison != CEPH_SAN_LOG_ENTRY_POISON) {
 				seq_puts(s, "    [Corrupted Entry]\n");
 				continue;
 			}
 
-			char datetime_str[32];
 			jiffies_to_formatted_time(entry->ts, datetime_str, sizeof(datetime_str));
 
 			/* Get source information for this ID */
@@ -441,10 +443,29 @@ static int ceph_san_tls_show(struct seq_file *s, void *p)
 				continue;
 			}
 
-			seq_printf(s, "[%d][%s][%s]:%s:%s:%u: ",
-					  pid, comm, datetime_str,
+			seq_printf(s, "[%d][%s][%s]", pid, comm, datetime_str);
+
+			/* Print client information if available */
+			if (entry->client_id > 0) {
+				const struct ceph_san_client_id *client_info =
+					ceph_san_get_client_info(entry->client_id);
+				if (client_info) {
+					char fsid_str[33] = {0}; // FSID is 16 bytes, each byte needs 2 hex chars
+					int i;
+
+					/* Convert binary FSID to string */
+					for (i = 0; i < 16; i++)
+						sprintf(fsid_str + (i * 2), "%02x", (unsigned char)client_info->fsid[i]);
+
+					seq_printf(s, "[%s:%llu]", fsid_str, client_info->global_id);
+				} else {
+					seq_printf(s, "[client_id=%u]", entry->client_id);
+				}
+			}
+
+			seq_printf(s, ":%s:%s:%u: ",
 					  source->file, source->func, source->line);
-			char reconstructed_msg[256];
+
 			int ret = ceph_san_log_reconstruct(entry, reconstructed_msg, sizeof(reconstructed_msg));
 			if (ret >= 0)
 				seq_puts(s, reconstructed_msg);
