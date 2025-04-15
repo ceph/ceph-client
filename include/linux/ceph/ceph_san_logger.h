@@ -20,7 +20,6 @@
 struct ceph_san_client_id {
     char fsid[16];         /* Client FSID */
     u64 global_id;         /* Client global ID */
-    u32 idx;              /* Index in the cache */
 };
 
 /* Source information mapping structure */
@@ -97,13 +96,13 @@ u32 ceph_san_check_client_id(u32 id, const char *fsid, u64 global_id);
 const struct ceph_san_client_id *ceph_san_get_client_info(u32 id);
 
 /* Log a message */
-void* ceph_san_log(u32 source_id, size_t needed_size);
+void* ceph_san_log(u32 source_id, u32 client_id, size_t needed_size);
 
 /* Get current TLS context, creating if necessary */
 struct ceph_san_tls_ctx *ceph_san_get_tls_ctx(void);
 
 /* Helper macro for logging */
-#define CEPH_SAN_LOG(fmt, ...) \
+#define __CEPH_SAN_LOG(id, fmt, ...) \
     do { \
         static u32 __source_id = 0; \
         static size_t __size = 0; \
@@ -112,30 +111,22 @@ struct ceph_san_tls_ctx *ceph_san_get_tls_ctx(void);
             __source_id = ceph_san_get_source_id(kbasename(__FILE__), __func__, __LINE__, fmt); \
             __size = ceph_san_cnt(__VA_ARGS__); \
         } \
-        ___buffer = ceph_san_log(__source_id, __size); \
+        ___buffer = ceph_san_log(__source_id, 0, __size); \
 	if (likely(___buffer)) {	\
 		ceph_san_ser(___buffer, ##__VA_ARGS__);\
 	} \
     } while (0)
+
+#define CEPH_SAN_LOG(fmt, ...) \
+    __CEPH_SAN_LOG(0, fmt, ##__VA_ARGS__)
 
 /* Helper macro for logging with client ID */
 #define CEPH_SAN_LOG_CLIENT(client, fmt, ...) \
     do { \
-        static u32 __source_id = 0; \
         static u32 __client_id = 0; \
-        static size_t __size = 0; \
-        void *___buffer = NULL; \
-        if (unlikely(__source_id == 0)) { \
-            __source_id = ceph_san_get_source_id(kbasename(__FILE__), __func__, __LINE__, fmt); \
-            __size = ceph_san_cnt(__VA_ARGS__); \
-        } \
         __client_id = ceph_san_check_client_id(__client_id, client->fsid.fsid, client->monc.auth->global_id); \
-        ___buffer = ceph_san_log(__source_id, __size); \
-	if (likely(___buffer)) {	\
-		ceph_san_ser(___buffer, ##__VA_ARGS__);\
-	} \
+        __CEPH_SAN_LOG(__client_id, fmt, ##__VA_ARGS__); \
     } while (0)
-
 /* Global logger instance */
 extern struct ceph_san_logger g_logger;
 

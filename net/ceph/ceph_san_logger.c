@@ -201,7 +201,6 @@ u32 ceph_san_check_client_id(u32 id, const char *fsid, u64 global_id)
     entry = &g_logger.client_map[found_id];
     memcpy(entry->fsid, fsid, sizeof(entry->fsid));
     entry->global_id = global_id;
-    entry->idx = found_id;
 
 out:
     spin_unlock(&g_logger.client_lock);
@@ -209,52 +208,6 @@ out_fast:
     return found_id;
 }
 EXPORT_SYMBOL(ceph_san_check_client_id);
-
-/**
- * ceph_san_get_client_id - Helper function to get or create a client ID
- * @fsid: Client FSID
- * @global_id: Client global ID
- *
- * Returns a unique ID for this client pair
- */
-static u32 ceph_san_get_client_id(const char *fsid, u64 global_id)
-{
-    u32 id;
-    struct ceph_san_client_id *entry;
-    bool found = false;
-    u32 max_id;
-
-    spin_lock(&g_logger.client_lock);
-    max_id = g_logger.next_client_id;
-
-    /* First try to find existing entry */
-    for (id = 1; id < max_id && id < CEPH_SAN_MAX_CLIENT_IDS; id++) {
-        entry = &g_logger.client_map[id];
-        if (memcmp(entry->fsid, fsid, sizeof(entry->fsid)) == 0 &&
-            entry->global_id == global_id) {
-            found = true;
-            break;
-        }
-    }
-
-    /* If not found, allocate new ID */
-    if (!found) {
-        id = ++g_logger.next_client_id;
-        if (id >= CEPH_SAN_MAX_CLIENT_IDS) {
-            /* If we run out of IDs, just use the first one */
-            pr_warn("ceph_san_logger: client ID overflow, reusing ID 1\n");
-            id = 1;
-        }
-
-        entry = &g_logger.client_map[id];
-        memcpy(entry->fsid, fsid, sizeof(entry->fsid));
-        entry->global_id = global_id;
-        entry->idx = id;
-    }
-
-    spin_unlock(&g_logger.client_lock);
-    return id;
-}
 
 /**
  * ceph_san_get_client_info - Get client info for a given ID
@@ -273,13 +226,13 @@ EXPORT_SYMBOL(ceph_san_get_client_info);
 /**
  * ceph_san_log - Log a message
  * @source_id: Source ID for this location
+ * @client_id: Client ID for this message
+ * @needed_size: Size needed for the message
  *
- * Logs a message to the current TLS context's log buffer
- * Format string is retrieved from the source_map
+ * Returns a buffer to write the message into
  */
-void* ceph_san_log(u32 source_id, size_t needed_size)
+void* ceph_san_log(u32 source_id, u32 client_id, size_t needed_size)
 {
-    /* Format the message into local buffer first */
     struct ceph_san_tls_ctx *ctx;
     struct ceph_san_log_entry *entry;
     u64 alloc;
@@ -290,7 +243,7 @@ void* ceph_san_log(u32 source_id, size_t needed_size)
         return NULL;
     }
 
-    /* Allocate entry from pagefrag - We need a spinlock here to protect access iterators */
+    /* Allocate entry from pagefrag */
     spin_lock_bh(&ctx->pf.lock);
     alloc = cephsan_pagefrag_alloc(&ctx->pf, needed_size);
     int loop_count = 0;
@@ -327,6 +280,7 @@ void* ceph_san_log(u32 source_id, size_t needed_size)
     entry->debug_poison = CEPH_SAN_LOG_ENTRY_POISON;
     entry->ts = jiffies;
     entry->source_id = source_id;
+    entry->client_id = client_id;
     if (unlikely(cephsan_pagefrag_is_wraparound(alloc))) {
         entry->buffer = cephsan_pagefrag_get_ptr(&ctx->pf, 0);
     } else {
