@@ -14,6 +14,14 @@
 #define CEPH_SAN_LOG_MAX_LEN 256
 #define CEPH_SAN_LOG_ENTRY_POISON 0xDEADBEEF
 #define CEPH_SAN_MAX_SOURCE_IDS 4096
+#define CEPH_SAN_MAX_CLIENT_IDS 1024
+
+/* Client ID cache entry */
+struct ceph_san_client_id {
+    char fsid[16];         /* Client FSID */
+    u64 global_id;         /* Client global ID */
+    u32 idx;              /* Index in the cache */
+};
 
 /* Source information mapping structure */
 struct ceph_san_source_info {
@@ -28,6 +36,7 @@ struct ceph_san_log_entry {
     u64 debug_poison;           /* Debug poison value */
     u64 ts;                     /* Timestamp (jiffies) */
     u32 source_id;              /* ID for source file/function/line */
+    u32 client_id;              /* ID for client (fsid:global_id) */
     unsigned int len;           /* Length of the message */
     char *buffer;               /* Flexible array for inline buffer */
 };
@@ -48,7 +57,10 @@ struct ceph_san_logger {
     struct ceph_san_batch alloc_batch;  /* Batch for allocating new entries */
     struct ceph_san_batch log_batch;    /* Batch for storing log entries */
     struct ceph_san_source_info source_map[CEPH_SAN_MAX_SOURCE_IDS]; /* Source info mapping */
+    struct ceph_san_client_id client_map[CEPH_SAN_MAX_CLIENT_IDS]; /* Client ID mapping */
     atomic_t next_source_id;    /* Next source ID to assign */
+    u32 next_client_id;        /* Next client ID to assign */
+    spinlock_t client_lock;     /* Protects client ID operations */
 };
 
 /* Iterator for log entries in a single pagefrag */
@@ -78,8 +90,14 @@ u32 ceph_san_get_source_id(const char *file, const char *func, unsigned int line
 /* Get source information for ID */
 const struct ceph_san_source_info *ceph_san_get_source_info(u32 id);
 
+/* Check if client ID matches given fsid and global_id, returning the actual ID */
+u32 ceph_san_check_client_id(u32 id, const char *fsid, u64 global_id);
+
+/* Get client information for ID */
+const struct ceph_san_client_id *ceph_san_get_client_info(u32 id);
+
 /* Log a message */
-void* ceph_san_log(u32 source_id, size_t size);
+void* ceph_san_log(u32 source_id, size_t needed_size);
 
 /* Get current TLS context, creating if necessary */
 struct ceph_san_tls_ctx *ceph_san_get_tls_ctx(void);
@@ -94,6 +112,24 @@ struct ceph_san_tls_ctx *ceph_san_get_tls_ctx(void);
             __source_id = ceph_san_get_source_id(kbasename(__FILE__), __func__, __LINE__, fmt); \
             __size = ceph_san_cnt(__VA_ARGS__); \
         } \
+        ___buffer = ceph_san_log(__source_id, __size); \
+	if (likely(___buffer)) {	\
+		ceph_san_ser(___buffer, ##__VA_ARGS__);\
+	} \
+    } while (0)
+
+/* Helper macro for logging with client ID */
+#define CEPH_SAN_LOG_CLIENT(client, fmt, ...) \
+    do { \
+        static u32 __source_id = 0; \
+        static u32 __client_id = 0; \
+        static size_t __size = 0; \
+        void *___buffer = NULL; \
+        if (unlikely(__source_id == 0)) { \
+            __source_id = ceph_san_get_source_id(kbasename(__FILE__), __func__, __LINE__, fmt); \
+            __size = ceph_san_cnt(__VA_ARGS__); \
+        } \
+        __client_id = ceph_san_check_client_id(__client_id, client->fsid.fsid, client->monc.auth->global_id); \
         ___buffer = ceph_san_log(__source_id, __size); \
 	if (likely(___buffer)) {	\
 		ceph_san_ser(___buffer, ##__VA_ARGS__);\

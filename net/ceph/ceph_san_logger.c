@@ -153,6 +153,124 @@ const struct ceph_san_source_info *ceph_san_get_source_info(u32 id)
 EXPORT_SYMBOL(ceph_san_get_source_info);
 
 /**
+ * ceph_san_check_client_id - Check if a client ID matches the given fsid:global_id pair
+ * @id: Client ID to check
+ * @fsid: Client FSID to compare
+ * @global_id: Client global ID to compare
+ *
+ * Returns the actual ID of the pair. If the given ID doesn't match, scans for
+ * existing matches or allocates a new ID if no match is found.
+ */
+u32 ceph_san_check_client_id(u32 id, const char *fsid, u64 global_id)
+{
+    u32 found_id = 0;
+    struct ceph_san_client_id *entry;
+    u32 max_id;
+
+    /* First check if the given ID matches */
+    if (id != 0 && id < CEPH_SAN_MAX_CLIENT_IDS) {
+        entry = &g_logger.client_map[id];
+        if (memcmp(entry->fsid, fsid, sizeof(entry->fsid)) == 0 &&
+            entry->global_id == global_id) {
+            found_id = id;
+            goto out_fast;
+        }
+    }
+
+    spin_lock(&g_logger.client_lock);
+    max_id = g_logger.next_client_id;
+
+    /* Scan for existing match */
+    for (id = 1; id < max_id && id < CEPH_SAN_MAX_CLIENT_IDS; id++) {
+        entry = &g_logger.client_map[id];
+        if (memcmp(entry->fsid, fsid, sizeof(entry->fsid)) == 0 &&
+            entry->global_id == global_id) {
+            found_id = id;
+            goto out;
+        }
+    }
+
+    /* No match found, allocate new ID */
+    found_id = ++g_logger.next_client_id;
+    if (found_id >= CEPH_SAN_MAX_CLIENT_IDS) {
+        /* If we run out of IDs, just use the first one */
+        pr_warn("ceph_san_logger: client ID overflow, reusing ID 1\n");
+        found_id = 1;
+    }
+
+    entry = &g_logger.client_map[found_id];
+    memcpy(entry->fsid, fsid, sizeof(entry->fsid));
+    entry->global_id = global_id;
+    entry->idx = found_id;
+
+out:
+    spin_unlock(&g_logger.client_lock);
+out_fast:
+    return found_id;
+}
+EXPORT_SYMBOL(ceph_san_check_client_id);
+
+/**
+ * ceph_san_get_client_id - Helper function to get or create a client ID
+ * @fsid: Client FSID
+ * @global_id: Client global ID
+ *
+ * Returns a unique ID for this client pair
+ */
+static u32 ceph_san_get_client_id(const char *fsid, u64 global_id)
+{
+    u32 id;
+    struct ceph_san_client_id *entry;
+    bool found = false;
+    u32 max_id;
+
+    spin_lock(&g_logger.client_lock);
+    max_id = g_logger.next_client_id;
+
+    /* First try to find existing entry */
+    for (id = 1; id < max_id && id < CEPH_SAN_MAX_CLIENT_IDS; id++) {
+        entry = &g_logger.client_map[id];
+        if (memcmp(entry->fsid, fsid, sizeof(entry->fsid)) == 0 &&
+            entry->global_id == global_id) {
+            found = true;
+            break;
+        }
+    }
+
+    /* If not found, allocate new ID */
+    if (!found) {
+        id = ++g_logger.next_client_id;
+        if (id >= CEPH_SAN_MAX_CLIENT_IDS) {
+            /* If we run out of IDs, just use the first one */
+            pr_warn("ceph_san_logger: client ID overflow, reusing ID 1\n");
+            id = 1;
+        }
+
+        entry = &g_logger.client_map[id];
+        memcpy(entry->fsid, fsid, sizeof(entry->fsid));
+        entry->global_id = global_id;
+        entry->idx = id;
+    }
+
+    spin_unlock(&g_logger.client_lock);
+    return id;
+}
+
+/**
+ * ceph_san_get_client_info - Get client info for a given ID
+ * @id: Client ID
+ *
+ * Returns the client information for this ID
+ */
+const struct ceph_san_client_id *ceph_san_get_client_info(u32 id)
+{
+    if (id == 0 || id >= CEPH_SAN_MAX_CLIENT_IDS)
+        return NULL;
+    return &g_logger.client_map[id];
+}
+EXPORT_SYMBOL(ceph_san_get_client_info);
+
+/**
  * ceph_san_log - Log a message
  * @source_id: Source ID for this location
  *
