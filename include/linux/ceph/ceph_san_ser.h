@@ -72,8 +72,8 @@
         /* For dynamic arrays, save NULL and string bytes */         \
         (*(void **)(__buffer) = NULL,                               \
          (__buffer) = (void *)((char *)(__buffer) + sizeof(void *)), \
-         memcpy((__buffer), __suppress_cast_warning(char *, __t), strlen(__suppress_cast_warning(char *, __t)) + 1), \
-         (__buffer) = (void *)((char *)(__buffer) + strlen(__suppress_cast_warning(char *, __t)) + 1)), \
+         memcpy((__buffer), __suppress_cast_warning(char *, __t), __builtin_strlen(__suppress_cast_warning(char *, __t)) + 1), \
+         (__buffer) = (void *)((char *)(__buffer) + __builtin_strlen(__suppress_cast_warning(char *, __t)) + 1)), \
     __builtin_choose_expr(sizeof(__t) == 1,                         \
         (*(uint8_t *)(__buffer) = __suppress_cast_warning(uint8_t, __t), \
          (__buffer) = (void *)((char *)(__buffer) + 1)),            \
