@@ -421,7 +421,7 @@ static bool __ceph_monc_want_map(struct ceph_mon_client *monc, int sub,
 	__le64 start = cpu_to_le64(epoch);
 	u8 flags = !continuous ? CEPH_SUBSCRIBE_ONETIME : 0;
 
-	dout("%s %s epoch %u continuous %d\n", ceph_sub_str[sub], epoch,
+	dout("%s epoch %u continuous %d\n", ceph_sub_str[sub], epoch,
 	     continuous);
 
 	if (monc->subs[sub].want &&
@@ -457,7 +457,7 @@ EXPORT_SYMBOL(ceph_monc_want_map);
 static void __ceph_monc_got_map(struct ceph_mon_client *monc, int sub,
 				u32 epoch)
 {
-	dout("%s %s epoch %u\n", ceph_sub_str[sub], epoch);
+	dout("%s epoch %u\n", ceph_sub_str[sub], epoch);
 
 	if (monc->subs[sub].want) {
 		if (monc->subs[sub].item.flags & CEPH_SUBSCRIBE_ONETIME)

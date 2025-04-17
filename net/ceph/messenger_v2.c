@@ -1495,7 +1495,7 @@ static int prepare_client_ident(struct ceph_connection *con)
 		     con->v2.client_cookie);
 	}
 
-	dout("%s con %p my_addr %s/%u peer_addr %s/%u global_id %llu global_seq %llu features 0x%llx required_features 0x%llx cookie 0x%llx\n",
+	dout("con %p my_addr %s/%u peer_addr %s/%u global_id %llu global_seq %llu features 0x%llx required_features 0x%llx cookie 0x%llx\n",
 	     con, ceph_pr_addr(my_addr), le32_to_cpu(my_addr->nonce),
 	     ceph_pr_addr(&con->peer_addr), le32_to_cpu(con->peer_addr.nonce),
 	     global_id, con->v2.global_seq, client->supported_features,
@@ -2186,7 +2186,7 @@ static int process_banner_payload(struct ceph_connection *con)
 	ceph_decode_64_safe(&p, end, server_feat, bad);
 	ceph_decode_64_safe(&p, end, server_req_feat, bad);
 
-	dout("%s con %p server_feat 0x%llx server_req_feat 0x%llx\n",
+	dout("con %p server_feat 0x%llx server_req_feat 0x%llx\n",
 	     con, server_feat, server_req_feat);
 
 	if (req_feat & ~server_feat) {
