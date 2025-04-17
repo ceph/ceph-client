@@ -429,7 +429,7 @@ static int ceph_san_tls_show(struct seq_file *s, void *p)
 			char reconstructed_msg[256];
 
 			if (entry->debug_poison != CEPH_SAN_LOG_ENTRY_POISON) {
-				seq_puts(s, "    [Corrupted Entry]\n");
+				pr_err("ceph_san_tls_show: corrupted log entry detected\n");
 				continue;
 			}
 
@@ -438,32 +438,16 @@ static int ceph_san_tls_show(struct seq_file *s, void *p)
 			/* Get source information for this ID */
 			source = ceph_san_get_source_info(entry->source_id);
 			if (!source) {
-				seq_printf(s, "[%d][%s][%s]:[Unknown Source ID %u]: %s\n",
+				pr_err("[%d][%s][%s]:[Unknown Source ID %u]: %s\n",
 						  pid, comm, datetime_str, entry->source_id, entry->buffer);
 				continue;
 			}
 
-			seq_printf(s, "[%d][%s][%s]", pid, comm, datetime_str);
-
-			/* Print client information if available */
-			if (entry->client_id > 0) {
-				const struct ceph_san_client_id *client_info =
-					ceph_san_get_client_info(entry->client_id);
-				if (client_info) {
-					char fsid_str[33] = {0}; // FSID is 16 bytes, each byte needs 2 hex chars
-					int i;
-
-					/* Convert binary FSID to string */
-					for (i = 0; i < 16; i++)
-						sprintf(fsid_str + (i * 2), "%02x", (unsigned char)client_info->fsid[i]);
-
-					seq_printf(s, "[%s:%llu]", fsid_str, client_info->global_id);
-				} else {
-					seq_printf(s, "[client_id=%u]", entry->client_id);
-				}
-			}
-
-			seq_printf(s, ":%s:%s:%u: ",
+			pr_err("[%d][%s][%s]:%s:%s:%u: ",
+					  pid, comm, datetime_str,
+					  source->file, source->func, source->line);
+			seq_printf(s, "[%d][%s][%s]:%s:%s:%u: ",
+					  pid, comm, datetime_str,
 					  source->file, source->func, source->line);
 
 			int ret = ceph_san_log_reconstruct(entry, reconstructed_msg, sizeof(reconstructed_msg));
