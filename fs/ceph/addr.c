@@ -1415,6 +1415,7 @@ int ceph_submit_write(struct address_space *mapping,
 	bool caching = ceph_is_cache_enabled(inode);
 	u64 offset;
 	u64 len;
+	unsigned processed_pages;
 	unsigned i;
 
 new_request:
@@ -1441,6 +1442,9 @@ new_request:
 					    true);
 		BUG_ON(IS_ERR(req));
 	}
+
+	if (ceph_wbc->locked_pages == 0)
+		return -EINVAL;
 
 	page = ceph_wbc->pages[ceph_wbc->locked_pages - 1];
 	BUG_ON(len < ceph_fscrypt_page_offset(page) + thp_size(page) - offset);
@@ -1478,6 +1482,7 @@ new_request:
 	len = 0;
 	ceph_wbc->data_pages = ceph_wbc->pages;
 	ceph_wbc->op_idx = 0;
+	processed_pages = 0;
 	for (i = 0; i < ceph_wbc->locked_pages; i++) {
 		u64 cur_offset;
 
@@ -1521,19 +1526,22 @@ new_request:
 			ceph_set_page_fscache(page);
 
 		len += thp_size(page);
+		processed_pages++;
 	}
 
 	ceph_fscache_write_to_cache(inode, offset, len, caching);
 
 	if (ceph_wbc->size_stable) {
 		len = min(len, ceph_wbc->i_size - offset);
-	} else if (i == ceph_wbc->locked_pages) {
+	} else if (processed_pages > 0 &&
+		   processed_pages == ceph_wbc->locked_pages) {
 		/* writepages_finish() clears writeback pages
 		 * according to the data length, so make sure
 		 * data length covers all locked pages */
 		u64 min_len = len + 1 - thp_size(page);
+		unsigned index = processed_pages - 1;
 		len = get_writepages_data_length(inode,
-						 ceph_wbc->pages[i - 1],
+						 ceph_wbc->pages[index],
 						 offset);
 		len = max(len, min_len);
 	}
@@ -1558,17 +1566,17 @@ new_request:
 	BUG_ON(ceph_wbc->op_idx + 1 != req->r_num_ops);
 
 	ceph_wbc->from_pool = false;
-	if (i < ceph_wbc->locked_pages) {
+	if (processed_pages < ceph_wbc->locked_pages) {
 		BUG_ON(ceph_wbc->num_ops <= req->r_num_ops);
 		ceph_wbc->num_ops -= req->r_num_ops;
-		ceph_wbc->locked_pages -= i;
+		ceph_wbc->locked_pages -= processed_pages;
 
 		/* allocate new pages array for next request */
 		ceph_wbc->data_pages = ceph_wbc->pages;
 		__ceph_allocate_page_array(ceph_wbc, ceph_wbc->locked_pages);
-		memcpy(ceph_wbc->pages, ceph_wbc->data_pages + i,
+		memcpy(ceph_wbc->pages, ceph_wbc->data_pages + processed_pages,
 			ceph_wbc->locked_pages * sizeof(*ceph_wbc->pages));
-		memset(ceph_wbc->data_pages + i, 0,
+		memset(ceph_wbc->data_pages + processed_pages, 0,
 			ceph_wbc->locked_pages * sizeof(*ceph_wbc->pages));
 	} else {
 		BUG_ON(ceph_wbc->num_ops != req->r_num_ops);
@@ -1580,7 +1588,7 @@ new_request:
 	ceph_osdc_start_request(&fsc->client->osdc, req);
 	req = NULL;
 
-	wbc->nr_to_write -= i;
+	wbc->nr_to_write -= processed_pages;
 	if (ceph_wbc->pages)
 		goto new_request;
 
