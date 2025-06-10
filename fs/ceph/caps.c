@@ -567,11 +567,24 @@ static void __cap_delay_cancel(struct ceph_mds_client *mdsc,
 	struct inode *inode = &ci->netfs.inode;
 
 	doutc(mdsc->fsc->client, "%p %llx.%llx\n", inode, ceph_vinop(inode));
-	if (list_empty(&ci->i_cap_delay_list))
-		return;
+
 	spin_lock(&mdsc->cap_delay_lock);
-	list_del_init(&ci->i_cap_delay_list);
+	if (!list_empty(&ci->i_cap_delay_list)) {
+		list_del_init(&ci->i_cap_delay_list);
+	}
 	spin_unlock(&mdsc->cap_delay_lock);
+}
+
+static inline bool is_cap_delay_list_empty_safe(struct ceph_mds_client *mdsc,
+						struct ceph_inode_info *ci)
+{
+	bool is_empty;
+
+	spin_lock(&mdsc->cap_delay_lock);
+	is_empty = list_empty(&ci->i_cap_delay_list);
+	spin_unlock(&mdsc->cap_delay_lock);
+
+	return is_empty;
 }
 
 /* Common issue checks for add_cap, handle_cap_grant. */
@@ -2269,7 +2282,7 @@ ack:
 
 	/* periodically re-calculate caps wanted by open files */
 	if (__ceph_is_any_real_caps(ci) &&
-	    list_empty(&ci->i_cap_delay_list) &&
+	    is_cap_delay_list_empty_safe(mdsc, ci) &&
 	    (file_wanted & ~CEPH_CAP_PIN) &&
 	    !(used & (CEPH_CAP_FILE_RD | CEPH_CAP_ANY_FILE_WR))) {
 		__cap_delay_requeue(mdsc, ci);
@@ -4752,7 +4765,7 @@ void __ceph_touch_fmode(struct ceph_inode_info *ci,
 	/* queue periodic check */
 	if (fmode &&
 	    __ceph_is_any_real_caps(ci) &&
-	    list_empty(&ci->i_cap_delay_list))
+	    is_cap_delay_list_empty_safe(mdsc, ci))
 		__cap_delay_requeue(mdsc, ci);
 }
 
