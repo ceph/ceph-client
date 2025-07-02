@@ -448,6 +448,8 @@ static int parse_reply_info_readdir(void **p, void *end,
 		struct fscrypt_str tname = FSTR_INIT(NULL, 0);
 		struct fscrypt_str oname = FSTR_INIT(NULL, 0);
 		struct ceph_fname fname;
+		char result_str[128];
+
 		u32 altname_len, _name_len;
 		u8 *altname, *_name;
 
@@ -456,7 +458,8 @@ static int parse_reply_info_readdir(void **p, void *end,
 		ceph_decode_need(p, end, _name_len, bad);
 		_name = *p;
 		*p += _name_len;
-		boutc(cl, "parsed dir dname '%.*s'\n", _name_len, _name);
+		CEPH_SAN_STRNCPY(result_str, sizeof(result_str), rde->name, rde->name_len);
+		boutc(cl, "parsed dir dname %s\n", result_str);
 
 		if (info->hash_order)
 			rde->raw_hash = ceph_str_hash(ci->i_dir_layout.dl_dir_hash,
@@ -2738,6 +2741,7 @@ char *ceph_mdsc_build_path(struct ceph_mds_client *mdsc, struct dentry *dentry,
 	int pos;
 	unsigned seq;
 	u64 base;
+	char result_str[128];
 
 	if (!dentry)
 		return ERR_PTR(-EINVAL);
@@ -2841,8 +2845,9 @@ retry:
 
 	*pbase = base;
 	*plen = PATH_MAX - 1 - pos;
-	boutc(cl, "on %p %d built %llx '%.*s'\n", dentry, d_count(dentry),
-	      base, *plen, path + pos);
+	CEPH_SAN_STRNCPY(result_str, sizeof(result_str), path + pos, *plen);
+	boutc(cl, "on %p %d built %llx '%s'\n", dentry, d_count(dentry),
+	      base, result_str);
 	return path + pos;
 }
 
@@ -2906,6 +2911,7 @@ static int set_request_path_attr(struct ceph_mds_client *mdsc, struct inode *rin
 				 bool parent_locked)
 {
 	struct ceph_client *cl = mdsc->fsc->client;
+	char result_str[128];
 	int r = 0;
 
 	if (rinode) {
@@ -2915,12 +2921,14 @@ static int set_request_path_attr(struct ceph_mds_client *mdsc, struct inode *rin
 	} else if (rdentry) {
 		r = build_dentry_path(mdsc, rdentry, rdiri, ppath, pathlen, ino,
 					freepath, parent_locked);
-		boutc(cl, " dentry %p %llx/%.*s\n", rdentry, *ino, *pathlen, *ppath);
+		CEPH_SAN_STRNCPY(result_str, sizeof(result_str), *ppath, *pathlen);
+		boutc(cl, " dentry %p %llx/%s\n", rdentry, *ino, result_str);
 	} else if (rpath || rino) {
 		*ino = rino;
 		*ppath = rpath;
 		*pathlen = rpath ? strlen(rpath) : 0;
-		boutc(cl, " path %.*s\n", *pathlen, rpath);
+		CEPH_SAN_STRNCPY(result_str, sizeof(result_str), rpath, *pathlen);
+		boutc(cl," path %s\n", result_str);
 	}
 
 	return r;
@@ -5210,6 +5218,7 @@ static void handle_lease(struct ceph_mds_client *mdsc,
 			 struct ceph_mds_session *session,
 			 struct ceph_msg *msg)
 {
+	char result_str[128];
 	struct ceph_client *cl = mdsc->fsc->client;
 	struct super_block *sb = mdsc->fsc->sb;
 	struct inode *inode;
@@ -5240,8 +5249,9 @@ static void handle_lease(struct ceph_mds_client *mdsc,
 
 	/* lookup inode */
 	inode = ceph_find_inode(sb, vino);
-	boutc(cl, "%s, ino %llx %p %.*s\n", ceph_lease_op_name(h->action),
-	      vino.ino, inode, dname.len, dname.name);
+	CEPH_SAN_STRNCPY(result_str, sizeof(result_str), dname.name, dname.len);
+	boutc(cl, "%s, ino %llx %p %s\n", ceph_lease_op_name(h->action),
+	      vino.ino, inode, result_str);
 
 	mutex_lock(&session->s_mutex);
 	if (!inode) {

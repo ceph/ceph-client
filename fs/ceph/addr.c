@@ -2390,10 +2390,12 @@ static int __ceph_pool_perm_get(struct ceph_inode_info *ci,
 	if (*p)
 		goto out;
 
-	if (pool_ns)
-		boutc(cl, "pool %lld ns %.*s no perm cached\n", pool,
-		      (int)pool_ns->len, pool_ns->str);
-	else
+	if (pool_ns) {
+		char result_str[128];
+		CEPH_SAN_STRNCPY(result_str, sizeof(result_str), pool_ns->str, (int)pool_ns->len);
+		boutc(cl, "pool %lld ns %s no perm cached\n", pool,
+		      result_str);
+	} else
 		boutc(cl, "pool %lld no perm cached\n", pool);
 
 	down_write(&mdsc->pool_perm_rwsem);
@@ -2518,10 +2520,12 @@ out_unlock:
 out:
 	if (!err)
 		err = have;
-	if (pool_ns)
-		boutc(cl, "pool %lld ns %.*s result = %d\n", pool,
-		      (int)pool_ns->len, pool_ns->str, err);
-	else
+	if (pool_ns) {
+		char result_str[128];
+		CEPH_SAN_STRNCPY(result_str, sizeof(result_str), pool_ns->str, (int)pool_ns->len);
+		boutc(cl, "pool %lld ns %s result = %d\n", pool,
+		      result_str, err);
+	} else
 		boutc(cl, "pool %lld result = %d\n", pool, err);
 	return err;
 }
