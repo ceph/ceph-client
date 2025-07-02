@@ -236,7 +236,7 @@ struct ceph_mdsmap *ceph_mdsmap_decode(struct ceph_mds_client *mdsc, void **p,
 			*p = info_end;
 		}
 
-		doutc(cl, "%d/%d %lld mds%d.%d %s %s%s\n", i+1, n, global_id,
+		boutc(cl, "%d/%d %lld mds%d.%d %s %s%s\n", i+1, n, global_id,
 		      mds, inc, ceph_pr_addr(&addr),
 		      ceph_mds_state_name(state), laggy ? "(laggy)" : "");
 
@@ -246,7 +246,7 @@ struct ceph_mdsmap *ceph_mdsmap_decode(struct ceph_mds_client *mdsc, void **p,
 		}
 
 		if (state <= 0) {
-			doutc(cl, "got incorrect state(%s)\n",
+			boutc(cl, "got incorrect state(%s)\n",
 			      ceph_mds_state_name(state));
 			continue;
 		}
@@ -387,10 +387,10 @@ struct ceph_mdsmap *ceph_mdsmap_decode(struct ceph_mds_client *mdsc, void **p,
 		ceph_decode_64_safe(p, end, m->m_max_xattr_size, bad_ext);
 	}
 bad_ext:
-	doutc(cl, "m_enabled: %d, m_damaged: %d, m_num_laggy: %d\n",
+	boutc(cl, "m_enabled: %d, m_damaged: %d, m_num_laggy: %d\n",
 	      !!m->m_enabled, !!m->m_damaged, m->m_num_laggy);
 	*p = end;
-	doutc(cl, "success epoch %u\n", m->m_epoch);
+	boutc(cl, "success epoch %u\n", m->m_epoch);
 	return m;
 nomem:
 	err = -ENOMEM;

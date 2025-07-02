@@ -258,10 +258,10 @@ static long ceph_ioctl_lazyio(struct file *file)
 	spin_unlock(&ci->i_ceph_lock);
 
 	if (is_file_already_lazy) {
-		doutc(cl, "file %p %p %llx.%llx already lazy\n", file, inode,
+		boutc(cl, "file %p %p %llx.%llx already lazy\n", file, inode,
 		      ceph_vinop(inode));
 	} else {
-		doutc(cl, "file %p %p %llx.%llx marked lazy\n", file, inode,
+		boutc(cl, "file %p %p %llx.%llx marked lazy\n", file, inode,
 		      ceph_vinop(inode));
 
 		ceph_check_caps(ci, 0);
@@ -368,7 +368,7 @@ long ceph_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	struct ceph_fs_client *fsc = ceph_inode_to_fs_client(inode);
 	int ret;
 
-	doutc(fsc->client, "file %p %p %llx.%llx cmd %s arg %lu\n", file,
+	boutc(fsc->client, "file %p %p %llx.%llx cmd %s arg %lu\n", file,
 	      inode, ceph_vinop(inode), ceph_ioctl_cmd_name(cmd), arg);
 	switch (cmd) {
 	case CEPH_IOC_GET_LAYOUT:
