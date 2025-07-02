@@ -164,7 +164,7 @@ static struct inode *lookup_quotarealm_inode(struct ceph_mds_client *mdsc,
 	}
 
 	if (IS_ERR(in)) {
-		doutc(cl, "Can't lookup inode %llx (err: %ld)\n", realm->ino,
+		boutc(cl, "Can't lookup inode %llx (err: %ld)\n", realm->ino,
 		      PTR_ERR(in));
 		qri->timeout = jiffies + secs_to_jiffies(60); /* XXX */
 	} else {

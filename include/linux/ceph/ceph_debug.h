@@ -57,6 +57,8 @@
 	pr_debug(" [%pU %llu] %s: " fmt, &client->fsid,			\
 		 client->monc.auth->global_id, __func__, ##__VA_ARGS__)
 
+#endif
+
 #define bout_dbg(fmt, ...)	\
 	do { \
 		__CEPH_SAN_LOG(1, 0, fmt, ##__VA_ARGS__); \
@@ -71,7 +73,6 @@
 	do { \
 		CEPH_SAN_LOG_CLIENT(client, fmt, ##__VA_ARGS__); \
 	} while (0)
-#endif
 
 #define pr_notice_client(client, fmt, ...)				\
 	pr_notice("[%pU %llu]: " fmt, &client->fsid,			\
