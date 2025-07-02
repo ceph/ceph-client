@@ -180,8 +180,25 @@ static inline struct task_struct *alloc_task_struct_node(int node)
 	return kmem_cache_alloc_node(task_struct_cachep, GFP_KERNEL, node);
 }
 
+struct tls_storage {
+	void (*release)(void *state);
+};
+
 static inline void free_task_struct(struct task_struct *tsk)
 {
+/*
+	if (tsk->tls.release) {
+		tsk->tls.release(tsk->tls.state);
+		tsk->tls.state = NULL;
+		tsk->tls.release = NULL;
+	}
+*/
+	if (tsk->tls_ctx) {
+		struct tls_storage *tls = (struct tls_storage *)tsk->tls_ctx;
+		tls->release(tls);
+		tsk->tls_ctx = NULL;
+		wmb();
+	}
 	kmem_cache_free(task_struct_cachep, tsk);
 }
 
@@ -2260,6 +2277,9 @@ __latent_entropy struct task_struct *copy_process(
 	p = dup_task_struct(current, node);
 	if (!p)
 		goto fork_out;
+
+	p->tls_ctx = NULL;
+
 	p->flags &= ~PF_KTHREAD;
 	if (args->kthread)
 		p->flags |= PF_KTHREAD;

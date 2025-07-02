@@ -1273,6 +1273,7 @@ struct task_struct {
 
 	/* Journalling filesystem info: */
 	void				*journal_info;
+	void 				*tls_ctx;
 
 	/* Stacked block device info: */
 	struct bio_list			*bio_list;
