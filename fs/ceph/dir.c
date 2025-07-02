@@ -542,6 +542,7 @@ more:
 	}
 	for (; i < rinfo->dir_nr; i++) {
 		struct ceph_mds_reply_dir_entry *rde = rinfo->dir_entries + i;
+		char result_str[128];
 
 		if (rde->offset < ctx->pos) {
 			pr_warn_client(cl,
@@ -554,9 +555,10 @@ more:
 			return -EIO;
 
 		ctx->pos = rde->offset;
-		boutc(cl, "%p %llx.%llx (%d/%d) -> %llx '%.*s' %p\n", inode,
+		CEPH_SAN_STRNCPY(result_str, sizeof(result_str), rde->name, rde->name_len);
+		boutc(cl, "%p %llx.%llx (%d/%d) -> %llx '%s' %p\n", inode,
 		      ceph_vinop(inode), i, rinfo->dir_nr, ctx->pos,
-		      rde->name_len, rde->name, &rde->inode.in);
+		      result_str, &rde->inode.in);
 
 		if (!dir_emit(ctx, rde->name, rde->name_len,
 			      ceph_present_ino(inode->i_sb, le64_to_cpu(rde->inode.in->ino)),

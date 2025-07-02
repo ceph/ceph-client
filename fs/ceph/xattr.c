@@ -571,6 +571,8 @@ static int __set_xattr(struct ceph_inode_info *ci,
 			   int flags, int update_xattr,
 			   struct ceph_inode_xattr **newxattr)
 {
+	char result_str[128];
+	char result_str2[128];
 	struct inode *inode = &ci->netfs.inode;
 	struct ceph_client *cl = ceph_inode_to_client(inode);
 	struct rb_node **p;
@@ -659,9 +661,10 @@ static int __set_xattr(struct ceph_inode_info *ci,
 		boutc(cl, "p=%p\n", p);
 	}
 
-	boutc(cl, "added %p %llx.%llx xattr %p %.*s=%.*s%s\n", inode,
-	      ceph_vinop(inode), xattr, name_len, name, min(val_len,
-	      MAX_XATTR_VAL_PRINT_LEN), val,
+	CEPH_SAN_STRNCPY(result_str, sizeof(result_str), name, name_len);
+	CEPH_SAN_STRNCPY(result_str2, sizeof(result_str2), val, min(val_len, MAX_XATTR_VAL_PRINT_LEN));
+	boutc(cl, "added %p %llx.%llx xattr %p %s=%s%s\n", inode,
+	      ceph_vinop(inode), xattr, result_str, result_str2,
 	      val_len > MAX_XATTR_VAL_PRINT_LEN ? "..." : "");
 
 	return 0;
@@ -670,6 +673,7 @@ static int __set_xattr(struct ceph_inode_info *ci,
 static struct ceph_inode_xattr *__get_xattr(struct ceph_inode_info *ci,
 			   const char *name)
 {
+	char result_str[128];
 	struct ceph_client *cl = ceph_inode_to_client(&ci->netfs.inode);
 	struct rb_node **p;
 	struct rb_node *parent = NULL;
@@ -690,8 +694,8 @@ static struct ceph_inode_xattr *__get_xattr(struct ceph_inode_info *ci,
 			p = &(*p)->rb_right;
 		else {
 			int len = min(xattr->val_len, MAX_XATTR_VAL_PRINT_LEN);
-
-			boutc(cl, "%s found %.*s%s\n", name, len, xattr->val,
+			CEPH_SAN_STRNCPY(result_str, sizeof(result_str), xattr->val, len);
+			boutc(cl, "%s found %s%s\n", name, result_str,
 			      xattr->val_len > len ? "..." : "");
 			return xattr;
 		}
@@ -765,6 +769,7 @@ void __ceph_destroy_xattrs(struct ceph_inode_info *ci)
 	struct ceph_client *cl = ceph_inode_to_client(&ci->netfs.inode);
 	struct rb_node *p, *tmp;
 	struct ceph_inode_xattr *xattr = NULL;
+	char result_str[128];
 
 	p = rb_first(&ci->i_xattrs.index);
 
@@ -774,7 +779,8 @@ void __ceph_destroy_xattrs(struct ceph_inode_info *ci)
 		xattr = rb_entry(p, struct ceph_inode_xattr, node);
 		tmp = p;
 		p = rb_next(tmp);
-		boutc(cl, "next p=%p (%.*s)\n", p, xattr->name_len, xattr->name);
+		CEPH_SAN_STRNCPY(result_str, sizeof(result_str), xattr->name, xattr->name_len);
+		boutc(cl, "next p=%p (%s)\n", p, result_str);
 		rb_erase(tmp, &ci->i_xattrs.index);
 
 		__free_xattr(xattr);

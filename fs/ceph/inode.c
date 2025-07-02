@@ -1563,6 +1563,7 @@ int ceph_fill_trace(struct super_block *sb, struct ceph_mds_request *req)
 		if (dir && req->r_op == CEPH_MDS_OP_LOOKUPNAME &&
 		    test_bit(CEPH_MDS_R_PARENT_LOCKED, &req->r_req_flags) &&
 		    !test_bit(CEPH_MDS_R_ABORTED, &req->r_req_flags)) {
+			char result_str[128];
 			bool is_nokey = false;
 			struct qstr dname;
 			struct dentry *dn, *parent;
@@ -1597,14 +1598,15 @@ int ceph_fill_trace(struct super_block *sb, struct ceph_mds_request *req)
 			tvino.ino = le64_to_cpu(rinfo->targeti.in->ino);
 			tvino.snap = le64_to_cpu(rinfo->targeti.in->snapid);
 retry_lookup:
+			CEPH_SAN_STRNCPY(result_str, sizeof(result_str), dname.name, dname.len);
 			dn = d_lookup(parent, &dname);
-			boutc(cl, "d_lookup on parent=%p name=%.*s got %p\n",
-			      parent, dname.len, dname.name, dn);
+			boutc(cl, "d_lookup on parent=%p name=%s got %p\n",
+			      parent, result_str, dn);
 
 			if (!dn) {
 				dn = d_alloc(parent, &dname);
-				boutc(cl, "d_alloc %p '%.*s' = %p\n", parent,
-				      dname.len, dname.name, dn);
+				boutc(cl, "d_alloc %p '%s' = %p\n", parent,
+				      result_str, dn);
 				if (!dn) {
 					dput(parent);
 					ceph_fname_free_buffer(dir, &oname);
@@ -1979,6 +1981,7 @@ int ceph_readdir_prepopulate(struct ceph_mds_request *req,
 	for (i = 0; i < rinfo->dir_nr; i++) {
 		struct ceph_mds_reply_dir_entry *rde = rinfo->dir_entries + i;
 		struct ceph_vino tvino;
+		char result_str[128];
 
 		dname.name = rde->name;
 		dname.len = rde->name_len;
@@ -1999,13 +2002,14 @@ int ceph_readdir_prepopulate(struct ceph_mds_request *req,
 
 retry_lookup:
 		dn = d_lookup(parent, &dname);
-		boutc(cl, "d_lookup on parent=%p name=%.*s got %p\n",
-		      parent, dname.len, dname.name, dn);
+		CEPH_SAN_STRNCPY(result_str, sizeof(result_str), dname.name, dname.len);
+		boutc(cl, "d_lookup on parent=%p name=%s got %p\n",
+		      parent, result_str, dn);
 
 		if (!dn) {
 			dn = d_alloc(parent, &dname);
-			boutc(cl, "d_alloc %p '%.*s' = %p\n", parent,
-			      dname.len, dname.name, dn);
+			boutc(cl, "d_alloc %p '%s' = %p\n", parent,
+			      result_str, dn);
 			if (!dn) {
 				boutc(cl, "d_alloc badness\n");
 				err = -ENOMEM;
