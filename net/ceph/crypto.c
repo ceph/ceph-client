@@ -81,8 +81,6 @@ int ceph_crypto_key_prepare(struct ceph_crypto_key *key,
 	switch (key->type) {
 	case CEPH_CRYPTO_NONE:
 		return 0; /* nothing to do */
-	case CEPH_CRYPTO_AES:
-		return set_aes_tfm(key);
 	case CEPH_CRYPTO_AES256KRB5:
 		hmac_sha256_preparekey(&key->hmac_key, key->key, key->len);
 		return set_krb5_tfms(key, key_usages, key_usage_cnt);
