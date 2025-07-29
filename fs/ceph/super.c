@@ -27,6 +27,7 @@
 #include <linux/ceph/mon_client.h>
 #include <linux/ceph/auth.h>
 #include <linux/ceph/debugfs.h>
+#include <linux/ceph/ceph_san_logger.h>
 
 #include <uapi/linux/magic.h>
 
@@ -1643,15 +1644,21 @@ static int __init init_ceph(void)
 	if (ret)
 		goto out;
 
+	ret = ceph_san_logger_init();
+	if (ret)
+		goto out_caches;
+
 	ceph_flock_init();
 	ret = register_filesystem(&ceph_fs_type);
 	if (ret)
-		goto out_caches;
+		goto out_logger;
 
 	pr_info("loaded (mds proto %d)\n", CEPH_MDSC_PROTOCOL);
 
 	return 0;
 
+out_logger:
+	ceph_san_logger_cleanup();
 out_caches:
 	destroy_caches();
 out:
@@ -1662,6 +1669,7 @@ static void __exit exit_ceph(void)
 {
 	bout("exit_ceph\n");
 	unregister_filesystem(&ceph_fs_type);
+	ceph_san_logger_cleanup();
 	destroy_caches();
 }
 
