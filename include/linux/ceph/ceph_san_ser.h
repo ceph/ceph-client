@@ -42,7 +42,7 @@
     16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
 #define ceph_san_narg(...) ___ceph_san_narg(__VA_ARGS__)
 
-#define STR_MAX_SIZE 64
+#define STR_MAX_SIZE 256
 #define __sizeof(x) \
     (IS_STR(x) ? STR_MAX_SIZE : \
      (sizeof(x) < 4) ? 4 : sizeof(x))
@@ -130,7 +130,7 @@ static inline size_t strscpy_n(char *dst, const char *src)
 	}
 
     dst[count] = '\0';
-    pr_err("strscpy_n: string truncated, exceeded max size %d\n", STR_MAX_SIZE);
+    pr_warn("strscpy_n: string truncated, exceeded max size %d\n", STR_MAX_SIZE);
 out:
 	return count + 1;
 }
@@ -145,8 +145,18 @@ static inline ssize_t __strscpy(char *dst, const char *src)
 static inline void* strscpy_n_update(char *dst, const char *src, const char *file, int line)
 {
     ssize_t ret = __strscpy(dst, src);
-    if (!(unlikely(ret > 0 && ret < STR_MAX_SIZE))) {
-        panic("strscpy_n_update: ret = %zd at %s:%d :: %s < - %s\n", ret, file, line, dst, src);
+    if (unlikely(ret <= 0 || ret >= STR_MAX_SIZE)) {
+        pr_err("strscpy_n_update: string handling error ret=%zd at %s:%d :: dst='%s' src='%s'\n",
+               ret, file, line, dst, src ? src : "(null)");
+        /* Return safely instead of panicking - truncate and continue */
+        if (ret >= STR_MAX_SIZE) {
+            dst[STR_MAX_SIZE - 1] = '\0';
+            ret = STR_MAX_SIZE;
+        } else {
+            /* Handle null or empty string case */
+            dst[0] = '\0';
+            ret = 1;
+        }
     }
     return dst + round_up(ret, 4);
 }

@@ -9,8 +9,15 @@
 #include <linux/seq_file.h>
 #include <linux/math64.h>
 #include <linux/ktime.h>
+#include <linux/jiffies.h>
+#include <linux/timekeeping.h>
+#include <linux/rtc.h>
+#include <linux/printk.h>
+#include <linux/time.h>
+#include <linux/time_types.h>
 
 #include <linux/ceph/libceph.h>
+#include <linux/ceph/ceph_san_logger.h>
 #include <linux/ceph/mon_client.h>
 #include <linux/ceph/auth.h>
 #include <linux/ceph/debugfs.h>
@@ -349,6 +356,39 @@ static int mds_sessions_show(struct seq_file *s, void *ptr)
 	return 0;
 }
 
+/* @buffer: The buffer to store the formatted date and time string.
+ * @buffer_len: The length of the buffer.
+ *
+ * Returns: The number of characters written to the buffer, or a negative error code.
+ */
+static int jiffies_to_formatted_time(unsigned long jiffies_value, char *buffer, size_t buffer_len)
+{
+    unsigned long seconds;
+    unsigned long subsec_jiffies;
+    unsigned long microseconds;
+    struct tm tm_time;
+    time64_t timestamp;
+
+    // Convert jiffies to seconds since boot
+    seconds = jiffies_value / HZ;
+
+    // Calculate remaining jiffies for subsecond precision
+    subsec_jiffies = jiffies_value % HZ;
+    microseconds = (subsec_jiffies * 1000) / HZ;
+
+    // Get current time and calculate absolute timestamp
+    // Using boottime as reference to convert relative jiffies to absolute time
+    timestamp = ktime_get_real_seconds() - (jiffies - jiffies_value) / HZ;
+
+    // Convert to broken-down time
+    time64_to_tm(timestamp, 0, &tm_time);
+
+    // Format the time into the buffer with millisecond precision
+    return snprintf(buffer, buffer_len, "%04ld-%02d-%02d %02d:%02d:%02d.%03lu",
+                   tm_time.tm_year + 1900, tm_time.tm_mon + 1, tm_time.tm_mday,
+                   tm_time.tm_hour, tm_time.tm_min, tm_time.tm_sec, microseconds);
+}
+
 static int status_show(struct seq_file *s, void *p)
 {
 	struct ceph_fs_client *fsc = s->private;
@@ -362,6 +402,122 @@ static int status_show(struct seq_file *s, void *p)
 	return 0;
 }
 
+static int ceph_san_tls_show_internal(struct seq_file *s, void *p)
+{
+	struct ceph_san_tls_ctx *ctx;
+	struct ceph_san_log_iter iter;
+	struct ceph_san_log_entry *entry;
+	const struct ceph_san_source_info *source;
+	int total_entries = 0;
+	int total_contexts = 0;
+
+	/* Lock the logger to safely traverse the contexts list */
+	spin_lock(&g_logger.lock);
+
+	list_for_each_entry(ctx, &g_logger.contexts, list) {
+		/* Initialize iterator for this context's pagefrag */
+		ceph_san_log_iter_init(&iter, &ctx->pf);
+		int pid = ctx->pid;
+		char *comm = ctx->comm;
+		int ctx_entries = 0;
+
+		total_contexts++;
+
+		/* Lock the pagefrag before accessing entries */
+		spin_lock_bh(&ctx->pf.lock);
+
+		/* Iterate through log entries in this context */
+		while ((entry = ceph_san_log_iter_next(&iter)) != NULL) {
+			char datetime_str[32];
+			char reconstructed_msg[256];
+
+			/* Validate entry before processing */
+			if (!entry || !is_valid_kernel_addr(entry)) {
+				seq_printf(s, "[%d][%s]: Invalid entry pointer %p\n", pid, comm, entry);
+				break;
+			}
+
+#if CEPH_SAN_DEBUG_POISON
+			if (entry->debug_poison != CEPH_SAN_LOG_ENTRY_POISON) {
+				seq_printf(s, "[%d][%s]: Corrupted log entry detected\n", pid, comm);
+				continue;
+			}
+#endif
+
+			/* Calculate absolute timestamp from delta */
+			unsigned long abs_jiffies = ctx->base_jiffies + entry->ts_delta;
+			jiffies_to_formatted_time(abs_jiffies, datetime_str, sizeof(datetime_str));
+
+			/* Get source information for this ID */
+			source = ceph_san_get_source_info(entry->source_id);
+			if (!source) {
+				seq_printf(s, "[%d][%s][%s]:[Unknown Source ID %u]: %s\n",
+						  pid, comm, datetime_str, entry->source_id, entry->buffer);
+				total_entries++;
+				ctx_entries++;
+				continue;
+			}
+
+			seq_printf(s, "[%d][%s][%s]:%s:%s:%u: ",
+					  pid, comm, datetime_str,
+					  source->file, source->func, source->line);
+
+			int ret = ceph_san_log_reconstruct(entry, reconstructed_msg, sizeof(reconstructed_msg));
+			if (ret >= 0)
+				seq_puts(s, reconstructed_msg);
+			else
+				seq_printf(s, "<error reconstructing message: %d>", ret);
+			seq_putc(s, '\n');
+
+			total_entries++;
+			ctx_entries++;
+		}
+
+		/* Unlock the pagefrag after we're done with this context */
+		spin_unlock_bh(&ctx->pf.lock);
+	}
+
+	spin_unlock(&g_logger.lock);
+
+	/* Add summary information */
+	seq_printf(s, "\n=== Summary ===\n");
+	seq_printf(s, "Total contexts: %d\n", total_contexts);
+	seq_printf(s, "Total entries: %d\n", total_entries);
+
+	return 0;
+}
+
+static int ceph_san_tls_show(struct seq_file *s, void *p)
+{
+	return ceph_san_tls_show_internal(s, p);
+}
+
+
+
+static int ceph_san_contexts_show(struct seq_file *s, void *p)
+{
+    struct ceph_san_tls_ctx *ctx;
+    unsigned long flags;
+
+    /* Lock the logger to safely traverse the contexts list */
+    spin_lock_irqsave(&g_logger.lock, flags);
+    seq_puts(s, "Active TLS Contexts:\n");
+    seq_puts(s, "PID      Command          State    Context ID    Base Jiffies\n");
+    seq_puts(s, "------------------------------------------------------------\n");
+    list_for_each_entry(ctx, &g_logger.contexts, list) {
+        char task_state = ctx->task ? task_state_to_char(ctx->task) : 'N';
+
+        seq_printf(s, "%-8d %-15s [%c] %-12llu %-12lu\n",
+                  ctx->pid,
+                  ctx->comm,
+                  task_state,
+                  ctx->id,
+                  ctx->base_jiffies);
+    }
+    spin_unlock_irqrestore(&g_logger.lock, flags);
+    return 0;
+}
+
 DEFINE_SHOW_ATTRIBUTE(mdsmap);
 DEFINE_SHOW_ATTRIBUTE(mdsc);
 DEFINE_SHOW_ATTRIBUTE(caps);
@@ -371,6 +527,8 @@ DEFINE_SHOW_ATTRIBUTE(metrics_file);
 DEFINE_SHOW_ATTRIBUTE(metrics_latency);
 DEFINE_SHOW_ATTRIBUTE(metrics_size);
 DEFINE_SHOW_ATTRIBUTE(metrics_caps);
+DEFINE_SHOW_ATTRIBUTE(ceph_san_tls);
+DEFINE_SHOW_ATTRIBUTE(ceph_san_contexts);
 
 
 /*
@@ -398,7 +556,7 @@ DEFINE_SIMPLE_ATTRIBUTE(congestion_kb_fops, congestion_kb_get,
 
 void ceph_fs_debugfs_cleanup(struct ceph_fs_client *fsc)
 {
-	boutc(fsc->client, "begin\n");
+	doutc(fsc->client, "begin\n");
 	debugfs_remove(fsc->debugfs_bdi);
 	debugfs_remove(fsc->debugfs_congestion_kb);
 	debugfs_remove(fsc->debugfs_mdsmap);
@@ -406,15 +564,17 @@ void ceph_fs_debugfs_cleanup(struct ceph_fs_client *fsc)
 	debugfs_remove(fsc->debugfs_caps);
 	debugfs_remove(fsc->debugfs_status);
 	debugfs_remove(fsc->debugfs_mdsc);
+	debugfs_remove(fsc->debugfs_cephsan_tls);
+	debugfs_remove(fsc->debugfs_cephsan_contexts);
 	debugfs_remove_recursive(fsc->debugfs_metrics_dir);
-	boutc(fsc->client, "done\n");
+	doutc(fsc->client, "done\n");
 }
 
 void ceph_fs_debugfs_init(struct ceph_fs_client *fsc)
 {
 	char name[NAME_MAX];
 
-	boutc(fsc->client, "begin\n");
+	doutc(fsc->client, "begin\n");
 	fsc->debugfs_congestion_kb =
 		debugfs_create_file("writeback_congestion_kb",
 				    0600,
@@ -459,6 +619,20 @@ void ceph_fs_debugfs_init(struct ceph_fs_client *fsc)
 						  fsc,
 						  &status_fops);
 
+
+	fsc->debugfs_cephsan_tls = debugfs_create_file("cephsan_tls",
+							0444,
+							fsc->client->debugfs_dir,
+							fsc,
+							&ceph_san_tls_fops);
+
+	/* Add the new contexts-only view */
+	fsc->debugfs_cephsan_contexts = debugfs_create_file("cephsan_contexts",
+							0444,
+							fsc->client->debugfs_dir,
+							fsc,
+							&ceph_san_contexts_fops);
+
 	fsc->debugfs_metrics_dir = debugfs_create_dir("metrics",
 						      fsc->client->debugfs_dir);
 
@@ -473,7 +647,6 @@ void ceph_fs_debugfs_init(struct ceph_fs_client *fsc)
 	boutc(fsc->client, "done\n");
 }
 
-
 #else  /* CONFIG_DEBUG_FS */
 
 void ceph_fs_debugfs_init(struct ceph_fs_client *fsc)
@@ -484,4 +657,4 @@ void ceph_fs_debugfs_cleanup(struct ceph_fs_client *fsc)
 {
 }
 
-#endif  /* CONFIG_DEBUG_FS */
+#endif	/* CONFIG_DEBUG_FS */

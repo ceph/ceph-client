@@ -115,8 +115,6 @@ void ceph_san_log_iter_init(struct ceph_san_log_iter *iter, struct cephsan_pagef
 /* Get next log entry, returns NULL when no more entries */
 struct ceph_san_log_entry *ceph_san_log_iter_next(struct ceph_san_log_iter *iter);
 
-/* Reconstruct a formatted string from a log entry */
-int ceph_san_log_reconstruct(const struct ceph_san_log_entry *entry, char *output, size_t output_size);
 
 /* Initialize the logging system */
 int ceph_san_logger_init(void);
