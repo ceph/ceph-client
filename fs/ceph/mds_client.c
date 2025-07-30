@@ -2853,7 +2853,7 @@ retry:
 
 static int build_dentry_path(struct ceph_mds_client *mdsc, struct dentry *dentry,
 			     struct inode *dir, const char **ppath, int *ppathlen,
-			     u64 *pino, bool *pfreepath, bool parent_locked)
+			     struct ceph_vino *pvino, bool *pfreepath, bool parent_locked)
 {
 	char *path;
 
@@ -2862,23 +2862,29 @@ static int build_dentry_path(struct ceph_mds_client *mdsc, struct dentry *dentry
 		dir = d_inode_rcu(dentry->d_parent);
 	if (dir && parent_locked && ceph_snap(dir) == CEPH_NOSNAP &&
 	    !IS_ENCRYPTED(dir)) {
-		*pino = ceph_ino(dir);
+		pvino->ino = ceph_ino(dir);
+		pvino->snap = ceph_snap(dir);
 		rcu_read_unlock();
 		*ppath = dentry->d_name.name;
 		*ppathlen = dentry->d_name.len;
 		return 0;
 	}
 	rcu_read_unlock();
-	path = ceph_mdsc_build_path(mdsc, dentry, ppathlen, pino, 1);
+	path = ceph_mdsc_build_path(mdsc, dentry, ppathlen, &pvino->ino, 1);
 	if (IS_ERR(path))
 		return PTR_ERR(path);
 	*ppath = path;
 	*pfreepath = true;
+	/* For paths built by ceph_mdsc_build_path, we need to get snap from dentry */
+	if (dentry && d_inode(dentry))
+		pvino->snap = ceph_snap(d_inode(dentry));
+	else
+		pvino->snap = CEPH_NOSNAP;
 	return 0;
 }
 
 static int build_inode_path(struct inode *inode,
-			    const char **ppath, int *ppathlen, u64 *pino,
+			    const char **ppath, int *ppathlen, struct ceph_vino *pvino,
 			    bool *pfreepath)
 {
 	struct ceph_mds_client *mdsc = ceph_sb_to_mdsc(inode->i_sb);
@@ -2886,17 +2892,19 @@ static int build_inode_path(struct inode *inode,
 	char *path;
 
 	if (ceph_snap(inode) == CEPH_NOSNAP) {
-		*pino = ceph_ino(inode);
+		pvino->ino = ceph_ino(inode);
+		pvino->snap = ceph_snap(inode);
 		*ppathlen = 0;
 		return 0;
 	}
 	dentry = d_find_alias(inode);
-	path = ceph_mdsc_build_path(mdsc, dentry, ppathlen, pino, 1);
+	path = ceph_mdsc_build_path(mdsc, dentry, ppathlen, &pvino->ino, 1);
 	dput(dentry);
 	if (IS_ERR(path))
 		return PTR_ERR(path);
 	*ppath = path;
 	*pfreepath = true;
+	pvino->snap = ceph_snap(inode);
 	return 0;
 }
 
@@ -2907,7 +2915,7 @@ static int build_inode_path(struct inode *inode,
 static int set_request_path_attr(struct ceph_mds_client *mdsc, struct inode *rinode,
 				 struct dentry *rdentry, struct inode *rdiri,
 				 const char *rpath, u64 rino, const char **ppath,
-				 int *pathlen, u64 *ino, bool *freepath,
+				 int *pathlen, struct ceph_vino *p_vino, bool *freepath,
 				 bool parent_locked)
 {
 	struct ceph_client *cl = mdsc->fsc->client;
@@ -2915,16 +2923,17 @@ static int set_request_path_attr(struct ceph_mds_client *mdsc, struct inode *rin
 	int r = 0;
 
 	if (rinode) {
-		r = build_inode_path(rinode, ppath, pathlen, ino, freepath);
+		r = build_inode_path(rinode, ppath, pathlen, p_vino, freepath);
 		boutc(cl, " inode %p %llx.%llx\n", rinode, ceph_ino(rinode),
-		      ceph_snap(rinode));
+		ceph_snap(rinode));
 	} else if (rdentry) {
-		r = build_dentry_path(mdsc, rdentry, rdiri, ppath, pathlen, ino,
-					freepath, parent_locked);
+		r = build_dentry_path(mdsc, rdentry, rdiri, ppath, pathlen, p_vino,
+				       freepath, parent_locked);
 		CEPH_SAN_STRNCPY(result_str, sizeof(result_str), *ppath, *pathlen);
-		boutc(cl, " dentry %p %llx/%s\n", rdentry, *ino, result_str);
+		boutc(cl, " dentry %p %llx/%s\n", rdentry, p_vino->ino, result_str);
 	} else if (rpath || rino) {
-		*ino = rino;
+		p_vino->ino = rino;
+		p_vino->snap = CEPH_NOSNAP;
 		*ppath = rpath;
 		*pathlen = rpath ? strlen(rpath) : 0;
 		CEPH_SAN_STRNCPY(result_str, sizeof(result_str), rpath, *pathlen);
@@ -3007,7 +3016,7 @@ static struct ceph_msg *create_request_message(struct ceph_mds_session *session,
 	struct ceph_mds_request_head_legacy *lhead;
 	const char *path1 = NULL;
 	const char *path2 = NULL;
-	u64 ino1 = 0, ino2 = 0;
+	struct ceph_vino vino1 = {0}, vino2 = {0};
 	int pathlen1 = 0, pathlen2 = 0;
 	bool freepath1 = false, freepath2 = false;
 	struct dentry *old_dentry = NULL;
@@ -3019,15 +3028,33 @@ static struct ceph_msg *create_request_message(struct ceph_mds_session *session,
 	u16 request_head_version = mds_supported_head_version(session);
 	kuid_t caller_fsuid = req->r_cred->fsuid;
 	kgid_t caller_fsgid = req->r_cred->fsgid;
+	bool parent_locked = test_bit(CEPH_MDS_R_PARENT_LOCKED, &req->r_req_flags);
 
 	ret = set_request_path_attr(mdsc, req->r_inode, req->r_dentry,
 			      req->r_parent, req->r_path1, req->r_ino1.ino,
-			      &path1, &pathlen1, &ino1, &freepath1,
-			      test_bit(CEPH_MDS_R_PARENT_LOCKED,
-					&req->r_req_flags));
+			      &path1, &pathlen1, &vino1, &freepath1,
+			      parent_locked);
 	if (ret < 0) {
 		msg = ERR_PTR(ret);
 		goto out;
+	}
+
+	/*
+	 * When the parent directory's i_rwsem is *not* locked, req->r_parent may
+	 * have become stale (e.g. after a concurrent rename) between the time the
+	 * dentry was looked up and now.  If we detect that the stored r_parent
+	 * does not match the inode number we just encoded for the request, switch
+	 * to the correct inode so that the MDS receives a valid parent reference.
+	 */
+	if (!parent_locked &&
+	    req->r_parent && vino1.ino && ceph_ino(req->r_parent) != vino1.ino) {
+		struct inode *correct_dir = ceph_get_inode(mdsc->fsc->sb, vino1, NULL);
+		if (!IS_ERR(correct_dir)) {
+			WARN(1, "ceph: r_parent mismatch (had %llx wanted %llx) - updating\n",
+			     ceph_ino(req->r_parent), vino1.ino);
+			iput(req->r_parent);
+			req->r_parent = correct_dir;
+		}
 	}
 
 	/* If r_old_dentry is set, then assume that its parent is locked */
@@ -3037,7 +3064,7 @@ static struct ceph_msg *create_request_message(struct ceph_mds_session *session,
 	ret = set_request_path_attr(mdsc, NULL, old_dentry,
 			      req->r_old_dentry_dir,
 			      req->r_path2, req->r_ino2.ino,
-			      &path2, &pathlen2, &ino2, &freepath2, true);
+			      &path2, &pathlen2, &vino2, &freepath2, true);
 	if (ret < 0) {
 		msg = ERR_PTR(ret);
 		goto out_free1;
@@ -3191,8 +3218,8 @@ static struct ceph_msg *create_request_message(struct ceph_mds_session *session,
 	lhead->ino = cpu_to_le64(req->r_deleg_ino);
 	lhead->args = req->r_args;
 
-	ceph_encode_filepath(&p, end, ino1, path1);
-	ceph_encode_filepath(&p, end, ino2, path2);
+	ceph_encode_filepath(&p, end, vino1.ino, path1);
+	ceph_encode_filepath(&p, end, vino2.ino, path2);
 
 	/* make note of release offset, in case we need to replay */
 	req->r_request_release_offset = p - msg->front.iov_base;
