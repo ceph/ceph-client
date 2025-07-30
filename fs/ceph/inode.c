@@ -2273,17 +2273,17 @@ void __ceph_do_pending_vmtruncate(struct inode *inode)
 	struct ceph_client *cl = ceph_inode_to_client(inode);
 	struct ceph_inode_info *ci = ceph_inode(inode);
 	u64 to;
-	int wrbuffer_refs, finish = 0;
+	int wrbuffer_refs;
+	int err;
 
 	mutex_lock(&ci->i_truncate_mutex);
-retry:
 	spin_lock(&ci->i_ceph_lock);
+
+	wrbuffer_refs = ci->i_wrbuffer_ref;
 	if (ci->i_truncate_pending == 0) {
 		doutc(cl, "%p %llx.%llx none pending\n", inode,
 		      ceph_vinop(inode));
-		spin_unlock(&ci->i_ceph_lock);
-		mutex_unlock(&ci->i_truncate_mutex);
-		return;
+		goto out_unlock;
 	}
 
 	/*
@@ -2294,9 +2294,14 @@ retry:
 		spin_unlock(&ci->i_ceph_lock);
 		doutc(cl, "%p %llx.%llx flushing snaps first\n", inode,
 		      ceph_vinop(inode));
-		filemap_write_and_wait_range(&inode->i_data, 0,
-					     inode->i_sb->s_maxbytes);
-		goto retry;
+		err = filemap_write_and_wait_range(&inode->i_data, 0,
+						   inode->i_sb->s_maxbytes);
+		spin_lock(&ci->i_ceph_lock);
+
+		if (unlikely(err)) {
+			pr_err_client(cl, "failed of flushing snaps: err %d\n",
+					err);
+		}
 	}
 
 	/* there should be no reader or writer */
@@ -2312,20 +2317,17 @@ retry:
 	truncate_pagecache(inode, to);
 
 	spin_lock(&ci->i_ceph_lock);
-	if (to == ci->i_truncate_pagecache_size) {
-		ci->i_truncate_pending = 0;
-		finish = 1;
-	}
-	spin_unlock(&ci->i_ceph_lock);
-	if (!finish)
-		goto retry;
+	ci->i_truncate_pending = 0;
 
+out_unlock:
+	spin_unlock(&ci->i_ceph_lock);
 	mutex_unlock(&ci->i_truncate_mutex);
 
 	if (wrbuffer_refs == 0)
 		ceph_check_caps(ci, 0);
 
 	wake_up_all(&ci->i_cap_wq);
+	return;
 }
 
 static void ceph_inode_work(struct work_struct *work)
