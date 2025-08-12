@@ -3638,7 +3638,10 @@ static void __do_request(struct ceph_mds_client *mdsc,
 
 		spin_lock(&ci->i_ceph_lock);
 		cap = ci->i_auth_cap;
-		if (ci->i_ceph_flags & CEPH_I_ASYNC_CREATE && mds != cap->mds) {
+		/* ensure that bit state is consistent */
+		smp_mb__before_atomic();
+		if (test_bit(CEPH_ASYNC_CREATE_BIT, &ci->i_ceph_flags) &&
+		    mds != cap->mds) {
 			doutc(cl, "session changed for auth cap %d -> %d\n",
 			      cap->session->s_mds, session->s_mds);
 
@@ -4718,8 +4721,11 @@ static int reconnect_caps_cb(struct inode *inode, int mds, void *arg)
 		rec.v2.issued = cpu_to_le32(cap->issued);
 		rec.v2.snaprealm = cpu_to_le64(ci->i_snap_realm->ino);
 		rec.v2.pathbase = cpu_to_le64(path_info.vino.ino);
+		/* ensure that bit state is consistent */
+		smp_mb__before_atomic();
 		rec.v2.flock_len = (__force __le32)
-			((ci->i_ceph_flags & CEPH_I_ERROR_FILELOCK) ? 0 : 1);
+			(test_bit(CEPH_I_ERROR_FILELOCK_BIT,
+						&ci->i_ceph_flags) ? 0 : 1);
 	} else {
 		struct timespec64 ts;
 

@@ -2572,6 +2572,8 @@ int ceph_pool_perm_check(struct inode *inode, int need)
 		return 0;
 
 	spin_lock(&ci->i_ceph_lock);
+	/* ensure that bit state is consistent */
+	smp_mb__before_atomic();
 	flags = ci->i_ceph_flags;
 	pool = ci->i_layout.pool_id;
 	spin_unlock(&ci->i_ceph_lock);
@@ -2604,8 +2606,12 @@ check:
 	if (pool == ci->i_layout.pool_id &&
 	    pool_ns == rcu_dereference_raw(ci->i_layout.pool_ns)) {
 		ci->i_ceph_flags |= flags;
-        } else {
+		/* ensure modified bit is visible */
+		smp_mb__after_atomic();
+	} else {
 		pool = ci->i_layout.pool_id;
+		/* ensure that bit state is consistent */
+		smp_mb__before_atomic();
 		flags = ci->i_ceph_flags;
 	}
 	spin_unlock(&ci->i_ceph_lock);

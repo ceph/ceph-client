@@ -1153,8 +1153,11 @@ int ceph_fill_inode(struct inode *inode, struct page *locked_page,
 					lockdep_is_held(&ci->i_ceph_lock));
 		rcu_assign_pointer(ci->i_layout.pool_ns, pool_ns);
 
-		if (ci->i_layout.pool_id != old_pool || pool_ns != old_ns)
-			ci->i_ceph_flags &= ~CEPH_I_POOL_PERM;
+		if (ci->i_layout.pool_id != old_pool || pool_ns != old_ns) {
+			clear_bit(CEPH_I_POOL_PERM_BIT, &ci->i_ceph_flags);
+			/* ensure modified bit is visible */
+			smp_mb__after_atomic();
+		}
 
 		pool_ns = old_ns;
 
@@ -3213,7 +3216,9 @@ void ceph_inode_shutdown(struct inode *inode)
 	bool invalidate = false;
 
 	spin_lock(&ci->i_ceph_lock);
-	ci->i_ceph_flags |= CEPH_I_SHUTDOWN;
+	set_bit(CEPH_I_SHUTDOWN_BIT, &ci->i_ceph_flags);
+	/* ensure modified bit is visible */
+	smp_mb__after_atomic();
 	p = rb_first(&ci->i_caps);
 	while (p) {
 		struct ceph_cap *cap = rb_entry(p, struct ceph_cap, ci_node);
