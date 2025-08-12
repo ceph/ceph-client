@@ -517,6 +517,7 @@ static void __cap_set_timeouts(struct ceph_mds_client *mdsc,
  */
 static void __cap_delay_requeue(struct ceph_mds_client *mdsc,
 				struct ceph_inode_info *ci)
+		__must_hold(ci->i_ceph_lock)
 {
 	struct inode *inode = &ci->netfs.inode;
 
@@ -526,7 +527,9 @@ static void __cap_delay_requeue(struct ceph_mds_client *mdsc,
 	if (!mdsc->stopping) {
 		spin_lock(&mdsc->cap_delay_lock);
 		if (!list_empty(&ci->i_cap_delay_list)) {
-			if (ci->i_ceph_flags & CEPH_I_FLUSH)
+			/* ensure that bit state is consistent */
+			smp_mb__before_atomic();
+			if (test_bit(CEPH_I_FLUSH_BIT, &ci->i_ceph_flags))
 				goto no_change;
 			list_del_init(&ci->i_cap_delay_list);
 		}
@@ -541,15 +544,20 @@ no_change:
  * Queue an inode for immediate writeback.  Mark inode with I_FLUSH,
  * indicating we should send a cap message to flush dirty metadata
  * asap, and move to the front of the delayed cap list.
+ *
+ * Caller must hold i_ceph_lock.
  */
 static void __cap_delay_requeue_front(struct ceph_mds_client *mdsc,
 				      struct ceph_inode_info *ci)
+		__must_hold(ci->i_ceph_lock)
 {
 	struct inode *inode = &ci->netfs.inode;
 
 	doutc(mdsc->fsc->client, "%p %llx.%llx\n", inode, ceph_vinop(inode));
 	spin_lock(&mdsc->cap_delay_lock);
-	ci->i_ceph_flags |= CEPH_I_FLUSH;
+	set_bit(CEPH_I_FLUSH_BIT, &ci->i_ceph_flags);
+	/* ensure modified bit is visible */
+	smp_mb__after_atomic();
 	if (!list_empty(&ci->i_cap_delay_list))
 		list_del_init(&ci->i_cap_delay_list);
 	list_add(&ci->i_cap_delay_list, &mdsc->cap_delay_list);
@@ -1400,10 +1408,13 @@ void __ceph_remove_caps(struct ceph_inode_info *ci)
  *
  * Make note of max_size reported/requested from mds, revoked caps
  * that have now been implemented.
+ *
+ * Caller must hold i_ceph_lock.
  */
 static void __prep_cap(struct cap_msg_args *arg, struct ceph_cap *cap,
 		       int op, int flags, int used, int want, int retain,
 		       int flushing, u64 flush_tid, u64 oldest_flush_tid)
+		__must_hold(ci->i_ceph_lock)
 {
 	struct ceph_inode_info *ci = cap->ci;
 	struct inode *inode = &ci->netfs.inode;
@@ -1422,7 +1433,9 @@ static void __prep_cap(struct cap_msg_args *arg, struct ceph_cap *cap,
 	      ceph_cap_string(revoking));
 	BUG_ON((retain & CEPH_CAP_PIN) == 0);
 
-	ci->i_ceph_flags &= ~CEPH_I_FLUSH;
+	clear_bit(CEPH_I_FLUSH_BIT, &ci->i_ceph_flags);
+	/* ensure modified bit is visible */
+	smp_mb__after_atomic();
 
 	cap->issued &= retain;  /* drop bits we don't want */
 	/*
@@ -1731,7 +1744,9 @@ static void __ceph_flush_snaps(struct ceph_inode_info *ci,
 	 * to miss setting the CEPH_CLIENT_CAPS_PENDING_CAPSNAP flag and finally
 	 * the mds will drop the capsnap request to floor.
 	 */
-	ci->i_ceph_flags &= ~CEPH_I_FLUSH_SNAPS;
+	clear_bit(CEPH_I_FLUSH_SNAPS_BIT, &ci->i_ceph_flags);
+	/* ensure modified bit is visible */
+	smp_mb__after_atomic();
 }
 
 void ceph_flush_snaps(struct ceph_inode_info *ci,
@@ -1749,7 +1764,9 @@ void ceph_flush_snaps(struct ceph_inode_info *ci,
 		session = *psession;
 retry:
 	spin_lock(&ci->i_ceph_lock);
-	if (!(ci->i_ceph_flags & CEPH_I_FLUSH_SNAPS)) {
+	/* ensure that bit state is consistent */
+	smp_mb__before_atomic();
+	if (!test_bit(CEPH_I_FLUSH_SNAPS_BIT, &ci->i_ceph_flags)) {
 		doutc(cl, " no capsnap needs flush, doing nothing\n");
 		goto out;
 	}
@@ -1773,7 +1790,9 @@ retry:
 	}
 
 	// make sure flushsnap messages are sent in proper order.
-	if (ci->i_ceph_flags & CEPH_I_KICK_FLUSH)
+	/* ensure that bit state is consistent */
+	smp_mb__before_atomic();
+	if (test_bit(CEPH_I_KICK_FLUSH_BIT, &ci->i_ceph_flags))
 		__kick_flushing_caps(mdsc, session, ci, 0);
 
 	__ceph_flush_snaps(ci, session);
@@ -2046,15 +2065,21 @@ void ceph_check_caps(struct ceph_inode_info *ci, int flags)
 	struct ceph_mds_session *session = NULL;
 
 	spin_lock(&ci->i_ceph_lock);
-	if (ci->i_ceph_flags & CEPH_I_ASYNC_CREATE) {
-		ci->i_ceph_flags |= CEPH_I_ASYNC_CHECK_CAPS;
+	/* ensure that bit state is consistent */
+	smp_mb__before_atomic();
+	if (test_bit(CEPH_ASYNC_CREATE_BIT, &ci->i_ceph_flags)) {
+		set_bit(CEPH_I_ASYNC_CHECK_CAPS_BIT, &ci->i_ceph_flags);
+		/* ensure modified bit is visible */
+		smp_mb__after_atomic();
 
 		/* Don't send messages until we get async create reply */
 		spin_unlock(&ci->i_ceph_lock);
 		return;
 	}
 
-	if (ci->i_ceph_flags & CEPH_I_FLUSH)
+	/* ensure that bit state is consistent */
+	smp_mb__before_atomic();
+	if (test_bit(CEPH_I_FLUSH_BIT, &ci->i_ceph_flags))
 		flags |= CHECK_CAPS_FLUSH;
 retry:
 	/* Caps wanted by virtue of active open files. */
@@ -2218,7 +2243,10 @@ retry:
 				doutc(cl, "flushing dirty caps\n");
 				goto ack;
 			}
-			if (ci->i_ceph_flags & CEPH_I_FLUSH_SNAPS) {
+
+			/* ensure that bit state is consistent */
+			smp_mb__before_atomic();
+			if (test_bit(CEPH_I_FLUSH_SNAPS_BIT, &ci->i_ceph_flags)) {
 				doutc(cl, "flushing snap caps\n");
 				goto ack;
 			}
@@ -2242,12 +2270,14 @@ ack:
 
 		/* kick flushing and flush snaps before sending normal
 		 * cap message */
+		/* ensure that bit state is consistent */
+		smp_mb__before_atomic();
 		if (cap == ci->i_auth_cap &&
 		    (ci->i_ceph_flags &
 		     (CEPH_I_KICK_FLUSH | CEPH_I_FLUSH_SNAPS))) {
-			if (ci->i_ceph_flags & CEPH_I_KICK_FLUSH)
+			if (test_bit(CEPH_I_KICK_FLUSH_BIT, &ci->i_ceph_flags))
 				__kick_flushing_caps(mdsc, session, ci, 0);
-			if (ci->i_ceph_flags & CEPH_I_FLUSH_SNAPS)
+			if (test_bit(CEPH_I_FLUSH_SNAPS_BIT, &ci->i_ceph_flags))
 				__ceph_flush_snaps(ci, session);
 
 			goto retry;
@@ -2319,11 +2349,17 @@ retry_locked:
 			goto out;
 		}
 
+		/* ensure that bit state is consistent */
+		smp_mb__before_atomic();
 		if (ci->i_ceph_flags &
 		    (CEPH_I_KICK_FLUSH | CEPH_I_FLUSH_SNAPS)) {
-			if (ci->i_ceph_flags & CEPH_I_KICK_FLUSH)
+			/* ensure that bit state is consistent */
+			smp_mb__before_atomic();
+			if (test_bit(CEPH_I_KICK_FLUSH_BIT, &ci->i_ceph_flags))
 				__kick_flushing_caps(mdsc, session, ci, 0);
-			if (ci->i_ceph_flags & CEPH_I_FLUSH_SNAPS)
+			/* ensure that bit state is consistent */
+			smp_mb__before_atomic();
+			if (test_bit(CEPH_I_FLUSH_SNAPS_BIT, &ci->i_ceph_flags))
 				__ceph_flush_snaps(ci, session);
 			goto retry_locked;
 		}
@@ -2595,10 +2631,14 @@ static void __kick_flushing_caps(struct ceph_mds_client *mdsc,
 	u64 last_snap_flush = 0;
 
 	/* Don't do anything until create reply comes in */
-	if (ci->i_ceph_flags & CEPH_I_ASYNC_CREATE)
+	/* ensure that bit state is consistent */
+	smp_mb__before_atomic();
+	if (test_bit(CEPH_ASYNC_CREATE_BIT, &ci->i_ceph_flags))
 		return;
 
-	ci->i_ceph_flags &= ~CEPH_I_KICK_FLUSH;
+	clear_bit(CEPH_I_KICK_FLUSH_BIT, &ci->i_ceph_flags);
+	/* ensure modified bit is visible */
+	smp_mb__after_atomic();
 
 	list_for_each_entry_reverse(cf, &ci->i_cap_flush_list, i_list) {
 		if (cf->is_capsnap) {
@@ -2707,7 +2747,9 @@ void ceph_early_kick_flushing_caps(struct ceph_mds_client *mdsc,
 			__kick_flushing_caps(mdsc, session, ci,
 					     oldest_flush_tid);
 		} else {
-			ci->i_ceph_flags |= CEPH_I_KICK_FLUSH;
+			set_bit(CEPH_I_KICK_FLUSH_BIT, &ci->i_ceph_flags);
+			/* ensure modified bit is visible */
+			smp_mb__after_atomic();
 		}
 
 		spin_unlock(&ci->i_ceph_lock);
@@ -2742,7 +2784,10 @@ void ceph_kick_flushing_caps(struct ceph_mds_client *mdsc,
 			spin_unlock(&ci->i_ceph_lock);
 			continue;
 		}
-		if (ci->i_ceph_flags & CEPH_I_KICK_FLUSH) {
+
+		/* ensure that bit state is consistent */
+		smp_mb__before_atomic();
+		if (test_bit(CEPH_I_KICK_FLUSH_BIT, &ci->i_ceph_flags)) {
 			__kick_flushing_caps(mdsc, session, ci,
 					     oldest_flush_tid);
 		}
@@ -2849,8 +2894,10 @@ static int try_get_cap_refs(struct inode *inode, int need, int want,
 again:
 	spin_lock(&ci->i_ceph_lock);
 
+	/* ensure that bit state is consistent */
+	smp_mb__before_atomic();
 	if ((flags & CHECK_FILELOCK) &&
-	    (ci->i_ceph_flags & CEPH_I_ERROR_FILELOCK)) {
+	    test_bit(CEPH_I_ERROR_FILELOCK_BIT, &ci->i_ceph_flags)) {
 		doutc(cl, "%p %llx.%llx error filelock\n", inode,
 		      ceph_vinop(inode));
 		ret = -EIO;
@@ -3227,8 +3274,11 @@ static int ceph_try_drop_cap_snap(struct ceph_inode_info *ci,
 		doutc(cl, "%p follows %llu\n", capsnap, capsnap->follows);
 		BUG_ON(capsnap->cap_flush.tid > 0);
 		ceph_put_snap_context(capsnap->context);
-		if (!list_is_last(&capsnap->ci_item, &ci->i_cap_snaps))
-			ci->i_ceph_flags |= CEPH_I_FLUSH_SNAPS;
+		if (!list_is_last(&capsnap->ci_item, &ci->i_cap_snaps)) {
+			set_bit(CEPH_I_FLUSH_SNAPS_BIT, &ci->i_ceph_flags);
+			/* ensure modified bit is visible */
+			smp_mb__after_atomic();
+		}
 
 		list_del(&capsnap->ci_item);
 		ceph_put_cap_snap(capsnap);
@@ -3417,7 +3467,10 @@ void ceph_put_wrbuffer_cap_refs(struct ceph_inode_info *ci, int nr,
 				if (ceph_try_drop_cap_snap(ci, capsnap)) {
 					put++;
 				} else {
-					ci->i_ceph_flags |= CEPH_I_FLUSH_SNAPS;
+					set_bit(CEPH_I_FLUSH_SNAPS_BIT,
+						&ci->i_ceph_flags);
+					/* ensure modified bit is visible */
+					smp_mb__after_atomic();
 					flush_snaps = true;
 				}
 			}
@@ -3668,8 +3721,11 @@ static void handle_cap_grant(struct inode *inode,
 		rcu_assign_pointer(ci->i_layout.pool_ns, extra_info->pool_ns);
 
 		if (ci->i_layout.pool_id != old_pool ||
-		    extra_info->pool_ns != old_ns)
-			ci->i_ceph_flags &= ~CEPH_I_POOL_PERM;
+		    extra_info->pool_ns != old_ns) {
+			clear_bit(CEPH_I_POOL_PERM_BIT, &ci->i_ceph_flags);
+			/* ensure modified bit is visible */
+			smp_mb__after_atomic();
+		}
 
 		extra_info->pool_ns = old_ns;
 
@@ -4658,6 +4714,7 @@ unsigned long ceph_check_delayed_caps(struct ceph_mds_client *mdsc)
 	unsigned long delay_max = opt->caps_wanted_delay_max * HZ;
 	unsigned long loop_start = jiffies;
 	unsigned long delay = 0;
+	bool is_metadata_under_flush;
 
 	doutc(cl, "begin\n");
 	spin_lock(&mdsc->cap_delay_lock);
@@ -4670,10 +4727,23 @@ unsigned long ceph_check_delayed_caps(struct ceph_mds_client *mdsc)
 			delay = ci->i_hold_caps_max;
 			break;
 		}
-		if ((ci->i_ceph_flags & CEPH_I_FLUSH) == 0 &&
-		    time_before(jiffies, ci->i_hold_caps_max))
-			break;
+
 		list_del_init(&ci->i_cap_delay_list);
+
+		spin_unlock(&mdsc->cap_delay_lock);
+		spin_lock(&ci->i_ceph_lock);
+		/* ensure that bit state is consistent */
+		smp_mb__before_atomic();
+		is_metadata_under_flush =
+			test_bit(CEPH_I_FLUSH_BIT, &ci->i_ceph_flags);
+		spin_unlock(&ci->i_ceph_lock);
+		spin_lock(&mdsc->cap_delay_lock);
+
+		if (!is_metadata_under_flush &&
+		    time_before(jiffies, ci->i_hold_caps_max)) {
+			list_add(&ci->i_cap_delay_list, &mdsc->cap_delay_list);
+			break;
+		}
 
 		inode = igrab(&ci->netfs.inode);
 		if (inode) {
@@ -4856,7 +4926,9 @@ int ceph_drop_caps_for_unlink(struct inode *inode)
 			doutc(mdsc->fsc->client, "%p %llx.%llx\n", inode,
 			      ceph_vinop(inode));
 			spin_lock(&mdsc->cap_delay_lock);
-			ci->i_ceph_flags |= CEPH_I_FLUSH;
+			set_bit(CEPH_I_FLUSH_BIT, &ci->i_ceph_flags);
+			/* ensure modified bit is visible */
+			smp_mb__after_atomic();
 			if (!list_empty(&ci->i_cap_delay_list))
 				list_del_init(&ci->i_cap_delay_list);
 			list_add_tail(&ci->i_cap_delay_list,
@@ -5121,7 +5193,9 @@ int ceph_purge_inode_cap(struct inode *inode, struct ceph_cap *cap, bool *invali
 
 		if (atomic_read(&ci->i_filelock_ref) > 0) {
 			/* make further file lock syscall return -EIO */
-			ci->i_ceph_flags |= CEPH_I_ERROR_FILELOCK;
+			set_bit(CEPH_I_ERROR_FILELOCK_BIT, &ci->i_ceph_flags);
+			/* ensure modified bit is visible */
+			smp_mb__after_atomic();
 			pr_warn_ratelimited_client(cl,
 				" dropping file locks for %p %llx.%llx\n",
 				inode, ceph_vinop(inode));
