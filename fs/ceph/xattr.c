@@ -1052,8 +1052,11 @@ handle_non_vxattrs:
 
 	if (current->journal_info &&
 	    !strncmp(name, XATTR_SECURITY_PREFIX, XATTR_SECURITY_PREFIX_LEN) &&
-	    security_ismaclabel(name + XATTR_SECURITY_PREFIX_LEN))
-		ci->i_ceph_flags |= CEPH_I_SEC_INITED;
+	    security_ismaclabel(name + XATTR_SECURITY_PREFIX_LEN)) {
+		set_bit(CEPH_I_SEC_INITED_BIT, &ci->i_ceph_flags);
+		/* ensure modified bit is visible */
+		smp_mb__after_atomic();
+	}
 out:
 	spin_unlock(&ci->i_ceph_lock);
 	return err;
@@ -1363,7 +1366,9 @@ bool ceph_security_xattr_deadlock(struct inode *in)
 		return false;
 	ci = ceph_inode(in);
 	spin_lock(&ci->i_ceph_lock);
-	ret = !(ci->i_ceph_flags & CEPH_I_SEC_INITED) &&
+	/* ensure that bit state is consistent */
+	smp_mb__before_atomic();
+	ret = !test_bit(CEPH_I_SEC_INITED_BIT, &ci->i_ceph_flags) &&
 	      !(ci->i_xattrs.version > 0 &&
 		__ceph_caps_issued_mask(ci, CEPH_CAP_XATTR_SHARED, 0));
 	spin_unlock(&ci->i_ceph_lock);
