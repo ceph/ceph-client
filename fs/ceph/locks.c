@@ -58,7 +58,9 @@ static void ceph_fl_release_lock(struct file_lock *fl)
 	if (atomic_dec_and_test(&ci->i_filelock_ref)) {
 		/* clear error when all locks are released */
 		spin_lock(&ci->i_ceph_lock);
-		ci->i_ceph_flags &= ~CEPH_I_ERROR_FILELOCK;
+		clear_bit(CEPH_I_ERROR_FILELOCK_BIT, &ci->i_ceph_flags);
+		/* ensure modified bit is visible */
+		smp_mb__after_atomic();
 		spin_unlock(&ci->i_ceph_lock);
 	}
 	fl->fl_u.ceph.inode = NULL;
@@ -272,9 +274,10 @@ int ceph_lock(struct file *file, int cmd, struct file_lock *fl)
 		wait = 1;
 
 	spin_lock(&ci->i_ceph_lock);
-	if (ci->i_ceph_flags & CEPH_I_ERROR_FILELOCK) {
+	/* ensure that bit state is consistent */
+	smp_mb__before_atomic();
+	if (test_bit(CEPH_I_ERROR_FILELOCK_BIT, &ci->i_ceph_flags))
 		err = -EIO;
-	}
 	spin_unlock(&ci->i_ceph_lock);
 	if (err < 0) {
 		if (op == CEPH_MDS_OP_SETFILELOCK && lock_is_unlock(fl))
@@ -332,9 +335,10 @@ int ceph_flock(struct file *file, int cmd, struct file_lock *fl)
 	doutc(cl, "fl_file: %p\n", fl->c.flc_file);
 
 	spin_lock(&ci->i_ceph_lock);
-	if (ci->i_ceph_flags & CEPH_I_ERROR_FILELOCK) {
+	/* ensure that bit state is consistent */
+	smp_mb__before_atomic();
+	if (test_bit(CEPH_I_ERROR_FILELOCK_BIT, &ci->i_ceph_flags))
 		err = -EIO;
-	}
 	spin_unlock(&ci->i_ceph_lock);
 	if (err < 0) {
 		if (lock_is_unlock(fl))
