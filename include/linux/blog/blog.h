@@ -105,7 +105,7 @@ struct blog_logger {
 	unsigned long total_contexts_allocated;
 	u64 next_ctx_id;           /* Next context ID to assign */
 	spinlock_t ctx_id_lock;    /* Protects context ID counter */
-	struct blog_tls_ctx __percpu *napi_ctxs; /* Per-CPU NAPI contexts */
+	struct blog_tls_ctx * __percpu *napi_ctxs; /* Per-CPU NAPI context pointers */
 };
 
 /* Iterator for log entries in a single pagefrag */

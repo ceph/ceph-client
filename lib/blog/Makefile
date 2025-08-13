@@ -5,7 +5,7 @@
 
 obj-$(CONFIG_BLOG) += blog.o
 
-blog-y := blog_core.o blog_batch.o blog_pagefrag.o blog_des.o
+blog-y := blog_core.o blog_batch.o blog_pagefrag.o blog_des.o blog_module.o
 
 # Debug support
 # blog-$(CONFIG_BLOG_DEBUG) += blog_debug.o

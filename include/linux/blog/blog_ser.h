@@ -100,6 +100,9 @@
 
 #define char_ptr(str) __suppress_cast_warning(char *, (str))
 
+#ifndef _CEPH_BLOG_SER_HELPERS_DEFINED
+#define _CEPH_BLOG_SER_HELPERS_DEFINED
+
 union null_str_u {
 	char str[8];
 	unsigned long force_align;
@@ -159,6 +162,8 @@ static inline void* strscpy_n_update(char *dst, const char *src, const char *fil
 	}
 	return dst + round_up(ret, 4);
 }
+
+#endif /* _CEPH_BLOG_SER_HELPERS_DEFINED */
 
 /* Serialization type macro */
 #define __blog_ser_type(__buffer, __t)                          \
