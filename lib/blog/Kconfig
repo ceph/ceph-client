@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Binary Logging Infrastructure (BLOG)
+#
+
+config BLOG
+	tristate "Binary Logging Infrastructure"
+	help
+	  Generic binary logging infrastructure for kernel subsystems.
+	  Provides efficient batched logging with binary serialization
+	  and deserialization support. Modules using BLOG maintain their
+	  own client mappings and debugfs interfaces.
+
+	  If unsure, say N.
+
+config BLOG_DEBUG
+	bool "Binary Logging Debug Support"
+	depends on BLOG
+	default n
+	help
+	  Enable debug features for the binary logging infrastructure,
+	  including memory poisoning, validation checks, and usage tracking.
+	  This adds overhead and should only be enabled for debugging.
+
+	  If unsure, say N.
+
+config BLOG_MAX_CLIENTS
+	int "Maximum number of logging clients"
+	depends on BLOG
+	range 16 1024
+	default 256
+	help
+	  Maximum number of client IDs that can be used by modules.
+	  Each module using BLOG can register multiple clients up to
+	  this limit. The client ID is stored as u8, so maximum is 256.
+
+config BLOG_MAX_SOURCES
+	int "Maximum number of source locations"
+	depends on BLOG
+	range 256 16384
+	default 4096
+	help
+	  Maximum number of unique source code locations (file/function/line)
+	  that can be tracked. Each unique logging call site gets a source ID.
+
+config BLOG_TRACK_USAGE
+	bool "Track usage statistics"
+	depends on BLOG_DEBUG
+	default n
+	help
+	  Track usage statistics for logging operations, including counts
+	  and bytes used in different contexts (task vs NAPI).
+
+	  If unsure, say N.

@@ -599,6 +599,8 @@ source "lib/vdso/Kconfig"
 
 source "lib/fonts/Kconfig"
 
+source "lib/blog/Kconfig"
+
 config SG_SPLIT
 	def_bool n
 	help
