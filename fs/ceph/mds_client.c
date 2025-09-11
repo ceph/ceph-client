@@ -1739,6 +1739,9 @@ static void __open_export_target_sessions(struct ceph_mds_client *mdsc,
 	if (mds >= mdsc->mdsmap->possible_max_rank)
 		return;
 
+	if (unlikely(!mdsc->mdsmap->m_info))
+		return;
+
 	mi = &mdsc->mdsmap->m_info[mds];
 	doutc(cl, "for mds%d (%d targets)\n", session->s_mds,
 	      mi->num_export_targets);
@@ -5109,11 +5112,12 @@ static void check_new_map(struct ceph_mds_client *mdsc,
 
 	doutc(cl, "new %u old %u\n", newmap->m_epoch, oldmap->m_epoch);
 
-	if (newmap->m_info) {
-		for (i = 0; i < newmap->possible_max_rank; i++) {
-			for (j = 0; j < newmap->m_info[i].num_export_targets; j++)
-				set_bit(newmap->m_info[i].export_targets[j], targets);
-		}
+	/* ceph_mdsmap_decode() should guarantee m_info allocation */
+	BUG_ON(!newmap->m_info);
+
+	for (i = 0; i < newmap->possible_max_rank; i++) {
+		for (j = 0; j < newmap->m_info[i].num_export_targets; j++)
+			set_bit(newmap->m_info[i].export_targets[j], targets);
 	}
 
 	for (i = 0; i < oldmap->possible_max_rank && i < mdsc->max_sessions; i++) {
