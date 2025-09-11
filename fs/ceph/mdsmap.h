@@ -53,6 +53,8 @@ ceph_mdsmap_get_addr(struct ceph_mdsmap *m, int w)
 {
 	if (w >= m->possible_max_rank)
 		return NULL;
+	if (unlikely(!m->m_info))
+		return NULL;
 	return &m->m_info[w].addr;
 }
 
@@ -61,12 +63,14 @@ static inline int ceph_mdsmap_get_state(struct ceph_mdsmap *m, int w)
 	BUG_ON(w < 0);
 	if (w >= m->possible_max_rank)
 		return CEPH_MDS_STATE_DNE;
+	if (unlikely(!m->m_info))
+		return CEPH_MDS_STATE_DNE;
 	return m->m_info[w].state;
 }
 
 static inline bool ceph_mdsmap_is_laggy(struct ceph_mdsmap *m, int w)
 {
-	if (w >= 0 && w < m->possible_max_rank)
+	if (w >= 0 && w < m->possible_max_rank && m->m_info)
 		return m->m_info[w].laggy;
 	return false;
 }
