@@ -284,6 +284,11 @@ static int parse_reply_info_dir(void **p, void *end,
 				struct ceph_mds_reply_dirfrag **dirfrag,
 				u64 features)
 {
+	size_t item_size = sizeof(u32);
+	size_t dirfrag_size;
+	u32 ndist;
+	u32 array_size;
+
 	if (features == (u64)-1) {
 		u8 struct_v, struct_compat;
 		u32 struct_len;
@@ -298,11 +303,16 @@ static int parse_reply_info_dir(void **p, void *end,
 		end = *p + struct_len;
 	}
 
-	ceph_decode_need(p, end, sizeof(**dirfrag), bad);
+	dirfrag_size = sizeof(**dirfrag);
+	ceph_decode_need(p, end, dirfrag_size, bad);
 	*dirfrag = *p;
-	*p += sizeof(**dirfrag) + sizeof(u32) * le32_to_cpu((*dirfrag)->ndist);
-	if (unlikely(*p > end))
+	*p += dirfrag_size;
+	ndist = le32_to_cpu((*dirfrag)->ndist);
+	if (unlikely(ndist > (U32_MAX / item_size)))
 		goto bad;
+	array_size = ndist * item_size;
+	ceph_decode_need(p, end, array_size, bad);
+	*p += array_size;
 	if (features == (u64)-1)
 		*p = end;
 	return 0;
