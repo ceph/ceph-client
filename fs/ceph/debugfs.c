@@ -9,11 +9,18 @@
 #include <linux/seq_file.h>
 #include <linux/math64.h>
 #include <linux/ktime.h>
+#include <linux/jiffies.h>
+#include <linux/timekeeping.h>
+#include <linux/rtc.h>
+#include <linux/printk.h>
+#include <linux/time.h>
+#include <linux/time_types.h>
 
 #include <linux/ceph/libceph.h>
 #include <linux/ceph/mon_client.h>
 #include <linux/ceph/auth.h>
 #include <linux/ceph/debugfs.h>
+#include <linux/ceph/ceph_blog.h>
 
 #include "super.h"
 
@@ -362,6 +369,7 @@ static int status_show(struct seq_file *s, void *p)
 	return 0;
 }
 
+
 DEFINE_SHOW_ATTRIBUTE(mdsmap);
 DEFINE_SHOW_ATTRIBUTE(mdsc);
 DEFINE_SHOW_ATTRIBUTE(caps);
@@ -407,6 +415,12 @@ void ceph_fs_debugfs_cleanup(struct ceph_fs_client *fsc)
 	debugfs_remove(fsc->debugfs_status);
 	debugfs_remove(fsc->debugfs_mdsc);
 	debugfs_remove_recursive(fsc->debugfs_metrics_dir);
+
+#ifdef CONFIG_BLOG
+	/* Clean up BLOG debugfs entries */
+	ceph_blog_debugfs_cleanup();
+#endif
+
 	doutc(fsc->client, "done\n");
 }
 
@@ -459,6 +473,8 @@ void ceph_fs_debugfs_init(struct ceph_fs_client *fsc)
 						  fsc,
 						  &status_fops);
 
+
+
 	fsc->debugfs_metrics_dir = debugfs_create_dir("metrics",
 						      fsc->client->debugfs_dir);
 
@@ -470,9 +486,14 @@ void ceph_fs_debugfs_init(struct ceph_fs_client *fsc)
 			    &metrics_size_fops);
 	debugfs_create_file("caps", 0400, fsc->debugfs_metrics_dir, fsc,
 			    &metrics_caps_fops);
-	doutc(fsc->client, "done\n");
-}
 
+#ifdef CONFIG_BLOG
+	/* Initialize BLOG debugfs entries */
+	ceph_blog_debugfs_init(fsc->client->debugfs_dir);
+#endif
+
+	boutc(fsc->client, "done\n");
+}
 
 #else  /* CONFIG_DEBUG_FS */
 
@@ -484,4 +505,4 @@ void ceph_fs_debugfs_cleanup(struct ceph_fs_client *fsc)
 {
 }
 
-#endif  /* CONFIG_DEBUG_FS */
+#endif	/* CONFIG_DEBUG_FS */

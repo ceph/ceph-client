@@ -27,6 +27,7 @@
 #include <linux/ceph/mon_client.h>
 #include <linux/ceph/auth.h>
 #include <linux/ceph/debugfs.h>
+#include <linux/ceph/ceph_blog.h>
 
 #include <uapi/linux/magic.h>
 
@@ -46,10 +47,10 @@ static void ceph_put_super(struct super_block *s)
 {
 	struct ceph_fs_client *fsc = ceph_sb_to_fs_client(s);
 
-	doutc(fsc->client, "begin\n");
+	boutc(fsc->client, "begin\n");
 	ceph_fscrypt_free_dummy_policy(fsc);
 	ceph_mdsc_close_sessions(fsc->mdsc);
-	doutc(fsc->client, "done\n");
+	boutc(fsc->client, "done\n");
 }
 
 static int ceph_statfs(struct dentry *dentry, struct kstatfs *buf)
@@ -60,7 +61,7 @@ static int ceph_statfs(struct dentry *dentry, struct kstatfs *buf)
 	int i, err;
 	u64 data_pool;
 
-	doutc(fsc->client, "begin\n");
+	boutc(fsc->client, "begin\n");
 	if (fsc->mdsc->mdsmap->m_num_data_pg_pools == 1) {
 		data_pool = fsc->mdsc->mdsmap->m_data_pg_pools[0];
 	} else {
@@ -114,7 +115,7 @@ static int ceph_statfs(struct dentry *dentry, struct kstatfs *buf)
 	/* fold the fs_cluster_id into the upper bits */
 	buf->f_fsid.val[1] = monc->fs_cluster_id;
 
-	doutc(fsc->client, "done\n");
+	boutc(fsc->client, "done\n");
 	return 0;
 }
 
@@ -124,17 +125,17 @@ static int ceph_sync_fs(struct super_block *sb, int wait)
 	struct ceph_client *cl = fsc->client;
 
 	if (!wait) {
-		doutc(cl, "(non-blocking)\n");
+		boutc(cl, "(non-blocking)\n");
 		ceph_flush_dirty_caps(fsc->mdsc);
 		ceph_flush_cap_releases(fsc->mdsc);
-		doutc(cl, "(non-blocking) done\n");
+		boutc(cl, "(non-blocking) done\n");
 		return 0;
 	}
 
-	doutc(cl, "(blocking)\n");
+	boutc(cl, "(blocking)\n");
 	ceph_osdc_sync(&fsc->client->osdc);
 	ceph_mdsc_sync(fsc->mdsc);
-	doutc(cl, "(blocking) done\n");
+	boutc(cl, "(blocking) done\n");
 	return 0;
 }
 
@@ -291,7 +292,7 @@ static int ceph_parse_new_source(const char *dev_name, const char *dev_name_end,
 	const char *fsid_start, *fs_name_start;
 
 	if (*dev_name_end != '=') {
-		dout("separator '=' missing in source");
+		bout("separator '=' missing in source");
 		return -EINVAL;
 	}
 
@@ -303,7 +304,7 @@ static int ceph_parse_new_source(const char *dev_name, const char *dev_name_end,
 	opts->name = kstrndup(name_start, len, GFP_KERNEL);
 	if (!opts->name)
 		return -ENOMEM;
-	dout("using %s entity name", opts->name);
+	bout("using %s entity name", opts->name);
 
 	++fsid_start; /* start of cluster fsid */
 	fs_name_start = strchr(fsid_start, '.');
@@ -322,7 +323,7 @@ static int ceph_parse_new_source(const char *dev_name, const char *dev_name_end,
 	fsopt->mds_namespace = kstrndup(fs_name_start, len, GFP_KERNEL);
 	if (!fsopt->mds_namespace)
 		return -ENOMEM;
-	dout("file system (mds namespace) '%s'\n", fsopt->mds_namespace);
+	bout("file system (mds namespace) '%s'\n", fsopt->mds_namespace);
 
 	fsopt->new_dev_syntax = true;
 	return 0;
@@ -353,7 +354,7 @@ static int ceph_parse_source(struct fs_parameter *param, struct fs_context *fc)
 	char *dev_name = param->string, *dev_name_end;
 	int ret;
 
-	dout("'%s'\n", dev_name);
+	bout("'%s'\n", dev_name);
 	if (!dev_name || !*dev_name)
 		return invalfc(fc, "Empty source");
 
@@ -377,16 +378,16 @@ static int ceph_parse_source(struct fs_parameter *param, struct fs_context *fc)
 	if (dev_name_end < dev_name)
 		return invalfc(fc, "Path missing in source");
 
-	dout("device name '%.*s'\n", (int)(dev_name_end - dev_name), dev_name);
+	bout("device name '%.*s'\n", (int)(dev_name_end - dev_name), dev_name);
 	if (fsopt->server_path)
-		dout("server path '%s'\n", fsopt->server_path);
+		bout("server path '%s'\n", fsopt->server_path);
 
-	dout("trying new device syntax");
+	bout("trying new device syntax");
 	ret = ceph_parse_new_source(dev_name, dev_name_end, fc);
 	if (ret) {
 		if (ret != -EINVAL)
 			return ret;
-		dout("trying old device syntax");
+		bout("trying old device syntax");
 		ret = ceph_parse_old_source(dev_name, dev_name_end, fc);
 		if (ret)
 			return ret;
@@ -425,7 +426,7 @@ static int ceph_parse_mount_param(struct fs_context *fc,
 		return ret;
 
 	token = fs_parse(fc, ceph_mount_parameters, param, &result);
-	dout("%s: fs_parse '%s' token %d\n",__func__, param->key, token);
+	bout("%s: fs_parse '%s' token %d\n",__func__, param->key, token);
 	if (token < 0)
 		return token;
 
@@ -631,7 +632,7 @@ out_of_range:
 
 static void destroy_mount_options(struct ceph_mount_options *args)
 {
-	dout("destroy_mount_options %p\n", args);
+	bout("destroy_mount_options %p\n", args);
 	if (!args)
 		return;
 
@@ -895,7 +896,7 @@ static void flush_fs_workqueues(struct ceph_fs_client *fsc)
 
 static void destroy_fs_client(struct ceph_fs_client *fsc)
 {
-	doutc(fsc->client, "%p\n", fsc);
+	boutc(fsc->client, "%p\n", fsc);
 
 	spin_lock(&ceph_fsc_lock);
 	list_del(&fsc->metric_wakeup);
@@ -910,7 +911,7 @@ static void destroy_fs_client(struct ceph_fs_client *fsc)
 	ceph_destroy_client(fsc->client);
 
 	kfree(fsc);
-	dout("%s: %p done\n", __func__, fsc);
+	bout("%s: %p done\n", __func__, fsc);
 }
 
 /*
@@ -1032,7 +1033,7 @@ void ceph_umount_begin(struct super_block *sb)
 {
 	struct ceph_fs_client *fsc = ceph_sb_to_fs_client(sb);
 
-	doutc(fsc->client, "starting forced umount\n");
+	boutc(fsc->client, "starting forced umount\n");
 
 	fsc->mount_state = CEPH_MOUNT_SHUTDOWN;
 	__ceph_umount_begin(fsc);
@@ -1066,7 +1067,7 @@ static struct dentry *open_root_dentry(struct ceph_fs_client *fsc,
 	struct dentry *root;
 
 	/* open dir */
-	doutc(cl, "opening '%s'\n", path);
+	boutc(cl, "opening '%s'\n", path);
 	req = ceph_mdsc_create_request(mdsc, CEPH_MDS_OP_GETATTR, USE_ANY_MDS);
 	if (IS_ERR(req))
 		return ERR_CAST(req);
@@ -1086,13 +1087,13 @@ static struct dentry *open_root_dentry(struct ceph_fs_client *fsc,
 	if (err == 0) {
 		struct inode *inode = req->r_target_inode;
 		req->r_target_inode = NULL;
-		doutc(cl, "success\n");
+		boutc(cl, "success\n");
 		root = d_make_root(inode);
 		if (!root) {
 			root = ERR_PTR(-ENOMEM);
 			goto out;
 		}
-		doutc(cl, "success, root dentry is %p\n", root);
+		boutc(cl, "success, root dentry is %p\n", root);
 	} else {
 		root = ERR_PTR(err);
 	}
@@ -1156,7 +1157,7 @@ static struct dentry *ceph_real_mount(struct ceph_fs_client *fsc,
 	unsigned long started = jiffies;  /* note the start time */
 	struct dentry *root;
 
-	doutc(cl, "mount start %p\n", fsc);
+	boutc(cl, "mount start %p\n", fsc);
 	mutex_lock(&fsc->client->mount_mutex);
 
 	if (!fsc->sb->s_root) {
@@ -1179,7 +1180,7 @@ static struct dentry *ceph_real_mount(struct ceph_fs_client *fsc,
 		if (err)
 			goto out;
 
-		doutc(cl, "mount opening path '%s'\n", path);
+		boutc(cl, "mount opening path '%s'\n", path);
 
 		ceph_fs_debugfs_init(fsc);
 
@@ -1194,7 +1195,7 @@ static struct dentry *ceph_real_mount(struct ceph_fs_client *fsc,
 	}
 
 	fsc->mount_state = CEPH_MOUNT_MOUNTED;
-	doutc(cl, "mount success\n");
+	boutc(cl, "mount success\n");
 	mutex_unlock(&fsc->client->mount_mutex);
 	return root;
 
@@ -1210,7 +1211,7 @@ static int ceph_set_super(struct super_block *s, struct fs_context *fc)
 	struct ceph_client *cl = fsc->client;
 	int ret;
 
-	doutc(cl, "%p\n", s);
+	boutc(cl, "%p\n", s);
 
 	s->s_maxbytes = MAX_LFS_FILESIZE;
 
@@ -1247,29 +1248,29 @@ static int ceph_compare_super(struct super_block *sb, struct fs_context *fc)
 	struct ceph_fs_client *fsc = ceph_sb_to_fs_client(sb);
 	struct ceph_client *cl = fsc->client;
 
-	doutc(cl, "%p\n", sb);
+	boutc(cl, "%p\n", sb);
 
 	if (compare_mount_options(fsopt, opt, fsc)) {
-		doutc(cl, "monitor(s)/mount options don't match\n");
+		boutc(cl, "monitor(s)/mount options don't match\n");
 		return 0;
 	}
 	if ((opt->flags & CEPH_OPT_FSID) &&
 	    ceph_fsid_compare(&opt->fsid, &fsc->client->fsid)) {
-		doutc(cl, "fsid doesn't match\n");
+		boutc(cl, "fsid doesn't match\n");
 		return 0;
 	}
 	if (fc->sb_flags != (sb->s_flags & ~SB_BORN)) {
-		doutc(cl, "flags differ\n");
+		boutc(cl, "flags differ\n");
 		return 0;
 	}
 
 	if (fsc->blocklisted && !ceph_test_mount_opt(fsc, CLEANRECOVER)) {
-		doutc(cl, "client is blocklisted (and CLEANRECOVER is not set)\n");
+		boutc(cl, "client is blocklisted (and CLEANRECOVER is not set)\n");
 		return 0;
 	}
 
 	if (fsc->mount_state == CEPH_MOUNT_SHUTDOWN) {
-		doutc(cl, "client has been forcibly unmounted\n");
+		boutc(cl, "client has been forcibly unmounted\n");
 		return 0;
 	}
 
@@ -1310,7 +1311,7 @@ static int ceph_get_tree(struct fs_context *fc)
 		ceph_compare_super;
 	int err;
 
-	dout("ceph_get_tree\n");
+	bout("ceph_get_tree\n");
 
 	if (!fc->source)
 		return invalfc(fc, "No source");
@@ -1344,9 +1345,9 @@ static int ceph_get_tree(struct fs_context *fc)
 	if (ceph_sb_to_fs_client(sb) != fsc) {
 		destroy_fs_client(fsc);
 		fsc = ceph_sb_to_fs_client(sb);
-		dout("get_sb got existing client %p\n", fsc);
+		bout("get_sb got existing client %p\n", fsc);
 	} else {
-		dout("get_sb using new client %p\n", fsc);
+		bout("get_sb using new client %p\n", fsc);
 		err = ceph_setup_bdi(sb, fsc);
 		if (err < 0)
 			goto out_splat;
@@ -1358,7 +1359,7 @@ static int ceph_get_tree(struct fs_context *fc)
 		goto out_splat;
 	}
 
-	doutc(fsc->client, "root %p inode %p ino %llx.%llx\n", res,
+	boutc(fsc->client, "root %p inode %p ino %llx.%llx\n", res,
 		    d_inode(res), ceph_vinop(d_inode(res)));
 	fc->root = fsc->sb->s_root;
 	return 0;
@@ -1376,7 +1377,7 @@ out_splat:
 out:
 	destroy_fs_client(fsc);
 out_final:
-	dout("ceph_get_tree fail %d\n", err);
+	bout("ceph_get_tree fail %d\n", err);
 	return err;
 }
 
@@ -1542,7 +1543,7 @@ static void ceph_kill_sb(struct super_block *s)
 	struct ceph_mds_client *mdsc = fsc->mdsc;
 	bool wait;
 
-	doutc(cl, "%p\n", s);
+	boutc(cl, "%p\n", s);
 
 	ceph_mdsc_pre_umount(mdsc);
 	flush_fs_workqueues(fsc);
@@ -1648,7 +1649,16 @@ static int __init init_ceph(void)
 	if (ret)
 		goto out_caches;
 
-	pr_info("loaded (mds proto %d)\n", CEPH_MDSC_PROTOCOL);
+    pr_info("loaded (mds proto %d)\n", CEPH_MDSC_PROTOCOL);
+#if defined(CONFIG_BLOG) || defined(CONFIG_BLOG_MODULE)
+    /* Initialize BLOG integration for Ceph */
+    ret = ceph_blog_init();
+    if (ret) {
+        pr_err("ceph: BLOG init failed: %d\n", ret);
+        unregister_filesystem(&ceph_fs_type);
+        goto out_caches;
+    }
+#endif
 
 	return 0;
 
@@ -1660,9 +1670,13 @@ out:
 
 static void __exit exit_ceph(void)
 {
-	dout("exit_ceph\n");
-	unregister_filesystem(&ceph_fs_type);
-	destroy_caches();
+    bout("exit_ceph\n");
+#if defined(CONFIG_BLOG) || defined(CONFIG_BLOG_MODULE)
+    /* Cleanup BLOG integration */
+    ceph_blog_cleanup();
+#endif
+    unregister_filesystem(&ceph_fs_type);
+    destroy_caches();
 }
 
 static int param_set_metrics(const char *val, const struct kernel_param *kp)

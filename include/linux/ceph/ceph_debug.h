@@ -2,9 +2,18 @@
 #ifndef _FS_CEPH_DEBUG_H
 #define _FS_CEPH_DEBUG_H
 
+#undef pr_fmt
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/string.h>
+#include <linux/ceph/ceph_blog.h>
+
+#define CEPH_STRNCPY(dest, dest_len, src, src_len) ({     \
+    size_t __len = (dest_len) - 1;                        \
+    memcpy((dest), (src), min((size_t)(src_len), __len)); \
+    (dest)[min((size_t)(src_len), __len)] = '\0';        \
+})
+
 
 #ifdef CONFIG_CEPH_LIB_PRETTYDEBUG
 
@@ -48,6 +57,27 @@
 	pr_debug(" [%pU %llu] %s: " fmt, &client->fsid,			\
 		 client->monc.auth->global_id, __func__, ##__VA_ARGS__)
 
+#endif
+
+#if defined(CONFIG_BLOG) || defined(CONFIG_BLOG_MODULE)
+#define bout_dbg(fmt, ...)	\
+	do { \
+		CEPH_BLOG_LOG(fmt, ##__VA_ARGS__); \
+	} while (0)
+
+#define bout(fmt, ...)	\
+	do { \
+		CEPH_BLOG_LOG(fmt, ##__VA_ARGS__); \
+	} while (0)
+
+#define boutc(client, fmt, ...) \
+	do { \
+		CEPH_BLOG_LOG_CLIENT(client, fmt, ##__VA_ARGS__); \
+	} while (0)
+#else
+#define bout_dbg(fmt, ...) do { } while (0)
+#define bout(fmt, ...) do { } while (0)
+#define boutc(client, fmt, ...) do { (void)(client); } while (0)
 #endif
 
 #define pr_notice_client(client, fmt, ...)				\

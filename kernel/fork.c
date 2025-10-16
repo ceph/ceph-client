@@ -183,32 +183,28 @@ static inline struct task_struct *alloc_task_struct_node(int node)
 	return kmem_cache_alloc_node(task_struct_cachep, GFP_KERNEL, node);
 }
 
-struct tls_storage {
-	void (*release)(void *state);
-};
-
 static inline void free_task_struct(struct task_struct *tsk)
 {
-/*
-	if (tsk->tls.release) {
-		tsk->tls.release(tsk->tls.state);
-		tsk->tls.state = NULL;
-		tsk->tls.release = NULL;
-	}
-*/
 #if defined(CONFIG_BLOG) || defined(CONFIG_BLOG_MODULE)
 	/* Clean up any BLOG contexts */
 	{
+		struct blog_tls_ctx *contexts[BLOG_MAX_MODULES];
 		int i;
+
+		/* Step 1: Atomically detach all contexts while holding lock */
+		task_lock(tsk);
 		for (i = 0; i < BLOG_MAX_MODULES; i++) {
-			if (tsk->blog_contexts[i]) {
-				struct blog_tls_ctx *ctx = tsk->blog_contexts[i];
-				if (ctx->release)
-					ctx->release(ctx);
-				tsk->blog_contexts[i] = NULL;
-			}
+			contexts[i] = tsk->blog_contexts[i];
+			tsk->blog_contexts[i] = NULL;
 		}
-		tsk->blog_ctx_bitmap = 0;
+		task_unlock(tsk);
+
+		/* Step 2: Release contexts outside the lock */
+		for (i = 0; i < BLOG_MAX_MODULES; i++) {
+			struct blog_tls_ctx *ctx = contexts[i];
+			if (ctx && ctx->release)
+				ctx->release(ctx);
+		}
 	}
 #endif
 	kmem_cache_free(task_struct_cachep, tsk);
@@ -2296,7 +2292,6 @@ __latent_entropy struct task_struct *copy_process(
 		int i;
 		for (i = 0; i < BLOG_MAX_MODULES; i++)
 			p->blog_contexts[i] = NULL;
-		p->blog_ctx_bitmap = 0;
 	}
 #endif
 

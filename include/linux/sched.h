@@ -1279,7 +1279,6 @@ struct task_struct {
 
 #if defined(CONFIG_BLOG) || defined(CONFIG_BLOG_MODULE)
 	struct blog_tls_ctx		*blog_contexts[BLOG_MAX_MODULES];
-	u8				blog_ctx_bitmap;
 #endif
 
 	/* Stacked block device info: */
