@@ -110,7 +110,7 @@ static void add_context_to_logger_list(struct blog_logger *logger, struct blog_t
 {
 	if (!logger)
 		return;
-	
+
 	spin_lock(&logger->lock);
 	list_add(&ctx->list, &logger->contexts);
 	logger->total_contexts_allocated++;
@@ -120,10 +120,10 @@ static void add_context_to_logger_list(struct blog_logger *logger, struct blog_t
 static void *alloc_tls_ctx(struct blog_logger *logger)
 {
 	struct blog_tls_ctx *ctx;
-	
+
 	if (!logger)
 		return NULL;
-	
+
 	ctx = kmem_cache_alloc(logger->alloc_batch.magazine_cache,
 			       GFP_KERNEL);
 	if (!ctx) {
@@ -241,7 +241,7 @@ static void blog_tls_release(void *ptr)
 	ctx->task = NULL;
 	pr_debug("blog: releasing TLS context for pid %d [%s]\n", ctx->pid,
 		 ctx->comm);
-		 
+
 	if (ctx->logger) {
 		blog_batch_put(&ctx->logger->log_batch, ctx);
 
@@ -584,7 +584,7 @@ EXPORT_SYMBOL(blog_log_iter_next);
 /**
  * blog_des_entry - Deserialize entry with callback
  */
-int blog_des_entry(struct blog_logger *logger, struct blog_log_entry *entry, 
+int blog_des_entry(struct blog_logger *logger, struct blog_log_entry *entry,
 		   char *output, size_t out_size, blog_client_des_fn client_cb)
 {
 	int len = 0;

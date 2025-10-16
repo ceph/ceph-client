@@ -1277,7 +1277,7 @@ struct task_struct {
 /* BLOG support - max modules defined here for use by other headers */
 #define BLOG_MAX_MODULES 8
 
-#if defined(CONFIG_BLOG) || defined(CONFIG_BLOG_MODULE)
+#ifdef CONFIG_BLOG
 	struct blog_tls_ctx		*blog_contexts[BLOG_MAX_MODULES];
 #endif
 

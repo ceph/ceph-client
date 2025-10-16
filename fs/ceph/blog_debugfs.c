@@ -38,12 +38,12 @@ static int blog_entries_show(struct seq_file *s, void *p)
 	int entry_count = 0;
 	int ctx_count = 0;
 
-	seq_printf(s, "Ceph BLOG Entries\n");
-	seq_printf(s, "=================\n\n");
+	seq_puts(s, "Ceph BLOG Entries\n");
+	seq_puts(s, "=================\n\n");
 
 	/* Access the Ceph module's logger contexts */
 	if (!ceph_blog_ctx || !ceph_blog_ctx->logger) {
-		seq_printf(s, "Ceph BLOG context not initialized\n");
+		seq_puts(s, "Ceph BLOG context not initialized\n");
 		return 0;
 	}
 
@@ -52,9 +52,9 @@ static int blog_entries_show(struct seq_file *s, void *p)
 	list_for_each_entry(ctx, &ceph_blog_ctx->logger->contexts, list) {
 		ctx_count++;
 		seq_printf(s, "Context %d (ID: %llu, PID: %d, Comm: %s)\n",
-		          ctx_count, ctx->id, ctx->pid, ctx->comm);
+			   ctx_count, ctx->id, ctx->pid, ctx->comm);
 		seq_printf(s, "  Base jiffies: %lu, Refcount: %d\n",
-		          ctx->base_jiffies, atomic_read(&ctx->refcount));
+			   ctx->base_jiffies, atomic_read(&ctx->refcount));
 
 		/* Initialize iterator for this context's pagefrag */
 		blog_log_iter_init(&iter, &ctx->pf);
@@ -68,11 +68,11 @@ static int blog_entries_show(struct seq_file *s, void *p)
 
 			/* Use blog_des_entry with Ceph's client callback */
 			ret = blog_des_entry(ceph_blog_ctx->logger, entry, output_buf,
-			                    sizeof(output_buf), ceph_blog_client_des_callback);
+					     sizeof(output_buf), ceph_blog_client_des_callback);
 
 			if (ret < 0) {
 				seq_printf(s, "  Entry %d: [Error deserializing: %d]\n",
-				          entry_count, ret);
+					   entry_count, ret);
 			} else {
 				char time_buf[64];
 				u64 entry_jiffies = ctx->base_jiffies + entry->ts_delta;
@@ -88,7 +88,7 @@ static int blog_entries_show(struct seq_file *s, void *p)
 				seq_printf(s, "    %s\n", output_buf);
 			}
 		}
-		seq_printf(s, "\n");
+		seq_puts(s, "\n");
 	}
 
 	spin_unlock(&ceph_blog_ctx->logger->lock);
@@ -116,26 +116,26 @@ static const struct file_operations blog_entries_fops = {
  */
 static int blog_stats_show(struct seq_file *s, void *p)
 {
-	seq_printf(s, "Ceph BLOG Statistics\n");
-	seq_printf(s, "====================\n\n");
+	seq_puts(s, "Ceph BLOG Statistics\n");
+	seq_puts(s, "====================\n\n");
 
 	if (!ceph_blog_ctx || !ceph_blog_ctx->logger) {
-		seq_printf(s, "Ceph BLOG context not initialized\n");
+		seq_puts(s, "Ceph BLOG context not initialized\n");
 		return 0;
 	}
 
-	seq_printf(s, "Ceph Module Logger State:\n");
+	seq_puts(s, "Ceph Module Logger State:\n");
 	seq_printf(s, "  Total contexts allocated: %lu\n",
-	          ceph_blog_ctx->logger->total_contexts_allocated);
+		   ceph_blog_ctx->logger->total_contexts_allocated);
 	seq_printf(s, "  Next context ID: %llu\n", ceph_blog_ctx->logger->next_ctx_id);
 	seq_printf(s, "  Next source ID: %u\n",
-	          atomic_read(&ceph_blog_ctx->logger->next_source_id));
+		   atomic_read(&ceph_blog_ctx->logger->next_source_id));
 
-	seq_printf(s, "\nAllocation Batch:\n");
+	seq_puts(s, "\nAllocation Batch:\n");
 	seq_printf(s, "  Full magazines: %u\n", ceph_blog_ctx->logger->alloc_batch.nr_full);
 	seq_printf(s, "  Empty magazines: %u\n", ceph_blog_ctx->logger->alloc_batch.nr_empty);
 
-	seq_printf(s, "\nLog Batch:\n");
+	seq_puts(s, "\nLog Batch:\n");
 	seq_printf(s, "  Full magazines: %u\n", ceph_blog_ctx->logger->log_batch.nr_full);
 	seq_printf(s, "  Empty magazines: %u\n", ceph_blog_ctx->logger->log_batch.nr_empty);
 
@@ -163,11 +163,11 @@ static int blog_sources_show(struct seq_file *s, void *p)
 	u32 id;
 	int count = 0;
 
-	seq_printf(s, "Ceph BLOG Source Locations\n");
-	seq_printf(s, "===========================\n\n");
+	seq_puts(s, "Ceph BLOG Source Locations\n");
+	seq_puts(s, "===========================\n\n");
 
 	if (!ceph_blog_ctx || !ceph_blog_ctx->logger) {
-		seq_printf(s, "Ceph BLOG context not initialized\n");
+		seq_puts(s, "Ceph BLOG context not initialized\n");
 		return 0;
 	}
 
@@ -190,7 +190,7 @@ static int blog_sources_show(struct seq_file *s, void *p)
 		          atomic_read(&source->task_usage),
 		          atomic_read(&source->task_bytes));
 #endif
-		seq_printf(s, "\n");
+		seq_puts(s, "\n");
 	}
 
 	seq_printf(s, "Total registered sources: %d\n", count);
@@ -219,8 +219,8 @@ static int blog_clients_show(struct seq_file *s, void *p)
 	int count = 0;
 	const struct ceph_blog_client_info *info;
 
-	seq_printf(s, "Ceph BLOG Registered Clients\n");
-	seq_printf(s, "=============================\n\n");
+	seq_puts(s, "Ceph BLOG Registered Clients\n");
+	seq_puts(s, "=============================\n\n");
 
 	for (id = 1; id < CEPH_BLOG_MAX_CLIENTS; id++) {
 		info = ceph_blog_get_client_info(id);
@@ -232,7 +232,7 @@ static int blog_clients_show(struct seq_file *s, void *p)
 		seq_printf(s, "Client ID %u:\n", id);
 		seq_printf(s, "  FSID: %pU\n", info->fsid);
 		seq_printf(s, "  Global ID: %llu\n", info->global_id);
-		seq_printf(s, "\n");
+		seq_puts(s, "\n");
 	}
 
 	seq_printf(s, "Total registered clients: %d\n", count);

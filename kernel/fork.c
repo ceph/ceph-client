@@ -24,7 +24,7 @@
 #include <linux/sched/cputime.h>
 #include <linux/sched/ext.h>
 #include <linux/seq_file.h>
-#if defined(CONFIG_BLOG) || defined(CONFIG_BLOG_MODULE)
+#ifdef CONFIG_BLOG
 #include <linux/blog/blog.h>
 #endif
 #include <linux/rtmutex.h>
@@ -185,7 +185,7 @@ static inline struct task_struct *alloc_task_struct_node(int node)
 
 static inline void free_task_struct(struct task_struct *tsk)
 {
-#if defined(CONFIG_BLOG) || defined(CONFIG_BLOG_MODULE)
+#ifdef CONFIG_BLOG
 	/* Clean up any BLOG contexts */
 	{
 		struct blog_tls_ctx *contexts[BLOG_MAX_MODULES];
@@ -2286,10 +2286,11 @@ __latent_entropy struct task_struct *copy_process(
 	if (!p)
 		goto fork_out;
 
-#if defined(CONFIG_BLOG) || defined(CONFIG_BLOG_MODULE)
+#ifdef CONFIG_BLOG
 	/* Initialize BLOG contexts */
 	{
 		int i;
+
 		for (i = 0; i < BLOG_MAX_MODULES; i++)
 			p->blog_contexts[i] = NULL;
 	}

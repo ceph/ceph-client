@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Binary Logging Page Fragment Management
- * 
+ *
  * Migrated from ceph_san_pagefrag.c with all algorithms preserved
  */
 
@@ -72,9 +72,9 @@ EXPORT_SYMBOL(blog_pagefrag_init_with_buffer);
 int blog_pagefrag_alloc(struct blog_pagefrag *pf, unsigned int n)
 {
 	u64 offset;
-	if (pf->head + n > BLOG_PAGEFRAG_SIZE) {
+
+	if (pf->head + n > BLOG_PAGEFRAG_SIZE)
 		return -ENOMEM; /* No space left */
-	}
 	offset = pf->head;
 	pf->head += n;
 	pf->alloc_count++;
@@ -94,7 +94,7 @@ void *blog_pagefrag_get_ptr(struct blog_pagefrag *pf, u64 val)
 {
 	void *rc = (void *)(pf->buffer + val);
 	if (unlikely(pf->pages && pf->buffer != page_address(pf->pages))) {
-		pr_err("blog_pagefrag_get_ptr: invalid buffer pointer %llx @ %s\n", 
+		pr_err("blog_pagefrag_get_ptr: invalid buffer pointer %llx @ %s\n",
 		       (unsigned long long)pf->buffer, current->comm);
 		BUG();
 	}

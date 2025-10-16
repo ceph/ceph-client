@@ -59,7 +59,7 @@
 
 #endif
 
-#if defined(CONFIG_BLOG) || defined(CONFIG_BLOG_MODULE)
+#ifdef CONFIG_BLOG
 #define bout_dbg(fmt, ...)	\
 	do { \
 		CEPH_BLOG_LOG(fmt, ##__VA_ARGS__); \

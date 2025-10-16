@@ -55,7 +55,7 @@ struct blog_module_context *blog_module_register(const char *module_name)
 		pr_err("blog: module name is empty\n");
 		return NULL;
 	}
-	
+
 	if (name_len >= 32) {  /* sizeof(blog_module_context.name) */
 		pr_err("blog: module name too long: '%s' (max 31 chars)\n",
 		       module_name);
@@ -69,12 +69,12 @@ struct blog_module_context *blog_module_register(const char *module_name)
 	spin_lock_irqsave(&blog_registry.lock, flags);
 
 	/* Find first free slot */
-	slot = find_first_zero_bit((unsigned long *)&blog_registry.allocated_bitmap, 
+	slot = find_first_zero_bit((unsigned long *)&blog_registry.allocated_bitmap,
 				    BLOG_MAX_MODULES);
 	if (slot >= BLOG_MAX_MODULES) {
 		spin_unlock_irqrestore(&blog_registry.lock, flags);
 		kfree(ctx);
-		pr_err("blog: no free slots available (max %d modules)\n", 
+		pr_err("blog: no free slots available (max %d modules)\n",
 		       BLOG_MAX_MODULES);
 		return NULL;
 	}
@@ -481,7 +481,7 @@ EXPORT_SYMBOL(blog_get_tls_ctx_ctx);
  *
  * Return: Buffer to write log data to, or NULL on failure
  */
-void* blog_log_ctx(struct blog_module_context *ctx, u32 source_id, 
+void* blog_log_ctx(struct blog_module_context *ctx, u32 source_id,
                    u8 client_id, size_t needed_size)
 {
 	struct blog_tls_ctx *tls_ctx;

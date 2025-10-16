@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Binary Logging Deserialization
- * 
+ *
  * Migrated from ceph_san_des.c with all algorithms preserved
  */
 
@@ -96,7 +96,7 @@ int blog_des_reconstruct(const char *fmt, const void *buffer, size_t nr_args,
 		/* Parse length modifiers (l, ll, h, hh, z) */
 		is_long = 0;
 		is_long_long = 0;
-		
+
 		if (*fmt_ptr == 'l') {
 			fmt_ptr++;
 			is_long = 1;
@@ -187,7 +187,7 @@ int blog_des_reconstruct(const char *fmt, const void *buffer, size_t nr_args,
 			buf_ptr += sizeof(int);
 			ret = snprintf(out_ptr, remaining, "%d", val);
 		}
-			
+
 			if (ret > 0) {
 				if (ret > remaining)
 					ret = remaining;
@@ -226,7 +226,7 @@ int blog_des_reconstruct(const char *fmt, const void *buffer, size_t nr_args,
 			buf_ptr += sizeof(unsigned int);
 			ret = snprintf(out_ptr, remaining, "%u", val);
 		}
-			
+
 			if (ret > 0) {
 				if (ret > remaining)
 					ret = remaining;
@@ -271,7 +271,7 @@ int blog_des_reconstruct(const char *fmt, const void *buffer, size_t nr_args,
 			buf_ptr += sizeof(unsigned int);
 			ret = snprintf(out_ptr, remaining, hex_fmt, val);
 		}
-			
+
 			if (ret > 0) {
 				if (ret > remaining)
 					ret = remaining;
@@ -283,7 +283,7 @@ int blog_des_reconstruct(const char *fmt, const void *buffer, size_t nr_args,
 
 	case 'p': { /* Pointer */
 		void *ptr;
-		
+
 		/* Check buffer bounds before reading */
 		if (buf_ptr + sizeof(void *) > buf_end) {
 			pr_err("blog_des_reconstruct (%zu): buffer overrun reading pointer\n", arg_count);
@@ -305,7 +305,7 @@ int blog_des_reconstruct(const char *fmt, const void *buffer, size_t nr_args,
 
 	case 'c': { /* Character */
 		char val;
-		
+
 		/* Check buffer bounds before reading */
 		if (buf_ptr + sizeof(int) > buf_end) { /* chars are promoted to int */
 			pr_err("blog_des_reconstruct (%zu): buffer overrun reading char\n", arg_count);
@@ -323,7 +323,7 @@ int blog_des_reconstruct(const char *fmt, const void *buffer, size_t nr_args,
 	}
 
 		default:
-			pr_err("blog_des_reconstruct (%zu): unsupported format specifier '%%%c'\n", 
+			pr_err("blog_des_reconstruct (%zu): unsupported format specifier '%%%c'\n",
 			       arg_count, *fmt_ptr);
 			return -EINVAL;
 		}
@@ -350,20 +350,20 @@ EXPORT_SYMBOL(blog_des_reconstruct);
  *
  * Return: Length of formatted string, or negative error code on failure
  */
-int blog_log_reconstruct(struct blog_logger *logger, const struct blog_log_entry *entry, 
+int blog_log_reconstruct(struct blog_logger *logger, const struct blog_log_entry *entry,
 			char *output, size_t output_size)
 {
 	struct blog_source_info *source;
-	
+
 	if (!entry || !output || !logger)
 		return -EINVAL;
-	
+
 	/* Get source info */
 	source = blog_get_source_info(logger, entry->source_id);
 	if (!source) {
 		return snprintf(output, output_size, "[unknown source %u]", entry->source_id);
 	}
-	
+
 	/* Reconstruct using the format string from source */
 	return blog_des_reconstruct(source->fmt, entry->buffer, 0, entry->len,
 	                           output, output_size);

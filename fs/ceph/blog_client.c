@@ -14,11 +14,11 @@
 #include <linux/blog/blog.h>
 
 /* Ceph's BLOG module context */
-struct blog_module_context *ceph_blog_ctx = NULL;
+struct blog_module_context *ceph_blog_ctx;
 EXPORT_SYMBOL(ceph_blog_ctx);
 
 /* Ceph's logger - direct access to the logger from module context */
-struct blog_logger *ceph_logger = NULL;
+struct blog_logger *ceph_logger;
 EXPORT_SYMBOL(ceph_logger);
 
 /* Global client mapping state */
@@ -60,7 +60,7 @@ int ceph_blog_init(void)
 	memset(ceph_blog_state.client_map, 0, sizeof(ceph_blog_state.client_map));
 	ceph_blog_state.next_client_id = 1;
 	ceph_blog_state.initialized = true;
-	
+
 	pr_info("ceph: BLOG module context and client mapping initialized\n");
 	return 0;
 }
@@ -82,14 +82,14 @@ void ceph_blog_cleanup(void)
 	ceph_blog_state.next_client_id = 1;
 	ceph_blog_state.initialized = false;
 	spin_unlock(&ceph_blog_state.lock);
-	
+
 	/* Clean up module-specific BLOG context */
 	if (ceph_blog_ctx) {
 		blog_module_cleanup(ceph_blog_ctx);
 		ceph_blog_ctx = NULL;
 		ceph_logger = NULL;
 	}
-	
+
 	pr_info("ceph: BLOG module context and client mapping cleaned up\n");
 }
 EXPORT_SYMBOL(ceph_blog_cleanup);
@@ -150,8 +150,8 @@ u32 ceph_blog_check_client_id(u32 id, const char *fsid, u64 global_id)
 	}
 	/* Use %pU to print fsid like the rest of Ceph does */
 	pr_info("ceph: allocating new BLOG client ID %u for fsid=%pU global_id=%llu\n",
-	        found_id, fsid, global_id);
-	
+		found_id, fsid, global_id);
+
 	entry = &ceph_blog_state.client_map[found_id];
 	memcpy(entry->fsid, fsid, sizeof(entry->fsid));
 	entry->global_id = global_id;
@@ -201,7 +201,7 @@ int ceph_blog_client_des_callback(char *buf, size_t size, u8 client_id)
 
 	/* Use %pU to format fsid, matching doutc and other Ceph client logging */
 	return snprintf(buf, size, "[%pU %llu] ",
-	                info->fsid, info->global_id);
+			info->fsid, info->global_id);
 }
 EXPORT_SYMBOL(ceph_blog_client_des_callback);
 
@@ -215,13 +215,13 @@ u32 ceph_blog_get_client_id(struct ceph_client *client)
 {
 	if (!client)
 		return 0;
-	
-	/* 
+
+	/*
 	 * No caching - ceph_blog_check_client_id has internal fast path
 	 * that checks the provided ID first before scanning
 	 */
-	return ceph_blog_check_client_id(0, 
-	                                  client->fsid.fsid,
-	                                  client->monc.auth->global_id);
+	return ceph_blog_check_client_id(0,
+					  client->fsid.fsid,
+					  client->monc.auth->global_id);
 }
 EXPORT_SYMBOL(ceph_blog_get_client_id);
