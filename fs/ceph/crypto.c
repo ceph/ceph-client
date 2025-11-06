@@ -519,7 +519,7 @@ int ceph_fscrypt_decrypt_extents(struct inode *inode, struct page **page,
 	u32 xlen;
 
 	/* Nothing to do for empty array */
-	if (ext_cnt == 0) {
+	if (unlikely(ext_cnt == 0)) {
 		doutc(cl, "%p %llx.%llx empty array, ret 0\n", inode,
 		      ceph_vinop(inode));
 		return 0;
@@ -534,7 +534,7 @@ int ceph_fscrypt_decrypt_extents(struct inode *inode, struct page **page,
 		int pgidx = pgsoff >> PAGE_SHIFT;
 		int fret;
 
-		if ((ext->off | ext->len) & ~CEPH_FSCRYPT_BLOCK_MASK) {
+		if (unlikely((ext->off | ext->len) & ~CEPH_FSCRYPT_BLOCK_MASK)) {
 			pr_warn_client(cl,
 				"%p %llx.%llx bad encrypted sparse extent "
 				"idx %d off %llx len %llx\n",
@@ -546,12 +546,12 @@ int ceph_fscrypt_decrypt_extents(struct inode *inode, struct page **page,
 						 off + pgsoff, ext->len);
 		doutc(cl, "%p %llx.%llx [%d] 0x%llx~0x%llx fret %d\n", inode,
 		      ceph_vinop(inode), i, ext->off, ext->len, fret);
-		if (fret < 0) {
+		if (unlikely(fret < 0)) {
 			if (ret == 0)
 				ret = fret;
 			break;
-		}
-		ret = pgsoff + fret;
+		} else
+			ret = pgsoff + fret;
 	}
 	doutc(cl, "ret %d\n", ret);
 	return ret;
