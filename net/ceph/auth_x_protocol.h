@@ -6,6 +6,30 @@
 #define CEPHX_GET_PRINCIPAL_SESSION_KEY 0x0200
 #define CEPHX_GET_ROTATING_KEY          0x0400
 
+/* Principal <-> AuthMonitor */
+/* The session's connection secret: encrypted with AUTH ticket service_key (aka auth_service_key) */
+#define CEPHX_KEY_USAGE_SESSION_CONNECTION_SECRET  0x03
+/* The ticket's CephxServiceTicket containing the session key: uses principal's key */
+#define CEPHX_KEY_USAGE_TICKET_SESSION_KEY         0x04
+/* The ticket's CephxTicketBlob: uses old auth session key (if presented) */
+#define CEPHX_KEY_USAGE_TICKET_BLOB                0x05
+
+/* Principal <-> Service */
+/* Client Authorization Request: using ticket session_key */
+#define CEPHX_KEY_USAGE_AUTHORIZE             0x10
+/* Service's Challenge: using ticket session_key */
+#define CEPHX_KEY_USAGE_AUTHORIZE_CHALLENGE   0x11
+/* Service's final reply: using ticket session key */
+#define CEPHX_KEY_USAGE_AUTHORIZE_REPLY       0x12
+
+/* Service Daemon <-> AuthMonitor */
+/* Rotating Secret Fetch by Services: service daemon's principal key */
+#define CEPHX_KEY_USAGE_ROTATING_SECRET       0x20
+
+/* Service Tickets */
+/* CephxServiceTicketInfo: rotating service key */
+#define CEPHX_KEY_USAGE_TICKET_INFO           0x30
+
 /* common bits */
 struct ceph_x_ticket_blob {
 	__u8 struct_v;
