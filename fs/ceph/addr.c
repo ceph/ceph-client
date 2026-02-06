@@ -2407,7 +2407,9 @@ void ceph_fill_inline_data(struct inode *inode, struct folio *locked_folio,
 		if (len < folio_size(folio))
 			folio_zero_segment(folio, len, folio_size(folio));
 
-		folio_mark_uptodate(folio);
+		if (len > 0)
+			folio_mark_uptodate(folio);
+
 		folio_unlock(folio);
 		folio_put(folio);
 	}
