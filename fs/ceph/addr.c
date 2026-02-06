@@ -2204,7 +2204,9 @@ void ceph_fill_inline_data(struct inode *inode, struct page *locked_page,
 		else
 			flush_dcache_page(page);
 
-		SetPageUptodate(page);
+		if (len > 0)
+			SetPageUptodate(page);
+
 		unlock_page(page);
 		put_page(page);
 	}
