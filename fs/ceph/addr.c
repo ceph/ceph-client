@@ -319,14 +319,18 @@ static bool ceph_netfs_issue_op_inline(struct netfs_io_subrequest *subreq)
 		return false;
 	}
 
-	len = min_t(size_t, iinfo->inline_len - subreq->start, subreq->len);
-	err = copy_to_iter(iinfo->inline_data + subreq->start, len, &subreq->io_iter);
-	if (err == 0) {
+	if (iinfo->inline_len > 0) {
+		len = min_t(size_t, iinfo->inline_len, subreq->len);
+
+		err = copy_to_iter(iinfo->inline_data, len, &subreq->io_iter);
+		if (err == 0) {
+			err = -EFAULT;
+		} else {
+			subreq->transferred += err;
+			err = 0;
+		}
+	} else
 		err = -EFAULT;
-	} else {
-		subreq->transferred += err;
-		err = 0;
-	}
 
 	ceph_mdsc_put_request(req);
 out:
