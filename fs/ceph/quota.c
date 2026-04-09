@@ -230,10 +230,17 @@ restart:
 	realm = ceph_inode(inode)->i_snap_realm;
 	if (realm)
 		ceph_get_snap_realm(mdsc, realm);
-	else
-		pr_err_ratelimited_client(cl,
-				"%p %llx.%llx null i_snap_realm\n",
-				inode, ceph_vinop(inode));
+	else {
+		/*
+		 * i_snap_realm is NULL when all caps have been released, e.g.
+		 * after an MDS session rejection. This is a transient state;
+		 * the realm will be restored once caps are re-granted.
+		 * Treat it as "no quota realm found".
+		 */
+		doutc(cl, "%p %llx.%llx null i_snap_realm\n",
+		      inode, ceph_vinop(inode));
+	}
+
 	while (realm) {
 		bool has_inode;
 
@@ -342,10 +349,17 @@ restart:
 	realm = ceph_inode(inode)->i_snap_realm;
 	if (realm)
 		ceph_get_snap_realm(mdsc, realm);
-	else
-		pr_err_ratelimited_client(cl,
-				"%p %llx.%llx null i_snap_realm\n",
-				inode, ceph_vinop(inode));
+	else {
+		/*
+		 * i_snap_realm is NULL when all caps have been released, e.g.
+		 * after an MDS session rejection. This is a transient state;
+		 * the realm will be restored once caps are re-granted.
+		 * Treat it as "quota not exceeded".
+		 */
+		doutc(cl, "%p %llx.%llx null i_snap_realm\n",
+		      inode, ceph_vinop(inode));
+	}
+
 	while (realm) {
 		bool has_inode;
 
@@ -495,6 +509,9 @@ bool ceph_quota_update_statfs(struct ceph_fs_client *fsc, struct kstatfs *buf)
 	struct inode *in;
 	u64 total = 0, used, free;
 	bool is_updated = false;
+
+	if (!ceph_has_realms_with_quotas(d_inode(fsc->sb->s_root)))
+		return false;
 
 	down_read(&mdsc->snap_rwsem);
 	get_quota_realm(mdsc, d_inode(fsc->sb->s_root), QUOTA_GET_MAX_BYTES,
