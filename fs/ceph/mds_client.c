@@ -27,6 +27,8 @@
 #include <trace/events/ceph.h>
 
 #define RECONNECT_MAX_SIZE (INT_MAX - PAGE_SIZE)
+#define CEPH_CAP_FLUSH_WAIT_TIMEOUT_SEC 60
+#define CEPH_CAP_FLUSH_MAX_DUMP_COUNT 5
 
 /*
  * A cluster of MDS (metadata server) daemons is responsible for
@@ -2342,30 +2344,83 @@ static int check_caps_flush(struct ceph_mds_client *mdsc,
 	return ret;
 }
 
+/*
+ * Dump pending cap flushes for diagnostic purposes.
+ *
+ * cf->ci is safe to dereference here: cap_flush entries hold a
+ * reference on the inode (via the cap), and entries are removed from
+ * cap_flush_list under cap_dirty_lock before the cap (and thus the
+ * inode reference) is released.  Holding cap_dirty_lock therefore
+ * guarantees the inode remains valid for the lifetime of the scan.
+ */
+struct flush_dump_entry {
+	u64 ino;
+	u64 snap;
+	int caps;
+	u64 tid;
+	u64 last_ack;
+	bool wake;
+	bool is_capsnap;
+	bool ci_null;
+};
+
 static void dump_cap_flushes(struct ceph_mds_client *mdsc, u64 want_tid)
 {
 	struct ceph_client *cl = mdsc->fsc->client;
+	struct flush_dump_entry entries[CEPH_CAP_FLUSH_MAX_DUMP_COUNT];
 	struct ceph_cap_flush *cf;
+	int n = 0, remaining = 0;
 
-	pr_info_client(cl, "still waiting for cap flushes through %llu:\n",
-		       want_tid);
 	spin_lock(&mdsc->cap_dirty_lock);
 	list_for_each_entry(cf, &mdsc->cap_flush_list, g_list) {
 		if (cf->tid > want_tid)
 			break;
-		pr_info_client(cl, "%llx:%llx %s %llu %llu %d%s\n",
-			       ceph_vinop(&cf->ci->netfs.inode),
-			       ceph_cap_string(cf->caps), cf->tid,
-			       cf->ci->i_last_cap_flush_ack, cf->wake,
-			       cf->is_capsnap ? " is_capsnap" : "");
+		if (n < CEPH_CAP_FLUSH_MAX_DUMP_COUNT) {
+			struct flush_dump_entry *e = &entries[n++];
+
+			e->ci_null = WARN_ON_ONCE(!cf->ci);
+			if (!e->ci_null) {
+				e->ino = ceph_ino(&cf->ci->netfs.inode);
+				e->snap = ceph_snap(&cf->ci->netfs.inode);
+				e->last_ack = READ_ONCE(cf->ci->i_last_cap_flush_ack);
+			}
+			e->caps = cf->caps;
+			e->tid = cf->tid;
+			e->wake = cf->wake;
+			e->is_capsnap = cf->is_capsnap;
+		} else {
+			remaining++;
+		}
 	}
 	spin_unlock(&mdsc->cap_dirty_lock);
+
+	pr_info_client(cl, "still waiting for cap flushes through %llu:\n",
+		       want_tid);
+	for (int i = 0; i < n; i++) {
+		struct flush_dump_entry *e = &entries[i];
+
+		if (e->ci_null)
+			pr_info_client(cl,
+				       "  (null ci) %s tid=%llu wake=%d%s\n",
+				       ceph_cap_string(e->caps), e->tid,
+				       e->wake,
+				       e->is_capsnap ? " is_capsnap" : "");
+		else
+			pr_info_client(cl,
+				       "  %llx.%llx %s tid=%llu last_ack=%llu wake=%d%s\n",
+				       e->ino, e->snap,
+				       ceph_cap_string(e->caps), e->tid,
+				       e->last_ack, e->wake,
+				       e->is_capsnap ? " is_capsnap" : "");
+	}
+	if (remaining)
+		pr_info_client(cl, "  ... and %d more pending flushes\n",
+			       remaining);
 }
 
 /*
- * flush all dirty inode data to disk.
- *
- * returns true if we've flushed through want_flush_tid
+ * Wait for all cap flushes through @want_flush_tid to complete.
+ * Periodically dumps pending cap flush state for diagnostics.
  */
 static void wait_caps_flush(struct ceph_mds_client *mdsc,
 			    u64 want_flush_tid)
@@ -2377,12 +2432,18 @@ static void wait_caps_flush(struct ceph_mds_client *mdsc,
 	doutc(cl, "want %llu\n", want_flush_tid);
 
 	do {
+		/* 60 * HZ fits in a long on all supported architectures. */
 		ret = wait_event_timeout(mdsc->cap_flushing_wq,
-			   check_caps_flush(mdsc, want_flush_tid), 60 * HZ);
-		if (ret == 0 && ++i < 5)
-			dump_cap_flushes(mdsc, want_flush_tid);
-		else if (ret == 1)
-			pr_info_client(cl, "condition evaluated to true after timeout!\n");
+			   check_caps_flush(mdsc, want_flush_tid),
+			   CEPH_CAP_FLUSH_WAIT_TIMEOUT_SEC * HZ);
+		if (ret == 0) {
+			if (i < CEPH_CAP_FLUSH_MAX_DUMP_COUNT)
+				dump_cap_flushes(mdsc, want_flush_tid);
+			else if (i == CEPH_CAP_FLUSH_MAX_DUMP_COUNT)
+				pr_info_client(cl,
+					       "still waiting for cap flushes; suppressing further dumps\n");
+			i++;
+		}
 	} while (ret == 0);
 
 	doutc(cl, "ok, flushed thru %llu\n", want_flush_tid);
