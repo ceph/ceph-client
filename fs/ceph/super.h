@@ -678,7 +678,7 @@ static inline struct inode *ceph_find_inode(struct super_block *sb,
 #define CEPH_I_ERROR_WRITE_BIT		(9)  /* have seen write errors */
 #define CEPH_I_ERROR_FILELOCK_BIT	(10) /* have seen file lock errors */
 #define CEPH_I_ODIRECT_BIT		(11) /* inode in direct I/O mode */
-#define CEPH_ASYNC_CREATE_BIT		(12) /* async create in flight for this */
+#define CEPH_I_ASYNC_CREATE_BIT		(12) /* async create in flight for this */
 #define CEPH_I_SHUTDOWN_BIT		(13) /* inode is no longer usable */
 #define CEPH_I_ASYNC_CHECK_CAPS_BIT	(14) /* check caps after async creating finishes */
 
@@ -690,12 +690,10 @@ static inline struct inode *ceph_find_inode(struct super_block *sb,
 #define CEPH_I_SEC_INITED		(1 << CEPH_I_SEC_INITED_BIT)
 #define CEPH_I_KICK_FLUSH		(1 << CEPH_I_KICK_FLUSH_BIT)
 #define CEPH_I_FLUSH_SNAPS		(1 << CEPH_I_FLUSH_SNAPS_BIT)
-#define CEPH_I_ERROR_WRITE		(1 << CEPH_I_ERROR_WRITE_BIT)
 #define CEPH_I_ERROR_FILELOCK		(1 << CEPH_I_ERROR_FILELOCK_BIT)
 #define CEPH_I_ODIRECT			(1 << CEPH_I_ODIRECT_BIT)
-#define CEPH_I_ASYNC_CREATE		(1 << CEPH_ASYNC_CREATE_BIT)
+#define CEPH_I_ASYNC_CREATE		(1 << CEPH_I_ASYNC_CREATE_BIT)
 #define CEPH_I_SHUTDOWN			(1 << CEPH_I_SHUTDOWN_BIT)
-#define CEPH_I_ASYNC_CHECK_CAPS		(1 << CEPH_I_ASYNC_CHECK_CAPS_BIT)
 
 /*
  * Masks of ceph inode work.
@@ -708,35 +706,18 @@ static inline struct inode *ceph_find_inode(struct super_block *sb,
 
 /*
  * We set the ERROR_WRITE bit when we start seeing write errors on an inode
- * and then clear it when they start succeeding. Note that we do a lockless
- * check first, and only take the lock if it looks like it needs to be changed.
- * The write submission code just takes this as a hint, so we're not too
- * worried if a few slip through in either direction.
+ * and then clear it when they start succeeding. The write submission code
+ * just takes this as a hint, so we're not too worried if a few slip through
+ * in either direction.
  */
 static inline void ceph_set_error_write(struct ceph_inode_info *ci)
 {
-	spin_lock(&ci->i_ceph_lock);
-	/* ensure that bit state is consistent */
-	smp_mb__before_atomic();
-	if (!test_bit(CEPH_I_ERROR_WRITE_BIT, &ci->i_ceph_flags)) {
-		set_bit(CEPH_I_ERROR_WRITE_BIT, &ci->i_ceph_flags);
-		/* ensure modified bit is visible */
-		smp_mb__after_atomic();
-	}
-	spin_unlock(&ci->i_ceph_lock);
+	set_bit(CEPH_I_ERROR_WRITE_BIT, &ci->i_ceph_flags);
 }
 
 static inline void ceph_clear_error_write(struct ceph_inode_info *ci)
 {
-	spin_lock(&ci->i_ceph_lock);
-	/* ensure that bit state is consistent */
-	smp_mb__before_atomic();
-	if (!test_bit(CEPH_I_ERROR_WRITE_BIT, &ci->i_ceph_flags)) {
-		clear_bit(CEPH_I_ERROR_WRITE_BIT, &ci->i_ceph_flags);
-		/* ensure modified bit is visible */
-		smp_mb__after_atomic();
-	}
-	spin_unlock(&ci->i_ceph_lock);
+	clear_bit(CEPH_I_ERROR_WRITE_BIT, &ci->i_ceph_flags);
 }
 
 static inline void __ceph_dir_set_complete(struct ceph_inode_info *ci,

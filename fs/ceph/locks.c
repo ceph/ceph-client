@@ -57,11 +57,7 @@ static void ceph_fl_release_lock(struct file_lock *fl)
 	ci = ceph_inode(inode);
 	if (atomic_dec_and_test(&ci->i_filelock_ref)) {
 		/* clear error when all locks are released */
-		spin_lock(&ci->i_ceph_lock);
 		clear_bit(CEPH_I_ERROR_FILELOCK_BIT, &ci->i_ceph_flags);
-		/* ensure modified bit is visible */
-		smp_mb__after_atomic();
-		spin_unlock(&ci->i_ceph_lock);
 	}
 	fl->fl_u.ceph.inode = NULL;
 	iput(inode);

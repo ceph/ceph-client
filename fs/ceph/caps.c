@@ -2067,7 +2067,7 @@ void ceph_check_caps(struct ceph_inode_info *ci, int flags)
 	spin_lock(&ci->i_ceph_lock);
 	/* ensure that bit state is consistent */
 	smp_mb__before_atomic();
-	if (test_bit(CEPH_ASYNC_CREATE_BIT, &ci->i_ceph_flags)) {
+	if (test_bit(CEPH_I_ASYNC_CREATE_BIT, &ci->i_ceph_flags)) {
 		set_bit(CEPH_I_ASYNC_CHECK_CAPS_BIT, &ci->i_ceph_flags);
 		/* ensure modified bit is visible */
 		smp_mb__after_atomic();
@@ -2633,7 +2633,7 @@ static void __kick_flushing_caps(struct ceph_mds_client *mdsc,
 	/* Don't do anything until create reply comes in */
 	/* ensure that bit state is consistent */
 	smp_mb__before_atomic();
-	if (test_bit(CEPH_ASYNC_CREATE_BIT, &ci->i_ceph_flags))
+	if (test_bit(CEPH_I_ASYNC_CREATE_BIT, &ci->i_ceph_flags))
 		return;
 
 	clear_bit(CEPH_I_KICK_FLUSH_BIT, &ci->i_ceph_flags);

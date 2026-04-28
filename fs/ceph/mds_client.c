@@ -3700,7 +3700,7 @@ static void __do_request(struct ceph_mds_client *mdsc,
 		cap = ci->i_auth_cap;
 		/* ensure that bit state is consistent */
 		smp_mb__before_atomic();
-		if (test_bit(CEPH_ASYNC_CREATE_BIT, &ci->i_ceph_flags) &&
+		if (test_bit(CEPH_I_ASYNC_CREATE_BIT, &ci->i_ceph_flags) &&
 		    mds != cap->mds) {
 			doutc(cl, "session changed for auth cap %d -> %d\n",
 			      cap->session->s_mds, session->s_mds);
