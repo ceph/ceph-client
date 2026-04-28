@@ -4792,9 +4792,9 @@ static int reconnect_caps_cb(struct inode *inode, int mds, void *arg)
 		rec.v2.pathbase = cpu_to_le64(path_info.vino.ino);
 		/* ensure that bit state is consistent */
 		smp_mb__before_atomic();
-		rec.v2.flock_len = (__force __le32)
-			(test_bit(CEPH_I_ERROR_FILELOCK_BIT,
-						&ci->i_ceph_flags) ? 0 : 1);
+		rec.v2.flock_len = cpu_to_le32(
+			test_bit(CEPH_I_ERROR_FILELOCK_BIT,
+				 &ci->i_ceph_flags) ? 0 : 1);
 	} else {
 		struct timespec64 ts;
 
