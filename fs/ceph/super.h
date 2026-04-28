@@ -689,7 +689,6 @@ static inline struct inode *ceph_find_inode(struct super_block *sb,
 #define CEPH_I_SEC_INITED		(1 << CEPH_I_SEC_INITED_BIT)
 #define CEPH_I_KICK_FLUSH		(1 << CEPH_I_KICK_FLUSH_BIT)
 #define CEPH_I_FLUSH_SNAPS		(1 << CEPH_I_FLUSH_SNAPS_BIT)
-#define CEPH_I_ERROR_FILELOCK		(1 << CEPH_I_ERROR_FILELOCK_BIT)
 #define CEPH_I_ODIRECT			(1 << CEPH_I_ODIRECT_BIT)
 #define CEPH_I_ASYNC_CREATE		(1 << CEPH_I_ASYNC_CREATE_BIT)
 #define CEPH_I_SHUTDOWN			(1 << CEPH_I_SHUTDOWN_BIT)
