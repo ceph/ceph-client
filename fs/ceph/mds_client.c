@@ -6543,18 +6543,34 @@ static int mds_handle_auth_bad_method(struct ceph_connection *con,
 static struct ceph_msg *mds_alloc_msg(struct ceph_connection *con,
 				struct ceph_msg_header *hdr, int *skip)
 {
+	struct ceph_mds_session *s;
+	struct ceph_client *cl;
 	struct ceph_msg *msg;
 	int type = (int) le16_to_cpu(hdr->type);
 	int front_len = (int) le32_to_cpu(hdr->front_len);
+	u32 data_len = le32_to_cpu(hdr->data_len);
 
 	if (con->in_msg)
 		return con->in_msg;
+
+	s = con->private;
+	cl = s->s_mdsc->fsc->client;
 
 	*skip = 0;
 	msg = ceph_msg_new(type, front_len, GFP_NOFS, false);
 	if (!msg) {
 		pr_err("unable to allocate msg type %d len %d\n",
 		       type, front_len);
+		return NULL;
+	}
+
+	if (data_len > msg->data_length) {
+		pr_warn_ratelimited_client(cl,
+					   "mds%d message data %u > prealloc %zu, skipping\n",
+					   s->s_mds, data_len,
+					   msg->data_length);
+		ceph_msg_put(msg);
+		*skip = 1;
 		return NULL;
 	}
 
