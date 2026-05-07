@@ -121,6 +121,7 @@ static inline bool ceph_reset_is_idle(struct ceph_client_reset_state *st)
 {
 	return READ_ONCE(st->phase) == CEPH_CLIENT_RESET_IDLE;
 }
+
 struct ceph_mds_cap_match {
 	s64 uid;  /* default to MDS_AUTH_UID_ANY */
 	u32 num_gids;

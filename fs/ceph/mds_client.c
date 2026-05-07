@@ -2359,6 +2359,7 @@ struct flush_dump_entry {
 static void dump_cap_flushes(struct ceph_mds_client *mdsc, u64 want_tid)
 {
 	struct ceph_client *cl = mdsc->fsc->client;
+	int i;
 	struct flush_dump_entry entries[CEPH_CAP_FLUSH_MAX_DUMP_ENTRIES];
 	struct ceph_cap_flush *cf;
 	int n = 0, remaining = 0;
@@ -2388,7 +2389,7 @@ static void dump_cap_flushes(struct ceph_mds_client *mdsc, u64 want_tid)
 
 	pr_info_client(cl, "still waiting for cap flushes through %llu:\n",
 		       want_tid);
-	for (int i = 0; i < n; i++) {
+	for (i = 0; i < n; i++) {
 		struct flush_dump_entry *e = &entries[i];
 
 		if (e->ci_null)

@@ -1,0 +1,84 @@
+# CephFS Client Reset Test Suite
+
+Test suite for the CephFS kernel client manual session reset feature.
+This trimmed set contains the single-client stress test, the targeted
+corner-case test, and the one-shot validation harness used during
+feature bring-up.
+
+## Prerequisites
+
+- Linux kernel with the CephFS client reset feature (this branch)
+- A running Ceph cluster with at least one MDS
+- Root access (debugfs requires it)
+- Python 3 (for validators)
+- flock utility (for lock tests, usually in util-linux)
+
+## Test inventory
+
+| Test | Script(s) | What it covers |
+|------|-----------|----------------|
+| Single-client stress | `reset_stress.sh` | I/O + resets + data integrity on one mount |
+| Corner cases | `reset_corner_cases.sh` | EBUSY, dirty caps, flock reclaim, unmount-during-reset |
+| Validation harness | `run_validation.sh` | baseline + corner cases + moderate/aggressive stress + final status check |
+
+## Quick start
+
+Stress run:
+
+    sudo ./reset_stress.sh --mount-point /mnt/cephfs --profile moderate
+
+Corner cases:
+
+    sudo ./reset_corner_cases.sh --mount-point /mnt/cephfs
+
+End-to-end validation:
+
+    sudo ./run_validation.sh --mount-point /mnt/cephfs
+
+## Stress profiles
+
+    baseline   - no resets, 1 IO + 1 rename, 600s
+    moderate   - reset every 5-15s, 2 IO + 1 rename, 900s
+    aggressive - reset every 1-5s, 4 IO + 2 rename, 900s
+    soak       - reset every 5-15s, 2 IO + 1 rename, 3600s
+
+## Key options (all scripts)
+
+    --mount-point PATH   CephFS mount point (required)
+    --client-id ID       Debugfs client id (auto-detected if one)
+
+reset_stress.sh additionally accepts:
+
+    --profile NAME       baseline|moderate|aggressive|soak
+    --duration-sec N     Override profile runtime
+    --no-reset           Disable reset injection
+    --out-dir PATH       Artifact directory
+
+## Corner case tests
+
+    [1/4] ebusy_rejection       Second reset rejected while first in-flight
+    [2/4] dirty_caps_at_reset   Reset with unflushed dirty caps
+    [3/4] flock_after_reset     Stale lock EIO + fresh lock after holder exit
+    [4/4] unmount_during_reset  umount during active reset (destroy-path wakeup)
+
+Test 4 requires creating a second CephFS mount instance and SKIPs if
+the host cannot do so.  See `--help` output for details.
+
+## Troubleshooting
+
+**No writable Ceph reset interface found:**
+Kernel lacks the reset feature, debugfs not mounted, or not root.
+Check: `ls /sys/kernel/debug/ceph/*/reset/`
+
+**Multiple Ceph clients found:**
+Use `--client-id` to select one.
+List: `ls /sys/kernel/debug/ceph/`
+
+## Files
+
+| File | Role |
+|------|------|
+| `reset_stress.sh` | Single-client stress test runner |
+| `validate_consistency.py` | Single-client post-run validator |
+| `reset_corner_cases.sh` | Corner case harness (4 sequential tests) |
+| `run_validation.sh` | One-shot validation harness |
