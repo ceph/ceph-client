@@ -239,6 +239,7 @@ struct ceph_cap_flush {
 	bool is_capsnap; /* true means capsnap */
 	struct list_head g_list; // global
 	struct list_head i_list; // per inode
+	struct ceph_inode_info *ci;
 };
 
 /*
@@ -453,6 +454,11 @@ struct ceph_inode_info {
 	struct ceph_snap_context *i_head_snapc;  /* set if wr_buffer_head > 0 or
 						    dirty|flushing caps */
 	unsigned i_snap_caps;           /* cap bits for snapped files */
+	/*
+	 * Written under i_ceph_lock, read via READ_ONCE()
+	 * from diagnostic paths.
+	 */
+	u64 i_last_cap_flush_ack;
 
 	unsigned long i_last_rd;
 	unsigned long i_last_wr;

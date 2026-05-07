@@ -1648,6 +1648,7 @@ static void __ceph_flush_snaps(struct ceph_inode_info *ci,
 
 		spin_lock(&mdsc->cap_dirty_lock);
 		capsnap->cap_flush.tid = ++mdsc->last_cap_flush_tid;
+		capsnap->cap_flush.ci = ci;
 		list_add_tail(&capsnap->cap_flush.g_list,
 			      &mdsc->cap_flush_list);
 		if (oldest_flush_tid == 0)
@@ -1846,6 +1847,7 @@ struct ceph_cap_flush *ceph_alloc_cap_flush(void)
 		return NULL;
 
 	cf->is_capsnap = false;
+	cf->ci = NULL;
 	return cf;
 }
 
@@ -1931,6 +1933,7 @@ static u64 __mark_caps_flushing(struct inode *inode,
 	doutc(cl, "%p %llx.%llx now !dirty\n", inode, ceph_vinop(inode));
 
 	swap(cf, ci->i_prealloc_cap_flush);
+	cf->ci = ci;
 	cf->caps = flushing;
 	cf->wake = wake;
 
@@ -3825,6 +3828,13 @@ static void handle_cap_flush_ack(struct inode *inode, u64 flush_tid,
 	bool drop = false;
 	bool wake_ci = false;
 	bool wake_mdsc = false;
+
+	/*
+	 * Flush tids are monotonically increasing and acks arrive in
+	 * order under i_ceph_lock, so this is always the latest tid.
+	 * Diagnostic readers use READ_ONCE() without holding the lock.
+	 */
+	WRITE_ONCE(ci->i_last_cap_flush_ack, flush_tid);
 
 	list_for_each_entry_safe(cf, tmp_cf, &ci->i_cap_flush_list, i_list) {
 		/* Is this the one that was flushed? */

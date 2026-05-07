@@ -2330,19 +2330,111 @@ static int check_caps_flush(struct ceph_mds_client *mdsc,
 }
 
 /*
- * flush all dirty inode data to disk.
+ * Snapshot of a single cap_flush entry for diagnostic dump.
+ * Collected under cap_dirty_lock, printed after releasing it.
+ */
+struct flush_dump_entry {
+	u64 ino;		/* inode number */
+	u64 snap;		/* snap id */
+	int caps;		/* dirty cap bits */
+	u64 tid;		/* flush transaction id */
+	u64 last_ack;		/* most recent ack tid for this inode */
+	bool wake;		/* whether completion was requested */
+	bool is_capsnap;	/* true if this is a cap snap flush */
+	bool ci_null;		/* true if cf->ci was unexpectedly NULL */
+};
+
+/*
+ * Dump pending cap flushes for diagnostic purposes.
  *
- * returns true if we've flushed through want_flush_tid
+ * cf->ci is safe to dereference here: cap_flush entries hold a
+ * reference on the inode (via the cap), and entries are removed from
+ * cap_flush_list under cap_dirty_lock before the cap (and thus the
+ * inode reference) is released.  Holding cap_dirty_lock therefore
+ * guarantees the inode remains valid for the lifetime of the scan.
+ */
+
+static void dump_cap_flushes(struct ceph_mds_client *mdsc, u64 want_tid)
+{
+	struct ceph_client *cl = mdsc->fsc->client;
+	struct flush_dump_entry entries[CEPH_CAP_FLUSH_MAX_DUMP_ENTRIES];
+	struct ceph_cap_flush *cf;
+	int n = 0, remaining = 0;
+
+	spin_lock(&mdsc->cap_dirty_lock);
+	list_for_each_entry(cf, &mdsc->cap_flush_list, g_list) {
+		if (cf->tid > want_tid)
+			break;
+		if (n < CEPH_CAP_FLUSH_MAX_DUMP_ENTRIES) {
+			struct flush_dump_entry *e = &entries[n++];
+
+			e->ci_null = WARN_ON_ONCE(!cf->ci);
+			if (!e->ci_null) {
+				e->ino = ceph_ino(&cf->ci->netfs.inode);
+				e->snap = ceph_snap(&cf->ci->netfs.inode);
+				e->last_ack = READ_ONCE(cf->ci->i_last_cap_flush_ack);
+			}
+			e->caps = cf->caps;
+			e->tid = cf->tid;
+			e->wake = cf->wake;
+			e->is_capsnap = cf->is_capsnap;
+		} else {
+			remaining++;
+		}
+	}
+	spin_unlock(&mdsc->cap_dirty_lock);
+
+	pr_info_client(cl, "still waiting for cap flushes through %llu:\n",
+		       want_tid);
+	for (int i = 0; i < n; i++) {
+		struct flush_dump_entry *e = &entries[i];
+
+		if (e->ci_null)
+			pr_info_client(cl,
+				       "  (null ci) %s tid=%llu wake=%d%s\n",
+				       ceph_cap_string(e->caps), e->tid,
+				       e->wake,
+				       e->is_capsnap ? " is_capsnap" : "");
+		else
+			pr_info_client(cl,
+				       "  %llx.%llx %s tid=%llu last_ack=%llu wake=%d%s\n",
+				       e->ino, e->snap,
+				       ceph_cap_string(e->caps), e->tid,
+				       e->last_ack, e->wake,
+				       e->is_capsnap ? " is_capsnap" : "");
+	}
+	if (remaining)
+		pr_info_client(cl, "  ... and %d more pending flushes\n",
+			       remaining);
+}
+
+/*
+ * Wait for all cap flushes through @want_flush_tid to complete.
+ * Periodically dumps pending cap flush state for diagnostics.
  */
 static void wait_caps_flush(struct ceph_mds_client *mdsc,
 			    u64 want_flush_tid)
 {
 	struct ceph_client *cl = mdsc->fsc->client;
+	int i = 0;
+	long ret;
 
 	doutc(cl, "want %llu\n", want_flush_tid);
 
-	wait_event(mdsc->cap_flushing_wq,
-		   check_caps_flush(mdsc, want_flush_tid));
+	do {
+		/* 60 * HZ fits in a long on all supported architectures. */
+		ret = wait_event_timeout(mdsc->cap_flushing_wq,
+			   check_caps_flush(mdsc, want_flush_tid),
+			   CEPH_CAP_FLUSH_WAIT_TIMEOUT_SEC * HZ);
+		if (ret == 0) {
+			if (i < CEPH_CAP_FLUSH_MAX_DUMP_ITERS)
+				dump_cap_flushes(mdsc, want_flush_tid);
+			else if (i == CEPH_CAP_FLUSH_MAX_DUMP_ITERS)
+				pr_info_client(cl,
+					       "still waiting for cap flushes; suppressing further dumps\n");
+			i++;
+		}
+	} while (ret == 0);
 
 	doutc(cl, "ok, flushed thru %llu\n", want_flush_tid);
 }
