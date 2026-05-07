@@ -712,12 +712,18 @@ static struct ceph_msg *get_generic_reply(struct ceph_connection *con,
 	struct ceph_mon_client *monc = con->private;
 	struct ceph_mon_generic_request *req;
 	u64 tid = le64_to_cpu(hdr->tid);
+	u32 data_len = le32_to_cpu(hdr->data_len);
 	struct ceph_msg *m;
 
 	mutex_lock(&monc->mutex);
 	req = lookup_generic_request(&monc->generic_request_tree, tid);
 	if (!req) {
 		dout("get_generic_reply %lld dne\n", tid);
+		*skip = 1;
+		m = NULL;
+	} else if (data_len > req->reply->data_length) {
+		pr_warn_ratelimited("mon generic reply tid %llu data %u > preallocated %zu, skipping\n",
+				    tid, data_len, req->reply->data_length);
 		*skip = 1;
 		m = NULL;
 	} else {
@@ -1499,6 +1505,7 @@ static struct ceph_msg *mon_alloc_msg(struct ceph_connection *con,
 	struct ceph_mon_client *monc = con->private;
 	int type = le16_to_cpu(hdr->type);
 	int front_len = le32_to_cpu(hdr->front_len);
+	u32 data_len = le32_to_cpu(hdr->data_len);
 	struct ceph_msg *m = NULL;
 
 	*skip = 0;
@@ -1536,13 +1543,28 @@ static struct ceph_msg *mon_alloc_msg(struct ceph_connection *con,
 	if (!m) {
 		pr_info("alloc_msg unknown type %d\n", type);
 		*skip = 1;
-	} else if (front_len > m->front_alloc_len) {
+		return m;
+	}
+
+	if (front_len > m->front_alloc_len) {
 		pr_warn("mon_alloc_msg front %d > prealloc %d (%u#%llu)\n",
 			front_len, m->front_alloc_len,
 			(unsigned int)con->peer_name.type,
 			le64_to_cpu(con->peer_name.num));
 		ceph_msg_put(m);
 		m = ceph_msg_new(type, front_len, GFP_NOFS, false);
+		if (!m)
+			return m;
+	}
+
+	if (data_len > m->data_length) {
+		pr_warn_ratelimited("mon message data %u > prealloc %zu (%u#%llu), skipping\n",
+				    data_len, m->data_length,
+				    (unsigned int)con->peer_name.type,
+				    le64_to_cpu(con->peer_name.num));
+		ceph_msg_put(m);
+		m = NULL;
+		*skip = 1;
 	}
 
 	return m;
