@@ -1615,13 +1615,16 @@ static struct ceph_pg_mapping *__decode_pg_upmap_items(void **p, void *end,
 {
 	struct ceph_pg_mapping *pg;
 	u32 len, i;
+	const size_t item_size = 2 * sizeof(u32);
+	size_t payload_len;
 
 	ceph_decode_32_safe(p, end, len, e_inval);
-	if ((size_t)len > (SIZE_MAX - sizeof(*pg)) / (2 * sizeof(u32)))
+	if ((size_t)len > (SIZE_MAX - sizeof(*pg)) / item_size)
 		return ERR_PTR(-EINVAL);
 
-	ceph_decode_need(p, end, 2 * len * sizeof(u32), e_inval);
-	pg = alloc_pg_mapping(2 * len * sizeof(u32));
+	payload_len = len * item_size;
+	ceph_decode_need(p, end, payload_len, e_inval);
+	pg = alloc_pg_mapping(payload_len);
 	if (!pg)
 		return ERR_PTR(-ENOMEM);
 
