@@ -1304,7 +1304,11 @@ static inline void *hv_get_drvdata(struct hv_device *dev)
 
 struct device *hv_get_vmbus_root_device(void);
 
+#if IS_ENABLED(CONFIG_HYPERV_VMBUS)
 bool hv_vmbus_exists(void);
+#else
+static inline bool hv_vmbus_exists(void) { return false; }
+#endif
 
 struct hv_ring_buffer_debug_info {
 	u32 current_interrupt_mask;
