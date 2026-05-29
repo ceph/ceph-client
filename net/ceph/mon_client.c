@@ -114,8 +114,12 @@ static struct ceph_monmap *ceph_monmap_decode(void **p, void *end, bool msgr2)
 
 	dout("%s fsid %pU epoch %u num_mon %u\n", __func__, &fsid, epoch,
 	     num_mon);
-	if (num_mon > CEPH_MAX_MON)
+	if (num_mon == 0 || num_mon > CEPH_MAX_MON)
 		goto e_inval;
+
+	if (num_mon == 1 || (num_mon & 1) == 0)
+		pr_notice_ratelimited("received monmap with unusual num_mon %u\n",
+				      num_mon);
 
 	monmap = kmalloc_flex(*monmap, mon_inst, num_mon, GFP_NOIO);
 	if (!monmap) {
