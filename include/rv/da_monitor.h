@@ -82,7 +82,7 @@ static void react(enum states curr_state, enum events event)
 static inline void da_monitor_reset(struct da_monitor *da_mon)
 {
 	da_monitor_reset_hook(da_mon);
-	da_mon->monitoring = 0;
+	WRITE_ONCE(da_mon->monitoring, 0);
 	da_mon->curr_state = model_get_initial_state();
 }
 
@@ -95,8 +95,9 @@ static inline void da_monitor_reset(struct da_monitor *da_mon)
 static inline void da_monitor_start(struct da_monitor *da_mon)
 {
 	da_mon->curr_state = model_get_initial_state();
-	da_mon->monitoring = 1;
 	da_monitor_init_hook(da_mon);
+	/* Pairs with smp_load_acquire in da_monitoring(). */
+	smp_store_release(&da_mon->monitoring, 1);
 }
 
 /*
@@ -104,7 +105,8 @@ static inline void da_monitor_start(struct da_monitor *da_mon)
  */
 static inline bool da_monitoring(struct da_monitor *da_mon)
 {
-	return da_mon->monitoring;
+	/* Pairs with smp_store_release in da_monitor_start(). */
+	return smp_load_acquire(&da_mon->monitoring);
 }
 
 /*
