@@ -511,9 +511,10 @@ static inline void da_monitor_destroy(void)
 	struct hlist_node *tmp;
 	int bkt;
 
+	tracepoint_synchronize_unregister();
 	/*
-	 * This function is called after all probes are disabled, we need only
-	 * worry about concurrency against old events.
+	 * This function is called after all probes are disabled and no longer
+	 * pending, we can safely assume no concurrent user.
 	 */
 	synchronize_rcu();
 	hash_for_each_safe(da_monitor_ht, bkt, tmp, mon_storage, node) {
