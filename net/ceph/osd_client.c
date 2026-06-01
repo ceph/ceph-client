@@ -4428,8 +4428,16 @@ static void handle_backoff_block(struct ceph_osd *osd, struct MOSDBackoff *m)
 	backoff->end = m->end;
 	m->end = NULL;   /* ditto */
 
-	insert_backoff(&spg->backoffs, backoff);
-	insert_backoff_by_id(&osd->o_backoffs_by_id, backoff);
+	if (!__insert_backoff(&spg->backoffs, backoff)) {
+		pr_err_ratelimited("%s failed to insert backoff\n", __func__);
+		goto err_free_backoff;
+	}
+
+	if (!__insert_backoff_by_id(&osd->o_backoffs_by_id, backoff)) {
+		pr_err_ratelimited("%s failed to insert backoff by id\n",
+				   __func__);
+		goto err_erase_backoff;
+	}
 
 	/*
 	 * Ack with original backoff's epoch so that the OSD can
@@ -4441,6 +4449,16 @@ static void handle_backoff_block(struct ceph_osd *osd, struct MOSDBackoff *m)
 		return;
 	}
 	ceph_con_send(&osd->o_con, msg);
+	return;
+
+err_erase_backoff:
+	erase_backoff(&spg->backoffs, backoff);
+err_free_backoff:
+	free_backoff(backoff);
+	if (RB_EMPTY_ROOT(&spg->backoffs)) {
+		erase_spg_mapping(&osd->o_backoff_mappings, spg);
+		free_spg_mapping(spg);
+	}
 }
 
 static bool target_contained_by(const struct ceph_osd_request_target *t,
