@@ -153,12 +153,12 @@ static inline void ha_monitor_init_env(struct da_monitor *da_mon)
  * Called from a hook in the DA reset functions, it supplies the da_mon
  * corresponding to the current ha_mon.
  * Not all hybrid automata require the timer, still clear it for simplicity.
+ * Monitors that never started have their timer uninitialized, do not stop those.
  */
 static inline void ha_monitor_reset_env(struct da_monitor *da_mon)
 {
 	struct ha_monitor *ha_mon = to_ha_monitor(da_mon);
 
-	/* Initialisation resets the monitor before initialising the timer */
 	if (likely(da_monitoring(da_mon)))
 		ha_cancel_timer(ha_mon);
 }

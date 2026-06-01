@@ -77,13 +77,21 @@ static void react(enum states curr_state, enum events event)
 }
 
 /*
+ * da_monitor_reset_state - reset a monitor and setting it to init state
+ */
+static inline void da_monitor_reset_state(struct da_monitor *da_mon)
+{
+	WRITE_ONCE(da_mon->monitoring, 0);
+	da_mon->curr_state = model_get_initial_state();
+}
+
+/*
  * da_monitor_reset - reset a monitor and setting it to init state
  */
 static inline void da_monitor_reset(struct da_monitor *da_mon)
 {
 	da_monitor_reset_hook(da_mon);
-	WRITE_ONCE(da_mon->monitoring, 0);
-	da_mon->curr_state = model_get_initial_state();
+	da_monitor_reset_state(da_mon);
 }
 
 /*
@@ -159,11 +167,27 @@ static struct da_monitor *da_get_monitor(void)
 }
 
 /*
+ * __da_monitor_reset_all - reset the single monitor
+ */
+static void __da_monitor_reset_all(void (*reset)(struct da_monitor *))
+{
+	reset(da_get_monitor());
+}
+
+/*
  * da_monitor_reset_all - reset the single monitor
  */
 static void da_monitor_reset_all(void)
 {
-	da_monitor_reset(da_get_monitor());
+	__da_monitor_reset_all(da_monitor_reset);
+}
+
+/*
+ * da_monitor_reset_state_all - reset the single monitor
+ */
+static inline void da_monitor_reset_state_all(void)
+{
+	__da_monitor_reset_all(da_monitor_reset_state);
 }
 
 /*
@@ -171,7 +195,7 @@ static void da_monitor_reset_all(void)
  */
 static inline int da_monitor_init(void)
 {
-	da_monitor_reset_all();
+	da_monitor_reset_state_all();
 	return 0;
 }
 
@@ -202,17 +226,33 @@ static struct da_monitor *da_get_monitor(void)
 }
 
 /*
- * da_monitor_reset_all - reset all CPUs' monitor
+ * __da_monitor_reset_all - reset all CPUs' monitor
  */
-static void da_monitor_reset_all(void)
+static void __da_monitor_reset_all(void (*reset)(struct da_monitor *))
 {
 	struct da_monitor *da_mon;
 	int cpu;
 
 	for_each_cpu(cpu, cpu_online_mask) {
 		da_mon = per_cpu_ptr(&DA_MON_NAME, cpu);
-		da_monitor_reset(da_mon);
+		reset(da_mon);
 	}
+}
+
+/*
+ * da_monitor_reset_all - reset all CPUs' monitor
+ */
+static void da_monitor_reset_all(void)
+{
+	__da_monitor_reset_all(da_monitor_reset);
+}
+
+/*
+ * da_monitor_reset_state_all - reset all CPUs' monitor
+ */
+static inline void da_monitor_reset_state_all(void)
+{
+	__da_monitor_reset_all(da_monitor_reset_state);
 }
 
 /*
@@ -220,7 +260,7 @@ static void da_monitor_reset_all(void)
  */
 static inline int da_monitor_init(void)
 {
-	da_monitor_reset_all();
+	da_monitor_reset_state_all();
 	return 0;
 }
 
@@ -269,17 +309,27 @@ static inline da_id_type da_get_id(struct da_monitor *da_mon)
 	return da_get_target(da_mon)->pid;
 }
 
-static void da_monitor_reset_all(void)
+static void __da_monitor_reset_all(void (*reset)(struct da_monitor *))
 {
 	struct task_struct *g, *p;
 	int cpu;
 
 	read_lock(&tasklist_lock);
 	for_each_process_thread(g, p)
-		da_monitor_reset(da_get_monitor(p));
+		reset(da_get_monitor(p));
 	for_each_present_cpu(cpu)
-		da_monitor_reset(da_get_monitor(idle_task(cpu)));
+		reset(da_get_monitor(idle_task(cpu)));
 	read_unlock(&tasklist_lock);
+}
+
+static void da_monitor_reset_all(void)
+{
+	__da_monitor_reset_all(da_monitor_reset);
+}
+
+static inline void da_monitor_reset_state_all(void)
+{
+	__da_monitor_reset_all(da_monitor_reset_state);
 }
 
 /*
@@ -298,7 +348,7 @@ static int da_monitor_init(void)
 
 	task_mon_slot = slot;
 
-	da_monitor_reset_all();
+	da_monitor_reset_state_all();
 	return 0;
 }
 
@@ -490,15 +540,24 @@ static inline void da_destroy_storage(da_id_type id)
 	kfree_rcu(mon_storage, rcu);
 }
 
-static void da_monitor_reset_all(void)
+static void __da_monitor_reset_all(void (*reset)(struct da_monitor *))
 {
 	struct da_monitor_storage *mon_storage;
 	int bkt;
 
-	rcu_read_lock();
+	guard(rcu)();
 	hash_for_each_rcu(da_monitor_ht, bkt, mon_storage, node)
-		da_monitor_reset(&mon_storage->rv.da_mon);
-	rcu_read_unlock();
+		reset(&mon_storage->rv.da_mon);
+}
+
+static void da_monitor_reset_all(void)
+{
+	__da_monitor_reset_all(da_monitor_reset);
+}
+
+static inline void da_monitor_reset_state_all(void)
+{
+	__da_monitor_reset_all(da_monitor_reset_state);
 }
 
 static inline int da_monitor_init(void)
