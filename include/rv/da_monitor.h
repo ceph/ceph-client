@@ -58,6 +58,15 @@ static struct rv_monitor rv_this;
 #endif
 
 /*
+ * Hook to allow the implementation of hybrid automata: define it with a
+ * function that waits for the termination of all monitors background
+ * activities (e.g. all timers). This hook can sleep.
+ */
+#ifndef da_monitor_sync_hook
+#define da_monitor_sync_hook()
+#endif
+
+/*
  * Type for the target id, default to int but can be overridden.
  * A long type can work as hash table key (PER_OBJ) but will be downgraded to
  * int in the event tracepoint.
@@ -82,7 +91,8 @@ static void react(enum states curr_state, enum events event)
 static inline void da_monitor_reset_state(struct da_monitor *da_mon)
 {
 	WRITE_ONCE(da_mon->monitoring, 0);
-	da_mon->curr_state = model_get_initial_state();
+	/* Pair with load in __ha_monitor_timer_callback */
+	smp_store_release(&da_mon->curr_state, model_get_initial_state());
 }
 
 /*
@@ -205,6 +215,7 @@ static inline int da_monitor_init(void)
 static inline void da_monitor_destroy(void)
 {
 	da_monitor_reset_all();
+	da_monitor_sync_hook();
 }
 
 #elif RV_MON_TYPE == RV_MON_PER_CPU
@@ -270,6 +281,7 @@ static inline int da_monitor_init(void)
 static inline void da_monitor_destroy(void)
 {
 	da_monitor_reset_all();
+	da_monitor_sync_hook();
 }
 
 #elif RV_MON_TYPE == RV_MON_PER_TASK
@@ -367,6 +379,7 @@ static inline void da_monitor_destroy(void)
 
 	tracepoint_synchronize_unregister();
 	da_monitor_reset_all();
+	da_monitor_sync_hook();
 
 	rv_put_task_monitor_slot(task_mon_slot);
 	task_mon_slot = RV_PER_TASK_MONITOR_INIT;
@@ -573,13 +586,13 @@ static inline void da_monitor_destroy(void)
 	int bkt;
 
 	tracepoint_synchronize_unregister();
+	da_monitor_reset_all();
+	da_monitor_sync_hook();
 	/*
 	 * This function is called after all probes are disabled and no longer
 	 * pending, we can safely assume no concurrent user.
 	 */
-	synchronize_rcu();
 	hash_for_each_safe(da_monitor_ht, bkt, tmp, mon_storage, node) {
-		da_monitor_reset_hook(&mon_storage->rv.da_mon);
 		hash_del_rcu(&mon_storage->node);
 		kfree(mon_storage);
 	}
