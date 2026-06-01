@@ -73,7 +73,7 @@ static int enable_opid(void)
 {
 	int retval;
 
-	retval = da_monitor_init();
+	retval = ha_monitor_init();
 	if (retval)
 		return retval;
 
@@ -90,7 +90,7 @@ static void disable_opid(void)
 	rv_detach_trace_probe("opid", sched_set_need_resched_tp, handle_sched_need_resched);
 	rv_detach_trace_probe("opid", sched_waking, handle_sched_waking);
 
-	da_monitor_destroy();
+	ha_monitor_destroy();
 }
 
 /*
