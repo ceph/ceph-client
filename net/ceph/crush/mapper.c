@@ -530,7 +530,7 @@ static int crush_choose_firstn(const struct crush_map *map,
 				if (item < 0)
 					itemtype = map->buckets[-1-item]->type;
 				else
-					itemtype = 0;
+					itemtype = CRUSH_ITEM_TYPE_DEVICE;
 				dprintk("  item %d type %d\n", item, itemtype);
 
 				/* keep going? */
@@ -588,7 +588,7 @@ static int crush_choose_firstn(const struct crush_map *map,
 
 				if (!reject && !collide) {
 					/* out? */
-					if (itemtype == 0)
+					if (itemtype == CRUSH_ITEM_TYPE_DEVICE)
 						reject = is_out(map, weight,
 								weight_max,
 								item, x);
@@ -743,7 +743,7 @@ static void crush_choose_indep(const struct crush_map *map,
 				if (item < 0)
 					itemtype = map->buckets[-1-item]->type;
 				else
-					itemtype = 0;
+					itemtype = CRUSH_ITEM_TYPE_DEVICE;
 				dprintk("  item %d type %d\n", item, itemtype);
 
 				/* keep going? */
@@ -796,7 +796,7 @@ static void crush_choose_indep(const struct crush_map *map,
 				}
 
 				/* out? */
-				if (itemtype == 0 &&
+				if (itemtype == CRUSH_ITEM_TYPE_DEVICE &&
 				    is_out(map, weight, weight_max, item, x))
 					break;
 
