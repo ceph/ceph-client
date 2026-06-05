@@ -111,6 +111,10 @@ struct crush_rule {
  *  straw2          O(n)       optimal      optimal
  */
 enum {
+	CRUSH_ITEM_TYPE_DEVICE = 0,
+};
+
+enum {
 	CRUSH_BUCKET_UNIFORM = 1,
 	CRUSH_BUCKET_LIST = 2,
 	CRUSH_BUCKET_TREE = 3,
@@ -130,7 +134,7 @@ extern const char *crush_bucket_alg_name(int alg);
 
 struct crush_bucket {
 	__s32 id;        /* this'll be negative */
-	__u16 type;      /* non-zero; type=0 is reserved for devices */
+	__u16 type;      /* non-zero; CRUSH_ITEM_TYPE_DEVICE is reserved */
 	__u8 alg;        /* one of CRUSH_BUCKET_* */
 	__u8 hash;       /* which hash function to use, CRUSH_HASH_* */
 	__u32 weight;    /* 16-bit fixed point */
