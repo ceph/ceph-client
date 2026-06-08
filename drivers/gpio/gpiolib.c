@@ -1031,9 +1031,17 @@ static int gpiochip_hog_lines(struct gpio_chip *gc)
 		if (!fwnode_property_present(fwnode, "gpio-hog"))
 			continue;
 
+		/* The hog may have been handled by another gpio_chip on the same fwnode */
+		if (is_of_node(fwnode) &&
+		    of_node_check_flag(to_of_node(fwnode), OF_POPULATED))
+			continue;
+
 		ret = gpiochip_add_hog(gc, fwnode);
 		if (ret)
 			return ret;
+
+		if (is_of_node(fwnode))
+			of_node_set_flag(to_of_node(fwnode), OF_POPULATED);
 	}
 
 	return 0;
