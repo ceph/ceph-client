@@ -1291,7 +1291,7 @@ int gpiochip_add_data_with_key(struct gpio_chip *gc, void *data,
 
 	ret = gpiochip_hog_lines(gc);
 	if (ret)
-		goto err_remove_of_chip;
+		goto err_free_hogs;
 
 	ret = gpiochip_irqchip_init_valid_mask(gc);
 	if (ret)
