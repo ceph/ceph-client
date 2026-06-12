@@ -20549,6 +20549,7 @@ PCI ENDPOINT SUBSYSTEM
 M:	Manivannan Sadhasivam <mani@kernel.org>
 M:	Krzysztof Wilczyński <kwilczynski@kernel.org>
 R:	Kishon Vijay Abraham I <kishon@kernel.org>
+R:	Frank Li <Frank.Li@kernel.org>
 L:	linux-pci@vger.kernel.org
 S:	Supported
 Q:	https://patchwork.kernel.org/project/linux-pci/list/
