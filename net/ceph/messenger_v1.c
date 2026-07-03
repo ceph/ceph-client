@@ -936,7 +936,9 @@ static int process_connect(struct ceph_connection *con)
 		}
 
 		WARN_ON(con->state != CEPH_CON_S_V1_CONNECT_MSG);
+		spin_lock(&con->out_lock);
 		con->state = CEPH_CON_S_OPEN;
+		spin_unlock(&con->out_lock);
 		con->v1.auth_retry = 0;    /* we authenticated; clear flag */
 		con->v1.peer_global_seq =
 			le32_to_cpu(con->v1.in_reply.global_seq);
@@ -1405,7 +1407,9 @@ more:
 		if (ret < 0)
 			goto out;
 
+		spin_lock(&con->out_lock);
 		con->state = CEPH_CON_S_V1_CONNECT_MSG;
+		spin_unlock(&con->out_lock);
 
 		/*
 		 * Received banner is good, exchange connection info.
@@ -1465,7 +1469,9 @@ more:
 			break;
 		case CEPH_MSGR_TAG_CLOSE:
 			ceph_con_close_socket(con);
+			spin_lock(&con->out_lock);
 			con->state = CEPH_CON_S_CLOSED;
+			spin_unlock(&con->out_lock);
 			goto out;
 		default:
 			goto bad_tag;
@@ -1545,7 +1551,9 @@ int ceph_con_v1_try_write(struct ceph_connection *con)
 	/* open the socket first? */
 	if (con->state == CEPH_CON_S_PREOPEN) {
 		BUG_ON(con->sock);
+		spin_lock(&con->out_lock);
 		con->state = CEPH_CON_S_V1_BANNER;
+		spin_unlock(&con->out_lock);
 
 		con_out_kvec_reset(con);
 		prepare_write_banner(con);
@@ -1600,18 +1608,26 @@ more:
 	}
 
 do_next:
+	/* hold con->out_lock while checking for things to write and
+	 * unlock it after clearing CEPH_CON_F_WRITE_PENDING to avoid
+	 * racing with ceph_con_send()
+	 */
+	spin_lock(&con->out_lock);
 	if (con->state == CEPH_CON_S_OPEN) {
 		if (ceph_con_flag_test_and_clear(con,
 				CEPH_CON_F_KEEPALIVE_PENDING)) {
+			spin_unlock(&con->out_lock);
 			prepare_write_keepalive(con);
 			goto more;
 		}
 		/* is anything else pending? */
 		if ((msg = ceph_con_get_out_msg(con)) != NULL) {
+			spin_unlock(&con->out_lock);
 			prepare_write_message(con, msg);
 			goto more;
 		}
 		if (con->in_seq > con->in_seq_acked) {
+			spin_unlock(&con->out_lock);
 			prepare_write_ack(con);
 			goto more;
 		}
@@ -1619,6 +1635,7 @@ do_next:
 
 	/* Nothing to do! */
 	ceph_con_flag_clear(con, CEPH_CON_F_WRITE_PENDING);
+	spin_unlock(&con->out_lock);
 	dout("try_write nothing else to write.\n");
 	ret = 0;
 out:

@@ -1816,7 +1816,9 @@ static int prepare_read_banner_prefix(struct ceph_connection *con)
 	reset_in_kvecs(con);
 	add_in_kvec(con, buf, CEPH_BANNER_V2_PREFIX_LEN);
 	add_in_sign_kvec(con, buf, CEPH_BANNER_V2_PREFIX_LEN);
+	spin_lock(&con->out_lock);
 	con->state = CEPH_CON_S_V2_BANNER_PREFIX;
+	spin_unlock(&con->out_lock);
 	return 0;
 }
 
@@ -1834,7 +1836,9 @@ static int prepare_read_banner_payload(struct ceph_connection *con,
 	reset_in_kvecs(con);
 	add_in_kvec(con, buf, payload_len);
 	add_in_sign_kvec(con, buf, payload_len);
+	spin_lock(&con->out_lock);
 	con->state = CEPH_CON_S_V2_BANNER_PAYLOAD;
+	spin_unlock(&con->out_lock);
 	return 0;
 }
 
@@ -2283,7 +2287,9 @@ static int process_banner_payload(struct ceph_connection *con)
 		return ret;
 	}
 
+	spin_lock(&con->out_lock);
 	con->state = CEPH_CON_S_V2_HELLO;
+	spin_unlock(&con->out_lock);
 	prepare_read_preamble(con);
 	return 0;
 
@@ -2353,7 +2359,9 @@ static int process_hello(struct ceph_connection *con, void *p, void *end)
 		return ret;
 	}
 
+	spin_lock(&con->out_lock);
 	con->state = CEPH_CON_S_V2_AUTH;
+	spin_unlock(&con->out_lock);
 	return 0;
 
 bad:
@@ -2519,7 +2527,9 @@ static int process_auth_done(struct ceph_connection *con, void *p, void *end)
 		goto out;
 	}
 
+	spin_lock(&con->out_lock);
 	con->state = CEPH_CON_S_V2_AUTH_SIGNATURE;
+	spin_unlock(&con->out_lock);
 
 out:
 	memzero_explicit(session_key, sizeof(session_key));
@@ -2563,7 +2573,9 @@ static int process_auth_signature(struct ceph_connection *con,
 			return ret;
 		}
 
+		spin_lock(&con->out_lock);
 		con->state = CEPH_CON_S_V2_SESSION_CONNECT;
+		spin_unlock(&con->out_lock);
 	} else {
 		ret = prepare_session_reconnect(con);
 		if (ret) {
@@ -2571,7 +2583,9 @@ static int process_auth_signature(struct ceph_connection *con,
 			return ret;
 		}
 
+		spin_lock(&con->out_lock);
 		con->state = CEPH_CON_S_V2_SESSION_RECONNECT;
+		spin_unlock(&con->out_lock);
 	}
 
 	return 0;
@@ -2658,7 +2672,9 @@ static int process_server_ident(struct ceph_connection *con,
 	free_conn_bufs(con);
 	con->delay = 0;  /* reset backoff memory */
 
+	spin_lock(&con->out_lock);
 	con->state = CEPH_CON_S_OPEN;
+	spin_unlock(&con->out_lock);
 	con->v2.out_state = OUT_S_GET_NEXT;
 	return 0;
 
@@ -2713,7 +2729,9 @@ static int process_session_reconnect_ok(struct ceph_connection *con,
 	free_conn_bufs(con);
 	con->delay = 0;  /* reset backoff memory */
 
+	spin_lock(&con->out_lock);
 	con->state = CEPH_CON_S_OPEN;
+	spin_unlock(&con->out_lock);
 	con->v2.out_state = OUT_S_GET_NEXT;
 	return 0;
 
@@ -2834,7 +2852,9 @@ static int process_session_reset(struct ceph_connection *con,
 		return ret;
 	}
 
+	spin_lock(&con->out_lock);
 	con->state = CEPH_CON_S_V2_SESSION_CONNECT;
+	spin_unlock(&con->out_lock);
 	return 0;
 
 bad:
@@ -3437,6 +3457,7 @@ static int populate_out_iter(struct ceph_connection *con)
 	if (con->state != CEPH_CON_S_OPEN) {
 		WARN_ON(con->state < CEPH_CON_S_V2_BANNER_PREFIX ||
 			con->state > CEPH_CON_S_V2_SESSION_RECONNECT);
+		spin_lock(&con->out_lock);
 		goto nothing_pending;
 	}
 
@@ -3467,19 +3488,28 @@ static int populate_out_iter(struct ceph_connection *con)
 	}
 
 	WARN_ON(con->v2.out_state != OUT_S_GET_NEXT);
+
+	/* hold con->out_lock while checking for things to write and
+	 * unlock it after clearing CEPH_CON_F_WRITE_PENDING to avoid
+	 * racing with ceph_con_send()
+	 */
+	spin_lock(&con->out_lock);
 	if (ceph_con_flag_test_and_clear(con, CEPH_CON_F_KEEPALIVE_PENDING)) {
+		spin_unlock(&con->out_lock);
 		ret = prepare_keepalive2(con);
 		if (ret) {
 			pr_err("prepare_keepalive2 failed: %d\n", ret);
 			return ret;
 		}
 	} else if ((msg = ceph_con_get_out_msg(con)) != NULL) {
+		spin_unlock(&con->out_lock);
 		ret = prepare_message(con, msg);
 		if (ret) {
 			pr_err("prepare_message failed: %d\n", ret);
 			return ret;
 		}
 	} else if (con->in_seq > con->in_seq_acked) {
+		spin_unlock(&con->out_lock);
 		ret = prepare_ack(con);
 		if (ret) {
 			pr_err("prepare_ack failed: %d\n", ret);
@@ -3500,6 +3530,7 @@ nothing_pending:
 	WARN_ON(iov_iter_count(&con->v2.out_iter));
 	dout("%s con %p nothing pending\n", __func__, con);
 	ceph_con_flag_clear(con, CEPH_CON_F_WRITE_PENDING);
+	spin_unlock(&con->out_lock);
 	return 0;
 }
 
