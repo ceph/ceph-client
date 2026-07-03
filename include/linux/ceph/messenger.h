@@ -476,7 +476,13 @@ struct ceph_connection {
 
 	struct ceph_messenger *msgr;
 
-	int state;  /* CEPH_CON_S_* */
+	/**
+	 * CEPH_CON_S_*
+	 *
+	 * Protected by both #mutex and #out_lock.  Writing must hold
+	 * both, reading either one.
+	 */
+	int state;
 	atomic_t sock_state;
 	struct socket *sock;
 
@@ -490,6 +496,12 @@ struct ceph_connection {
 	struct mutex mutex;
 
 	/* out queue */
+
+	/**
+	 * Protects #out_queue and #out_sent.
+	 */
+	spinlock_t out_lock;
+
 	struct list_head out_queue;
 	struct list_head out_sent;   /* sending or sent but unacked */
 	u64 out_seq;		     /* last message queued for send */
@@ -550,6 +562,11 @@ void ceph_addr_set_port(struct ceph_entity_addr *addr, int p);
 void ceph_con_process_message(struct ceph_connection *con);
 int ceph_con_in_msg_alloc(struct ceph_connection *con,
 			  struct ceph_msg_header *hdr, int *skip);
+
+/**
+ * Caller must hold both `ceph_connection.mutex` and
+ * `ceph_connection.out_lock`.
+ */
 struct ceph_msg *ceph_con_get_out_msg(struct ceph_connection *con);
 
 /* messenger_v1.c */
