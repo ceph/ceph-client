@@ -923,11 +923,11 @@ fail:
 		pr_err_client(cl, "failed to blocklist %s: %d\n",
 			      ceph_pr_addr(&client->msgr.inst.addr), ret);
 
-	WARN(1, "[client.%lld] %s %s%sdo remount to continue%s",
-	     client->monc.auth->global_id, __func__,
-	     ret ? "" : ceph_pr_addr(&client->msgr.inst.addr),
-	     ret ? "" : " was blocklisted, ",
-	     err == -EIO ? " after corrupted snaptrace is fixed" : "");
+	pr_warn_ratelimited_client(cl, "%s %s%sdo remount to continue%s",
+			    __func__,
+			    ret ? "" : ceph_pr_addr(&client->msgr.inst.addr),
+			    ret ? "" : " was blocklisted, ",
+			    err == -EIO ? " after corrupted snaptrace is fixed" : "");
 
 	return err;
 }
