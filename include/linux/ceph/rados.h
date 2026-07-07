@@ -86,6 +86,11 @@ struct ceph_pg_v1 {
 #define CEPH_POOL_TYPE_RAID4   2 /* never implemented */
 #define CEPH_POOL_TYPE_EC      3
 
+static inline bool ceph_pool_type_is_supported(__u8 type)
+{
+	return type == CEPH_POOL_TYPE_REP || type == CEPH_POOL_TYPE_EC;
+}
+
 /*
  * stable_mod func is used to control number of placement groups.
  * similar to straight-up modulo, but produces a stable mapping as b
