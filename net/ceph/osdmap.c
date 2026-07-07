@@ -822,6 +822,10 @@ static int decode_pool(void **p, void *end, struct ceph_pg_pool_info *pi)
 
 	ceph_decode_need(p, end, 4 + 4 + 4, bad);
 	pi->type = ceph_decode_8(p);
+	if (!ceph_pool_type_is_supported(pi->type)) {
+		pr_warn_ratelimited("got unsupported pool type %u\n", pi->type);
+		return -EINVAL;
+	}
 	pi->size = ceph_decode_8(p);
 	pi->crush_ruleset = ceph_decode_8(p);
 	pi->object_hash = ceph_decode_8(p);
@@ -1367,8 +1371,10 @@ static int __decode_pools(void **p, void *end, struct ceph_osdmap *map,
 		}
 
 		ret = decode_pool(p, end, pi);
-		if (ret)
+		if (ret) {
+			__remove_pg_pool(&map->pg_pools, pi);
 			return ret;
+		}
 	}
 
 	return 0;
