@@ -4,6 +4,7 @@
 
 #include <linux/completion.h>
 #include <linux/kref.h>
+#include <linux/rcupdate.h>
 #include <linux/rbtree.h>
 
 #include <linux/ceph/messenger.h>
@@ -19,6 +20,7 @@ struct ceph_monmap {
 	struct ceph_fsid fsid;
 	u32 epoch;
 	u32 num_mon;
+	struct rcu_head rcu;
 	struct ceph_entity_inst mon_inst[] __counted_by(num_mon);
 };
 
@@ -69,7 +71,7 @@ struct ceph_mon_generic_request {
 
 struct ceph_mon_client {
 	struct ceph_client *client;
-	struct ceph_monmap *monmap;
+	struct ceph_monmap __rcu *monmap;
 
 	struct mutex mutex;
 	struct delayed_work delayed_work;

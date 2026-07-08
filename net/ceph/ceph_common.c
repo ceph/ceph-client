@@ -133,6 +133,7 @@ int ceph_compare_options(struct ceph_options *new_opt,
 {
 	struct ceph_options *opt1 = new_opt;
 	struct ceph_options *opt2 = client->options;
+	struct ceph_monmap *monmap;
 	int ofs = offsetof(struct ceph_options, mon_addr);
 	int i;
 	int ret;
@@ -180,13 +181,20 @@ int ceph_compare_options(struct ceph_options *new_opt,
 	if (ret)
 		return ret;
 
+	rcu_read_lock();
+	monmap = rcu_dereference(client->monc.monmap);
+	ret = -1;
+
 	/* any matching mon ip implies a match */
 	for (i = 0; i < opt1->num_mon; i++) {
-		if (ceph_monmap_contains(client->monc.monmap,
-				 &opt1->mon_addr[i]))
-			return 0;
+		if (ceph_monmap_contains(monmap, &opt1->mon_addr[i])) {
+			ret = 0;
+			break;
+		}
 	}
-	return -1;
+
+	rcu_read_unlock();
+	return ret;
 }
 EXPORT_SYMBOL(ceph_compare_options);
 
@@ -791,6 +799,7 @@ int __ceph_open_session(struct ceph_client *client)
 {
 	DEFINE_WAIT_FUNC(wait, woken_wake_function);
 	long timeout = ceph_timeout_jiffies(client->options->mount_timeout);
+	struct ceph_monmap *monmap;
 	bool have_monmap, have_osdmap;
 	int err;
 
@@ -803,7 +812,9 @@ int __ceph_open_session(struct ceph_client *client)
 	for (;;) {
 		mutex_lock(&client->monc.mutex);
 		err = client->auth_err;
-		have_monmap = client->monc.monmap && client->monc.monmap->epoch;
+		monmap = rcu_dereference_protected(client->monc.monmap,
+						   lockdep_is_held(&client->monc.mutex));
+		have_monmap = monmap && monmap->epoch;
 		mutex_unlock(&client->monc.mutex);
 
 		down_read(&client->osdc.lock);

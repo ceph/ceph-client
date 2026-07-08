@@ -60,6 +60,7 @@ static int ceph_statfs(struct dentry *dentry, struct kstatfs *buf)
 {
 	struct ceph_fs_client *fsc = ceph_inode_to_fs_client(d_inode(dentry));
 	struct ceph_mon_client *monc = &fsc->client->monc;
+	struct ceph_monmap *monmap;
 	struct ceph_statfs st;
 	int i, err;
 	u64 data_pool;
@@ -111,8 +112,10 @@ static int ceph_statfs(struct dentry *dentry, struct kstatfs *buf)
 	/* Must convert the fsid, for consistent values across arches */
 	buf->f_fsid.val[0] = 0;
 	mutex_lock(&monc->mutex);
-	for (i = 0 ; i < sizeof(monc->monmap->fsid) / sizeof(__le32) ; ++i)
-		buf->f_fsid.val[0] ^= le32_to_cpu(((__le32 *)&monc->monmap->fsid)[i]);
+	monmap = rcu_dereference_protected(monc->monmap,
+					   lockdep_is_held(&monc->mutex));
+	for (i = 0 ; i < sizeof(monmap->fsid) / sizeof(__le32) ; ++i)
+		buf->f_fsid.val[0] ^= le32_to_cpu(((__le32 *)&monmap->fsid)[i]);
 	mutex_unlock(&monc->mutex);
 
 	/* fold the fs_cluster_id into the upper bits */
