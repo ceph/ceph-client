@@ -206,19 +206,22 @@ static void __close_session(struct ceph_mon_client *monc)
  */
 static void pick_new_mon(struct ceph_mon_client *monc)
 {
+	struct ceph_monmap *monmap =
+		rcu_dereference_protected(monc->monmap,
+					  lockdep_is_held(&monc->mutex));
 	int old_mon = monc->cur_mon;
 
-	BUG_ON(monc->monmap->num_mon < 1);
+	BUG_ON(monmap->num_mon < 1);
 
-	if (monc->monmap->num_mon == 1) {
+	if (monmap->num_mon == 1) {
 		monc->cur_mon = 0;
 	} else {
-		int max = monc->monmap->num_mon;
+		int max = monmap->num_mon;
 		int o = -1;
 		int n;
 
 		if (monc->cur_mon >= 0) {
-			if (monc->cur_mon < monc->monmap->num_mon)
+			if (monc->cur_mon < monmap->num_mon)
 				o = monc->cur_mon;
 			if (o >= 0)
 				max--;
@@ -232,7 +235,7 @@ static void pick_new_mon(struct ceph_mon_client *monc)
 	}
 
 	dout("%s mon%d -> mon%d out of %d mons\n", __func__, old_mon,
-	     monc->cur_mon, monc->monmap->num_mon);
+	     monc->cur_mon, monmap->num_mon);
 }
 
 /*
@@ -240,6 +243,9 @@ static void pick_new_mon(struct ceph_mon_client *monc)
  */
 static void __open_session(struct ceph_mon_client *monc)
 {
+	struct ceph_monmap *monmap =
+		rcu_dereference_protected(monc->monmap,
+					  lockdep_is_held(&monc->mutex));
 	int ret;
 
 	pick_new_mon(monc);
@@ -256,7 +262,7 @@ static void __open_session(struct ceph_mon_client *monc)
 
 	dout("%s opening mon%d\n", __func__, monc->cur_mon);
 	ceph_con_open(&monc->con, CEPH_ENTITY_TYPE_MON, monc->cur_mon,
-		      &monc->monmap->mon_inst[monc->cur_mon].addr);
+		      &monmap->mon_inst[monc->cur_mon].addr);
 
 	/*
 	 * Queue a keepalive to ensure that in case of an early fault
@@ -542,6 +548,7 @@ static void ceph_monc_handle_map(struct ceph_mon_client *monc,
 				 struct ceph_msg *msg)
 {
 	struct ceph_client *client = monc->client;
+	struct ceph_monmap *old_monmap;
 	struct ceph_monmap *monmap;
 	void *p, *end;
 
@@ -564,10 +571,12 @@ static void ceph_monc_handle_map(struct ceph_mon_client *monc,
 		goto out;
 	}
 
-	kfree(monc->monmap);
-	monc->monmap = monmap;
+	old_monmap = rcu_dereference_protected(monc->monmap,
+					       lockdep_is_held(&monc->mutex));
+	rcu_assign_pointer(monc->monmap, monmap);
+	kfree_rcu(old_monmap, rcu);
 
-	__ceph_monc_got_map(monc, CEPH_SUB_MONMAP, monc->monmap->epoch);
+	__ceph_monc_got_map(monc, CEPH_SUB_MONMAP, monmap->epoch);
 	client->have_fsid = true;
 
 out:
@@ -801,6 +810,7 @@ bad:
 int ceph_monc_do_statfs(struct ceph_mon_client *monc, u64 data_pool,
 			struct ceph_statfs *buf)
 {
+	struct ceph_monmap *monmap;
 	struct ceph_mon_generic_request *req;
 	struct ceph_mon_statfs *h;
 	int ret = -ENOMEM;
@@ -828,7 +838,9 @@ int ceph_monc_do_statfs(struct ceph_mon_client *monc, u64 data_pool,
 	h->monhdr.have_version = 0;
 	h->monhdr.session_mon = cpu_to_le16(-1);
 	h->monhdr.session_mon_tid = 0;
-	h->fsid = monc->monmap->fsid;
+	monmap = rcu_dereference_protected(monc->monmap,
+					   lockdep_is_held(&monc->mutex));
+	h->fsid = monmap->fsid;
 	h->contains_data_pool = (data_pool != CEPH_NOPOOL);
 	h->data_pool = cpu_to_le64(data_pool);
 	send_generic_request(monc, req);
@@ -1001,6 +1013,7 @@ static __printf(2, 0)
 int do_mon_command_vargs(struct ceph_mon_client *monc, const char *fmt,
 			 va_list ap)
 {
+	struct ceph_monmap *monmap;
 	struct ceph_mon_generic_request *req;
 	struct ceph_mon_command *h;
 	int ret = -ENOMEM;
@@ -1025,7 +1038,9 @@ int do_mon_command_vargs(struct ceph_mon_client *monc, const char *fmt,
 	h->monhdr.have_version = 0;
 	h->monhdr.session_mon = cpu_to_le16(-1);
 	h->monhdr.session_mon_tid = 0;
-	h->fsid = monc->monmap->fsid;
+	monmap = rcu_dereference_protected(monc->monmap,
+					   lockdep_is_held(&monc->mutex));
+	h->fsid = monmap->fsid;
 	h->num_strs = cpu_to_le32(1);
 	len = vsprintf(h->str, fmt, ap);
 	h->str_len = cpu_to_le32(len);
@@ -1164,17 +1179,18 @@ static int build_initial_monmap(struct ceph_mon_client *monc)
 	__le32 my_type = ceph_msgr2(monc->client) ?
 		CEPH_ENTITY_ADDR_TYPE_MSGR2 : CEPH_ENTITY_ADDR_TYPE_LEGACY;
 	struct ceph_options *opt = monc->client->options;
+	struct ceph_monmap *monmap;
 	int num_mon = opt->num_mon;
 	int i;
 
 	/* build initial monmap */
-	monc->monmap = kzalloc_flex(*monc->monmap, mon_inst, num_mon);
-	if (!monc->monmap)
+	monmap = kzalloc_flex(*monmap, mon_inst, num_mon);
+	if (!monmap)
 		return -ENOMEM;
-	monc->monmap->num_mon = num_mon;
+	monmap->num_mon = num_mon;
 
 	for (i = 0; i < num_mon; i++) {
-		struct ceph_entity_inst *inst = &monc->monmap->mon_inst[i];
+		struct ceph_entity_inst *inst = &monmap->mon_inst[i];
 
 		memcpy(&inst->addr.in_addr, &opt->mon_addr[i].in_addr,
 		       sizeof(inst->addr.in_addr));
@@ -1183,6 +1199,7 @@ static int build_initial_monmap(struct ceph_mon_client *monc)
 		inst->name.type = CEPH_ENTITY_TYPE_MON;
 		inst->name.num = cpu_to_le64(i);
 	}
+	RCU_INIT_POINTER(monc->monmap, monmap);
 	return 0;
 }
 
@@ -1258,7 +1275,7 @@ out_subscribe_ack:
 out_auth:
 	ceph_auth_destroy(monc->auth);
 out_monmap:
-	kfree(monc->monmap);
+	kfree(rcu_access_pointer(monc->monmap));
 out:
 	return err;
 }
@@ -1293,7 +1310,7 @@ void ceph_monc_stop(struct ceph_mon_client *monc)
 	ceph_msg_put(monc->m_subscribe);
 	ceph_msg_put(monc->m_subscribe_ack);
 
-	kfree(monc->monmap);
+	kfree_rcu(rcu_access_pointer(monc->monmap), rcu);
 }
 EXPORT_SYMBOL(ceph_monc_stop);
 
