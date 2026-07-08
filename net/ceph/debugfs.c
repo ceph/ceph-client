@@ -35,15 +35,18 @@ static int monmap_show(struct seq_file *s, void *p)
 {
 	int i;
 	struct ceph_client *client = s->private;
+	struct ceph_monmap *monmap;
 
 	mutex_lock(&client->monc.mutex);
-	if (client->monc.monmap == NULL)
+	monmap = rcu_dereference_protected(client->monc.monmap,
+					   lockdep_is_held(&client->monc.mutex));
+	if (!monmap)
 		goto out_unlock;
 
-	seq_printf(s, "epoch %d\n", client->monc.monmap->epoch);
-	for (i = 0; i < client->monc.monmap->num_mon; i++) {
+	seq_printf(s, "epoch %d\n", monmap->epoch);
+	for (i = 0; i < monmap->num_mon; i++) {
 		struct ceph_entity_inst *inst =
-			&client->monc.monmap->mon_inst[i];
+			&monmap->mon_inst[i];
 
 		seq_printf(s, "\t%s%lld\t%s\n",
 			   ENTITY_NAME(inst->name),
