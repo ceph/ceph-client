@@ -109,6 +109,8 @@ static int ceph_tcp_recv(struct ceph_connection *con)
 {
 	int ret;
 
+	lockdep_assert_held(&con->mutex);
+
 	dout("%s con %p %s %zu\n", __func__, con,
 	     iov_iter_is_discard(&con->v2.in_iter) ? "discard" : "need",
 	     iov_iter_count(&con->v2.in_iter));
@@ -198,6 +200,8 @@ static int ceph_tcp_send(struct ceph_connection *con)
 
 	dout("%s con %p have %zu try_sendpage %d\n", __func__, con,
 	     iov_iter_count(&con->v2.out_iter), con->v2.out_iter_sendpage);
+	lockdep_assert_held(&con->mutex);
+
 	if (con->v2.out_iter_sendpage)
 		ret = do_try_sendpage(con->sock, &con->v2.out_iter);
 	else
@@ -209,6 +213,7 @@ static int ceph_tcp_send(struct ceph_connection *con)
 
 static void add_in_kvec(struct ceph_connection *con, void *buf, int len)
 {
+	lockdep_assert_held(&con->mutex);
 	BUG_ON(con->v2.in_kvec_cnt >= ARRAY_SIZE(con->v2.in_kvecs));
 	WARN_ON(!iov_iter_is_kvec(&con->v2.in_iter));
 
@@ -222,6 +227,7 @@ static void add_in_kvec(struct ceph_connection *con, void *buf, int len)
 
 static void reset_in_kvecs(struct ceph_connection *con)
 {
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(iov_iter_count(&con->v2.in_iter));
 
 	con->v2.in_kvec_cnt = 0;
@@ -230,6 +236,7 @@ static void reset_in_kvecs(struct ceph_connection *con)
 
 static void set_in_bvec(struct ceph_connection *con, const struct bio_vec *bv)
 {
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(iov_iter_count(&con->v2.in_iter));
 
 	con->v2.in_bvec = *bv;
@@ -238,6 +245,7 @@ static void set_in_bvec(struct ceph_connection *con, const struct bio_vec *bv)
 
 static void set_in_skip(struct ceph_connection *con, int len)
 {
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(iov_iter_count(&con->v2.in_iter));
 
 	dout("%s con %p len %d\n", __func__, con, len);
@@ -246,6 +254,7 @@ static void set_in_skip(struct ceph_connection *con, int len)
 
 static void add_out_kvec(struct ceph_connection *con, void *buf, int len)
 {
+	lockdep_assert_held(&con->mutex);
 	BUG_ON(con->v2.out_kvec_cnt >= ARRAY_SIZE(con->v2.out_kvecs));
 	WARN_ON(!iov_iter_is_kvec(&con->v2.out_iter));
 	WARN_ON(con->v2.out_zero);
@@ -260,6 +269,7 @@ static void add_out_kvec(struct ceph_connection *con, void *buf, int len)
 
 static void reset_out_kvecs(struct ceph_connection *con)
 {
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(iov_iter_count(&con->v2.out_iter));
 	WARN_ON(con->v2.out_zero);
 
@@ -272,6 +282,7 @@ static void reset_out_kvecs(struct ceph_connection *con)
 static void set_out_bvec(struct ceph_connection *con, const struct bio_vec *bv,
 			 bool zerocopy)
 {
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(iov_iter_count(&con->v2.out_iter));
 	WARN_ON(con->v2.out_zero);
 
@@ -283,6 +294,7 @@ static void set_out_bvec(struct ceph_connection *con, const struct bio_vec *bv,
 
 static void set_out_bvec_zero(struct ceph_connection *con)
 {
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(iov_iter_count(&con->v2.out_iter));
 	WARN_ON(!con->v2.out_zero);
 
@@ -296,6 +308,8 @@ static void set_out_bvec_zero(struct ceph_connection *con)
 static void out_zero_add(struct ceph_connection *con, int len)
 {
 	dout("%s con %p len %d\n", __func__, con, len);
+	lockdep_assert_held(&con->mutex);
+
 	con->v2.out_zero += len;
 }
 
@@ -304,6 +318,7 @@ static void *alloc_conn_buf(struct ceph_connection *con, int len)
 	void *buf;
 
 	dout("%s con %p len %d\n", __func__, con, len);
+	lockdep_assert_held(&con->mutex);
 
 	if (WARN_ON(con->v2.conn_buf_cnt >= ARRAY_SIZE(con->v2.conn_bufs)))
 		return NULL;
@@ -318,12 +333,15 @@ static void *alloc_conn_buf(struct ceph_connection *con, int len)
 
 static void free_conn_bufs(struct ceph_connection *con)
 {
+	lockdep_assert_held(&con->mutex);
+
 	while (con->v2.conn_buf_cnt)
 		kvfree(con->v2.conn_bufs[--con->v2.conn_buf_cnt]);
 }
 
 static void add_in_sign_kvec(struct ceph_connection *con, void *buf, int len)
 {
+	lockdep_assert_held(&con->mutex);
 	BUG_ON(con->v2.in_sign_kvec_cnt >= ARRAY_SIZE(con->v2.in_sign_kvecs));
 
 	con->v2.in_sign_kvecs[con->v2.in_sign_kvec_cnt].iov_base = buf;
@@ -333,11 +351,14 @@ static void add_in_sign_kvec(struct ceph_connection *con, void *buf, int len)
 
 static void clear_in_sign_kvecs(struct ceph_connection *con)
 {
+	lockdep_assert_held(&con->mutex);
+
 	con->v2.in_sign_kvec_cnt = 0;
 }
 
 static void add_out_sign_kvec(struct ceph_connection *con, void *buf, int len)
 {
+	lockdep_assert_held(&con->mutex);
 	BUG_ON(con->v2.out_sign_kvec_cnt >= ARRAY_SIZE(con->v2.out_sign_kvecs));
 
 	con->v2.out_sign_kvecs[con->v2.out_sign_kvec_cnt].iov_base = buf;
@@ -347,6 +368,8 @@ static void add_out_sign_kvec(struct ceph_connection *con, void *buf, int len)
 
 static void clear_out_sign_kvecs(struct ceph_connection *con)
 {
+	lockdep_assert_held(&con->mutex);
+
 	con->v2.out_sign_kvec_cnt = 0;
 }
 
@@ -562,6 +585,8 @@ static int decode_preamble(void *p, struct ceph_frame_desc *desc)
 
 static void encode_epilogue_plain(struct ceph_connection *con, bool aborted)
 {
+	lockdep_assert_held(&con->mutex);
+
 	con->v2.out_epil.late_status = aborted ? FRAME_LATE_STATUS_ABORTED :
 						 FRAME_LATE_STATUS_COMPLETE;
 	cpu_to_le32s(&con->v2.out_epil.front_crc);
@@ -571,6 +596,8 @@ static void encode_epilogue_plain(struct ceph_connection *con, bool aborted)
 
 static void encode_epilogue_secure(struct ceph_connection *con, bool aborted)
 {
+	lockdep_assert_held(&con->mutex);
+
 	memset(&con->v2.out_epil, 0, sizeof(con->v2.out_epil));
 	con->v2.out_epil.late_status = aborted ? FRAME_LATE_STATUS_ABORTED :
 						 FRAME_LATE_STATUS_COMPLETE;
@@ -639,6 +666,7 @@ static int verify_control_crc(struct ceph_connection *con)
 	int ctrl_len = con->v2.in_desc.fd_lens[0];
 	u32 crc, expected_crc;
 
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(con->v2.in_kvecs[0].iov_len != ctrl_len);
 	WARN_ON(con->v2.in_kvecs[1].iov_len != CEPH_CRC_LEN);
 
@@ -656,6 +684,8 @@ static int verify_control_crc(struct ceph_connection *con)
 static int verify_epilogue_crcs(struct ceph_connection *con, u32 front_crc,
 				u32 middle_crc, u32 data_crc)
 {
+	lockdep_assert_held(&con->mutex);
+
 	if (front_len(con->in_msg)) {
 		con->in_front_crc = crc32c(-1, con->in_msg->front.iov_base,
 					   front_len(con->in_msg));
@@ -707,6 +737,7 @@ static int setup_crypto(struct ceph_connection *con,
 
 	dout("%s con %p con_mode %d session_key_len %d con_secret_len %d\n",
 	     __func__, con, con->v2.con_mode, session_key_len, con_secret_len);
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(con->v2.hmac_key_set || con->v2.gcm_tfm || con->v2.gcm_req);
 
 	if (con->v2.con_mode != CEPH_CON_MODE_CRC &&
@@ -786,6 +817,7 @@ static void con_hmac_sha256(struct ceph_connection *con,
 
 	dout("%s con %p hmac_key_set %d kvec_cnt %d\n", __func__, con,
 	     con->v2.hmac_key_set, kvec_cnt);
+	lockdep_assert_held(&con->mutex);
 
 	if (!con->v2.hmac_key_set) {
 		memset(hmac, 0, SHA256_DIGEST_SIZE);
@@ -813,6 +845,8 @@ static int gcm_crypt(struct ceph_connection *con, bool encrypt,
 {
 	struct ceph_gcm_nonce *nonce;
 	int ret;
+
+	lockdep_assert_held(&con->mutex);
 
 	nonce = encrypt ? &con->v2.out_gcm_nonce : &con->v2.in_gcm_nonce;
 
@@ -1033,6 +1067,8 @@ static int decrypt_preamble(struct ceph_connection *con)
 {
 	struct scatterlist sg;
 
+	lockdep_assert_held(&con->mutex);
+
 	sg_init_one(&sg, con->v2.in_buf, CEPH_PREAMBLE_SECURE_LEN);
 	return gcm_crypt(con, false, &sg, &sg, CEPH_PREAMBLE_SECURE_LEN);
 }
@@ -1043,6 +1079,8 @@ static int decrypt_control_remainder(struct ceph_connection *con)
 	int rem_len = ctrl_len - CEPH_PREAMBLE_INLINE_LEN;
 	int pt_len = padding_len(rem_len) + CEPH_GCM_TAG_LEN;
 	struct scatterlist sgs[2];
+
+	lockdep_assert_held(&con->mutex);
 
 	WARN_ON(con->v2.in_kvecs[0].iov_len != rem_len);
 	WARN_ON(con->v2.in_kvecs[1].iov_len != pt_len);
@@ -1061,6 +1099,8 @@ static int process_v2_sparse_read(struct ceph_connection *con,
 {
 	struct ceph_msg_data_cursor cursor;
 	int ret;
+
+	lockdep_assert_held(&con->mutex);
 
 	ceph_msg_data_cursor_init(&cursor, con->in_msg,
 				  con->in_msg->sparse_read_total);
@@ -1107,6 +1147,8 @@ static int decrypt_tail(struct ceph_connection *con)
 	int dpos = 0;
 	int tail_len;
 	int ret;
+
+	lockdep_assert_held(&con->mutex);
 
 	tail_len = tail_onwire_len(con->in_msg, true);
 	ret = sg_alloc_table_from_pages(&enc_sgt, con->v2.in_enc_pages,
@@ -1155,6 +1197,8 @@ static int prepare_banner(struct ceph_connection *con)
 	int buf_len = CEPH_BANNER_V2_LEN + 2 + 8 + 8;
 	void *buf, *p;
 
+	lockdep_assert_held(&con->mutex);
+
 	buf = alloc_conn_buf(con, buf_len);
 	if (!buf)
 		return -ENOMEM;
@@ -1197,6 +1241,8 @@ static void prepare_head_plain(struct ceph_connection *con, void *base,
 	void *crcp = base + base_len - CEPH_CRC_LEN;
 	u32 crc;
 
+	lockdep_assert_held(&con->mutex);
+
 	crc = crc32c(-1, CTRL_BODY(base), ctrl_len);
 	if (extdata_len)
 		crc = crc32c(crc, extdata, extdata_len);
@@ -1224,6 +1270,8 @@ static int prepare_head_secure_small(struct ceph_connection *con,
 {
 	struct scatterlist sg;
 	int ret;
+
+	lockdep_assert_held(&con->mutex);
 
 	/* inline buffer padding? */
 	if (ctrl_len < CEPH_PREAMBLE_INLINE_LEN)
@@ -1270,6 +1318,8 @@ static int prepare_head_secure_big(struct ceph_connection *con,
 	struct scatterlist sgs[2];
 	int ret;
 
+	lockdep_assert_held(&con->mutex);
+
 	sg_init_table(sgs, 2);
 	sg_set_buf(&sgs[0], base, rem - base);
 	sg_set_buf(&sgs[1], pmbl_tag, CEPH_GCM_TAG_LEN);
@@ -1302,6 +1352,7 @@ static int __prepare_control(struct ceph_connection *con, int tag,
 
 	dout("%s con %p tag %d len %d (%d+%d)\n", __func__, con, tag,
 	     total_len, ctrl_len, extdata_len);
+	lockdep_assert_held(&con->mutex);
 
 	/* extdata may be vmalloc'ed but not base */
 	if (WARN_ON(is_vmalloc_addr(base) || !ctrl_len))
@@ -1342,6 +1393,8 @@ static int prepare_hello(struct ceph_connection *con)
 	void *buf, *p;
 	int ctrl_len;
 
+	lockdep_assert_held(&con->mutex);
+
 	ctrl_len = 1 + ceph_entity_addr_encoding_len(&con->peer_addr);
 	buf = alloc_conn_buf(con, head_onwire_len(ctrl_len, false));
 	if (!buf)
@@ -1365,6 +1418,8 @@ static int prepare_auth_request(struct ceph_connection *con)
 	int ctrl_len, authorizer_len;
 	void *buf;
 	int ret;
+
+	lockdep_assert_held(&con->mutex);
 
 	ctrl_len = AUTH_BUF_LEN;
 	buf = alloc_conn_buf(con, head_onwire_len(ctrl_len, false));
@@ -1403,6 +1458,8 @@ static int prepare_auth_request_more(struct ceph_connection *con,
 	void *buf;
 	int ret;
 
+	lockdep_assert_held(&con->mutex);
+
 	ctrl_len = AUTH_BUF_LEN;
 	buf = alloc_conn_buf(con, head_onwire_len(ctrl_len, false));
 	if (!buf)
@@ -1431,6 +1488,8 @@ static int prepare_auth_signature(struct ceph_connection *con)
 {
 	void *buf;
 
+	lockdep_assert_held(&con->mutex);
+
 	buf = alloc_conn_buf(con, head_onwire_len(SHA256_DIGEST_SIZE,
 						  con_secure(con)));
 	if (!buf)
@@ -1451,6 +1510,7 @@ static int prepare_client_ident(struct ceph_connection *con)
 	void *buf, *p;
 	int ctrl_len;
 
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(con->v2.server_cookie);
 	WARN_ON(con->v2.connect_seq);
 	WARN_ON(con->v2.peer_global_seq);
@@ -1501,6 +1561,7 @@ static int prepare_session_reconnect(struct ceph_connection *con)
 	void *buf, *p;
 	int ctrl_len;
 
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(!con->v2.client_cookie);
 	WARN_ON(!con->v2.server_cookie);
 	WARN_ON(!con->v2.connect_seq);
@@ -1537,6 +1598,7 @@ static int prepare_keepalive2(struct ceph_connection *con)
 
 	ktime_get_real_ts64(&now);
 	dout("%s con %p timestamp %ptSp\n", __func__, con, &now);
+	lockdep_assert_held(&con->mutex);
 
 	ceph_encode_timespec64(ts, &now);
 
@@ -1551,6 +1613,8 @@ static int prepare_ack(struct ceph_connection *con)
 
 	dout("%s con %p in_seq_acked %llu -> %llu\n", __func__, con,
 	     con->in_seq_acked, con->in_seq);
+	lockdep_assert_held(&con->mutex);
+
 	con->in_seq_acked = con->in_seq;
 
 	p = CTRL_BODY(con->v2.out_buf);
@@ -1566,6 +1630,7 @@ static void prepare_epilogue_plain(struct ceph_connection *con,
 	dout("%s con %p msg %p aborted %d crcs %u %u %u\n", __func__, con,
 	     msg, aborted, con->v2.out_epil.front_crc,
 	     con->v2.out_epil.middle_crc, con->v2.out_epil.data_crc);
+	lockdep_assert_held(&con->mutex);
 
 	encode_epilogue_plain(con, aborted);
 	add_out_kvec(con, &con->v2.out_epil, CEPH_EPILOGUE_PLAIN_LEN);
@@ -1578,6 +1643,8 @@ static void prepare_epilogue_plain(struct ceph_connection *con,
 static void prepare_message_plain(struct ceph_connection *con,
 				  struct ceph_msg *msg)
 {
+	lockdep_assert_held(&con->mutex);
+
 	prepare_head_plain(con, con->v2.out_buf,
 			   sizeof(struct ceph_msg_header2), NULL, 0, false);
 
@@ -1640,6 +1707,8 @@ static int prepare_message_secure(struct ceph_connection *con,
 	int enc_page_cnt;
 	int tail_len;
 	int ret;
+
+	lockdep_assert_held(&con->mutex);
 
 	ret = prepare_head_secure_small(con, con->v2.out_buf,
 					sizeof(struct ceph_msg_header2));
@@ -1708,6 +1777,7 @@ static int prepare_message(struct ceph_connection *con, struct ceph_msg *msg)
 
 	dout("%s con %p msg %p logical %d+%d+%d+%d\n", __func__, con,
 	     msg, lens[0], lens[1], lens[2], lens[3]);
+	lockdep_assert_held(&con->mutex);
 
 	if (con->in_seq > con->in_seq_acked) {
 		dout("%s con %p in_seq_acked %llu -> %llu\n", __func__, con,
@@ -1737,6 +1807,8 @@ static int prepare_read_banner_prefix(struct ceph_connection *con)
 {
 	void *buf;
 
+	lockdep_assert_held(&con->mutex);
+
 	buf = alloc_conn_buf(con, CEPH_BANNER_V2_PREFIX_LEN);
 	if (!buf)
 		return -ENOMEM;
@@ -1753,6 +1825,8 @@ static int prepare_read_banner_payload(struct ceph_connection *con,
 {
 	void *buf;
 
+	lockdep_assert_held(&con->mutex);
+
 	buf = alloc_conn_buf(con, payload_len);
 	if (!buf)
 		return -ENOMEM;
@@ -1766,6 +1840,8 @@ static int prepare_read_banner_payload(struct ceph_connection *con,
 
 static void prepare_read_preamble(struct ceph_connection *con)
 {
+	lockdep_assert_held(&con->mutex);
+
 	reset_in_kvecs(con);
 	add_in_kvec(con, con->v2.in_buf,
 		    con_secure(con) ? CEPH_PREAMBLE_SECURE_LEN :
@@ -1778,6 +1854,8 @@ static int prepare_read_control(struct ceph_connection *con)
 	int ctrl_len = con->v2.in_desc.fd_lens[0];
 	int head_len;
 	void *buf;
+
+	lockdep_assert_held(&con->mutex);
 
 	reset_in_kvecs(con);
 	if (con->state == CEPH_CON_S_V2_HELLO ||
@@ -1815,6 +1893,8 @@ static int prepare_read_control_remainder(struct ceph_connection *con)
 	int rem_len = ctrl_len - CEPH_PREAMBLE_INLINE_LEN;
 	void *buf;
 
+	lockdep_assert_held(&con->mutex);
+
 	buf = alloc_conn_buf(con, ctrl_len);
 	if (!buf)
 		return -ENOMEM;
@@ -1832,6 +1912,8 @@ static int prepare_read_control_remainder(struct ceph_connection *con)
 static int prepare_read_data(struct ceph_connection *con)
 {
 	struct bio_vec bv;
+
+	lockdep_assert_held(&con->mutex);
 
 	con->in_data_crc = -1;
 	ceph_msg_data_cursor_init(&con->v2.in_cursor, con->in_msg,
@@ -1858,6 +1940,8 @@ static int prepare_read_data(struct ceph_connection *con)
 static void prepare_read_data_cont(struct ceph_connection *con)
 {
 	struct bio_vec bv;
+
+	lockdep_assert_held(&con->mutex);
 
 	if (ceph_test_opt(from_msgr(con->msgr), RXBOUNCE)) {
 		con->in_data_crc = crc32c(con->in_data_crc,
@@ -1902,6 +1986,7 @@ static int prepare_sparse_read_cont(struct ceph_connection *con)
 	char *buf = NULL;
 	struct ceph_msg_data_cursor *cursor = &con->v2.in_cursor;
 
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(con->v2.in_state != IN_S_PREPARE_SPARSE_DATA_CONT);
 
 	if (iov_iter_is_bvec(&con->v2.in_iter)) {
@@ -1999,6 +2084,7 @@ static int prepare_sparse_read_data(struct ceph_connection *con)
 	struct ceph_msg *msg = con->in_msg;
 
 	dout("%s: starting sparse read\n", __func__);
+	lockdep_assert_held(&con->mutex);
 
 	if (WARN_ON_ONCE(!con->ops->sparse_read))
 		return -EOPNOTSUPP;
@@ -2018,6 +2104,8 @@ static int prepare_sparse_read_data(struct ceph_connection *con)
 static int prepare_read_tail_plain(struct ceph_connection *con)
 {
 	struct ceph_msg *msg = con->in_msg;
+
+	lockdep_assert_held(&con->mutex);
 
 	if (!front_len(msg) && !middle_len(msg)) {
 		WARN_ON(!data_len(msg));
@@ -2052,6 +2140,7 @@ static void prepare_read_enc_page(struct ceph_connection *con)
 
 	dout("%s con %p i %d resid %d\n", __func__, con, con->v2.in_enc_i,
 	     con->v2.in_enc_resid);
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(!con->v2.in_enc_resid);
 
 	bvec_set_page(&bv, con->v2.in_enc_pages[con->v2.in_enc_i],
@@ -2080,6 +2169,8 @@ static int prepare_read_tail_secure(struct ceph_connection *con)
 	int enc_page_cnt;
 	int tail_len;
 
+	lockdep_assert_held(&con->mutex);
+
 	tail_len = tail_onwire_len(con->in_msg, true);
 	WARN_ON(!tail_len);
 
@@ -2100,6 +2191,8 @@ static int prepare_read_tail_secure(struct ceph_connection *con)
 
 static void __finish_skip(struct ceph_connection *con)
 {
+	lockdep_assert_held(&con->mutex);
+
 	con->in_seq++;
 	prepare_read_preamble(con);
 }
@@ -2111,6 +2204,7 @@ static void prepare_skip_message(struct ceph_connection *con)
 
 	dout("%s con %p %d+%d+%d\n", __func__, con, desc->fd_lens[1],
 	     desc->fd_lens[2], desc->fd_lens[3]);
+	lockdep_assert_held(&con->mutex);
 
 	tail_len = __tail_onwire_len(desc->fd_lens[1], desc->fd_lens[2],
 				     desc->fd_lens[3], con_secure(con));
@@ -2127,6 +2221,7 @@ static int process_banner_prefix(struct ceph_connection *con)
 	int payload_len;
 	void *p;
 
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(con->v2.in_kvecs[0].iov_len != CEPH_BANNER_V2_PREFIX_LEN);
 
 	p = con->v2.in_kvecs[0].iov_base;
@@ -2158,6 +2253,8 @@ static int process_banner_payload(struct ceph_connection *con)
 	u64 server_feat, server_req_feat;
 	void *p;
 	int ret;
+
+	lockdep_assert_held(&con->mutex);
 
 	p = con->v2.in_kvecs[0].iov_base;
 	ceph_decode_64_safe(&p, end, server_feat, bad);
@@ -2201,6 +2298,8 @@ static int process_hello(struct ceph_connection *con, void *p, void *end)
 	struct ceph_entity_addr addr_for_me;
 	u8 entity_type;
 	int ret;
+
+	lockdep_assert_held(&con->mutex);
 
 	if (con->state != CEPH_CON_S_V2_HELLO) {
 		con->error_msg = "protocol error, unexpected hello";
@@ -2271,6 +2370,8 @@ static int process_auth_bad_method(struct ceph_connection *con,
 	int ret;
 	int i;
 
+	lockdep_assert_held(&con->mutex);
+
 	if (con->state != CEPH_CON_S_V2_AUTH) {
 		con->error_msg = "protocol error, unexpected auth_bad_method";
 		return -EINVAL;
@@ -2330,6 +2431,8 @@ static int process_auth_reply_more(struct ceph_connection *con,
 	int payload_len;
 	int ret;
 
+	lockdep_assert_held(&con->mutex);
+
 	if (con->state != CEPH_CON_S_V2_AUTH) {
 		con->error_msg = "protocol error, unexpected auth_reply_more";
 		return -EINVAL;
@@ -2369,6 +2472,8 @@ static int process_auth_done(struct ceph_connection *con, void *p, void *end)
 	int payload_len;
 	u64 global_id;
 	int ret;
+
+	lockdep_assert_held(&con->mutex);
 
 	if (con->state != CEPH_CON_S_V2_AUTH) {
 		con->error_msg = "protocol error, unexpected auth_done";
@@ -2432,6 +2537,8 @@ static int process_auth_signature(struct ceph_connection *con,
 	u8 hmac[SHA256_DIGEST_SIZE];
 	int ret;
 
+	lockdep_assert_held(&con->mutex);
+
 	if (con->state != CEPH_CON_S_V2_AUTH_SIGNATURE) {
 		con->error_msg = "protocol error, unexpected auth_signature";
 		return -EINVAL;
@@ -2485,6 +2592,8 @@ static int process_server_ident(struct ceph_connection *con,
 	u64 cookie;
 	u64 flags;
 	int ret;
+
+	lockdep_assert_held(&con->mutex);
 
 	if (con->state != CEPH_CON_S_V2_SESSION_CONNECT) {
 		con->error_msg = "protocol error, unexpected server_ident";
@@ -2564,6 +2673,8 @@ static int process_ident_missing_features(struct ceph_connection *con,
 	struct ceph_client *client = from_msgr(con->msgr);
 	u64 missing_features;
 
+	lockdep_assert_held(&con->mutex);
+
 	if (con->state != CEPH_CON_S_V2_SESSION_CONNECT) {
 		con->error_msg = "protocol error, unexpected ident_missing_features";
 		return -EINVAL;
@@ -2584,6 +2695,8 @@ static int process_session_reconnect_ok(struct ceph_connection *con,
 					void *p, void *end)
 {
 	u64 seq;
+
+	lockdep_assert_held(&con->mutex);
 
 	if (con->state != CEPH_CON_S_V2_SESSION_RECONNECT) {
 		con->error_msg = "protocol error, unexpected session_reconnect_ok";
@@ -2614,6 +2727,8 @@ static int process_session_retry(struct ceph_connection *con,
 {
 	u64 connect_seq;
 	int ret;
+
+	lockdep_assert_held(&con->mutex);
 
 	if (con->state != CEPH_CON_S_V2_SESSION_RECONNECT) {
 		con->error_msg = "protocol error, unexpected session_retry";
@@ -2648,6 +2763,8 @@ static int process_session_retry_global(struct ceph_connection *con,
 	u64 global_seq;
 	int ret;
 
+	lockdep_assert_held(&con->mutex);
+
 	if (con->state != CEPH_CON_S_V2_SESSION_RECONNECT) {
 		con->error_msg = "protocol error, unexpected session_retry_global";
 		return -EINVAL;
@@ -2680,6 +2797,8 @@ static int process_session_reset(struct ceph_connection *con,
 {
 	bool full;
 	int ret;
+
+	lockdep_assert_held(&con->mutex);
 
 	if (con->state != CEPH_CON_S_V2_SESSION_RECONNECT) {
 		con->error_msg = "protocol error, unexpected session_reset";
@@ -2726,6 +2845,8 @@ bad:
 static int process_keepalive2_ack(struct ceph_connection *con,
 				  void *p, void *end)
 {
+	lockdep_assert_held(&con->mutex);
+
 	if (con->state != CEPH_CON_S_OPEN) {
 		con->error_msg = "protocol error, unexpected keepalive2_ack";
 		return -EINVAL;
@@ -2746,6 +2867,8 @@ bad:
 static int process_ack(struct ceph_connection *con, void *p, void *end)
 {
 	u64 seq;
+
+	lockdep_assert_held(&con->mutex);
 
 	if (con->state != CEPH_CON_S_OPEN) {
 		con->error_msg = "protocol error, unexpected ack";
@@ -2769,6 +2892,7 @@ static int process_control(struct ceph_connection *con, void *p, void *end)
 	int ret;
 
 	dout("%s con %p tag %d len %d\n", __func__, con, tag, (int)(end - p));
+	lockdep_assert_held(&con->mutex);
 
 	switch (tag) {
 	case FRAME_TAG_HELLO:
@@ -2840,6 +2964,8 @@ static int process_message_header(struct ceph_connection *con,
 	int ret;
 	u64 seq;
 
+	lockdep_assert_held(&con->mutex);
+
 	ceph_decode_need(&p, end, sizeof(*hdr2), bad);
 	hdr2 = p;
 
@@ -2881,6 +3007,8 @@ bad:
 
 static int process_message(struct ceph_connection *con)
 {
+	lockdep_assert_held(&con->mutex);
+
 	ceph_con_process_message(con);
 
 	/*
@@ -2902,6 +3030,8 @@ static int __handle_control(struct ceph_connection *con, void *p)
 	void *end = p + con->v2.in_desc.fd_lens[0];
 	struct ceph_msg *msg;
 	int ret;
+
+	lockdep_assert_held(&con->mutex);
 
 	if (con->v2.in_desc.fd_tag != FRAME_TAG_MESSAGE)
 		return process_control(con, p, end);
@@ -2947,6 +3077,8 @@ static int handle_preamble(struct ceph_connection *con)
 	struct ceph_frame_desc *desc = &con->v2.in_desc;
 	int ret;
 
+	lockdep_assert_held(&con->mutex);
+
 	if (con_secure(con)) {
 		ret = decrypt_preamble(con);
 		if (ret) {
@@ -2984,6 +3116,7 @@ static int handle_control(struct ceph_connection *con)
 	void *buf;
 	int ret;
 
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(con_secure(con));
 
 	ret = verify_control_crc(con);
@@ -3008,6 +3141,7 @@ static int handle_control_remainder(struct ceph_connection *con)
 {
 	int ret;
 
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(!con_secure(con));
 
 	ret = decrypt_control_remainder(con);
@@ -3025,6 +3159,8 @@ static int handle_epilogue(struct ceph_connection *con)
 {
 	u32 front_crc, middle_crc, data_crc;
 	int ret;
+
+	lockdep_assert_held(&con->mutex);
 
 	if (con_secure(con)) {
 		ret = decrypt_tail(con);
@@ -3062,6 +3198,7 @@ static int handle_epilogue(struct ceph_connection *con)
 static void finish_skip(struct ceph_connection *con)
 {
 	dout("%s con %p\n", __func__, con);
+	lockdep_assert_held(&con->mutex);
 
 	if (con_secure(con))
 		gcm_inc_nonce(&con->v2.in_gcm_nonce);
@@ -3075,6 +3212,7 @@ static int populate_in_iter(struct ceph_connection *con)
 
 	dout("%s con %p state %d in_state %d\n", __func__, con, con->state,
 	     con->v2.in_state);
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(iov_iter_count(&con->v2.in_iter));
 
 	if (con->state == CEPH_CON_S_V2_BANNER_PREFIX) {
@@ -3144,6 +3282,7 @@ int ceph_con_v2_try_read(struct ceph_connection *con)
 
 	dout("%s con %p state %d need %zu\n", __func__, con, con->state,
 	     iov_iter_count(&con->v2.in_iter));
+	lockdep_assert_held(&con->mutex);
 
 	if (con->state == CEPH_CON_S_PREOPEN)
 		return 0;
@@ -3174,6 +3313,8 @@ static void queue_data(struct ceph_connection *con, struct ceph_msg *msg)
 {
 	struct bio_vec bv;
 
+	lockdep_assert_held(&con->mutex);
+
 	con->v2.out_epil.data_crc = -1;
 	ceph_msg_data_cursor_init(&con->v2.out_cursor, msg,
 				  data_len(msg));
@@ -3186,6 +3327,8 @@ static void queue_data(struct ceph_connection *con, struct ceph_msg *msg)
 static void queue_data_cont(struct ceph_connection *con, struct ceph_msg *msg)
 {
 	struct bio_vec bv;
+
+	lockdep_assert_held(&con->mutex);
 
 	con->v2.out_epil.data_crc = ceph_crc32c_page(
 		con->v2.out_epil.data_crc, con->v2.out_bvec.bv_page,
@@ -3214,6 +3357,7 @@ static void queue_enc_page(struct ceph_connection *con)
 
 	dout("%s con %p i %d resid %d\n", __func__, con, con->v2.out_enc_i,
 	     con->v2.out_enc_resid);
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(!con->v2.out_enc_resid);
 
 	bvec_set_page(&bv, con->v2.out_enc_pages[con->v2.out_enc_i],
@@ -3239,6 +3383,7 @@ static void queue_enc_page(struct ceph_connection *con)
 static void queue_zeros(struct ceph_connection *con, struct ceph_msg *msg)
 {
 	dout("%s con %p out_zero %d\n", __func__, con, con->v2.out_zero);
+	lockdep_assert_held(&con->mutex);
 
 	if (con->v2.out_zero) {
 		set_out_bvec_zero(con);
@@ -3260,6 +3405,7 @@ static void queue_zeros(struct ceph_connection *con, struct ceph_msg *msg)
 static void finish_message(struct ceph_connection *con)
 {
 	dout("%s con %p msg %p\n", __func__, con, con->out_msg);
+	lockdep_assert_held(&con->mutex);
 
 	/* we end up here both plain and secure modes */
 	if (con->v2.out_enc_pages) {
@@ -3285,6 +3431,7 @@ static int populate_out_iter(struct ceph_connection *con)
 
 	dout("%s con %p state %d out_state %d\n", __func__, con, con->state,
 	     con->v2.out_state);
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(iov_iter_count(&con->v2.out_iter));
 
 	if (con->state != CEPH_CON_S_OPEN) {
@@ -3362,6 +3509,7 @@ int ceph_con_v2_try_write(struct ceph_connection *con)
 
 	dout("%s con %p state %d have %zu\n", __func__, con, con->state,
 	     iov_iter_count(&con->v2.out_iter));
+	lockdep_assert_held(&con->mutex);
 
 	/* open the socket first? */
 	if (con->state == CEPH_CON_S_PREOPEN) {
@@ -3444,6 +3592,7 @@ static void prepare_zero_front(struct ceph_connection *con,
 {
 	int sent;
 
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(!resid || resid > front_len(msg));
 	sent = front_len(msg) - resid;
 	dout("%s con %p sent %d resid %d\n", __func__, con, sent, resid);
@@ -3466,6 +3615,7 @@ static void prepare_zero_middle(struct ceph_connection *con,
 {
 	int sent;
 
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(!resid || resid > middle_len(msg));
 	sent = middle_len(msg) - resid;
 	dout("%s con %p sent %d resid %d\n", __func__, con, sent, resid);
@@ -3487,6 +3637,8 @@ static void prepare_zero_data(struct ceph_connection *con,
 			      struct ceph_msg *msg)
 {
 	dout("%s con %p\n", __func__, con);
+	lockdep_assert_held(&con->mutex);
+
 	con->v2.out_epil.data_crc = crc32c_zeros(-1, data_len(msg));
 	out_zero_add(con, data_len(msg));
 }
@@ -3497,6 +3649,7 @@ static void revoke_at_queue_data(struct ceph_connection *con,
 	int boundary;
 	int resid;
 
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(!data_len(msg));
 	WARN_ON(!iov_iter_is_kvec(&con->v2.out_iter));
 	resid = iov_iter_count(&con->v2.out_iter);
@@ -3540,6 +3693,7 @@ static void revoke_at_queue_data_cont(struct ceph_connection *con,
 {
 	int sent, resid;  /* current piece of data */
 
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(!data_len(msg));
 	WARN_ON(!iov_iter_is_bvec(&con->v2.out_iter));
 	resid = iov_iter_count(&con->v2.out_iter);
@@ -3568,6 +3722,7 @@ static void revoke_at_finish_message(struct ceph_connection *con,
 	int boundary;
 	int resid;
 
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(!iov_iter_is_kvec(&con->v2.out_iter));
 	resid = iov_iter_count(&con->v2.out_iter);
 
@@ -3623,6 +3778,7 @@ static void revoke_at_finish_message(struct ceph_connection *con,
 
 void ceph_con_v2_revoke(struct ceph_connection *con, struct ceph_msg *msg)
 {
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(con->v2.out_zero);
 
 	if (con_secure(con)) {
@@ -3653,6 +3809,7 @@ static void revoke_at_prepare_read_data(struct ceph_connection *con)
 	int remaining;
 	int resid;
 
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(con_secure(con));
 	WARN_ON(!data_len(con->in_msg));
 	WARN_ON(!iov_iter_is_kvec(&con->v2.in_iter));
@@ -3672,6 +3829,7 @@ static void revoke_at_prepare_read_data_cont(struct ceph_connection *con)
 	int recved, resid;  /* current piece of data */
 	int remaining;
 
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(con_secure(con));
 	WARN_ON(!data_len(con->in_msg));
 	WARN_ON(!iov_iter_is_bvec(&con->v2.in_iter));
@@ -3696,6 +3854,7 @@ static void revoke_at_prepare_read_enc_page(struct ceph_connection *con)
 {
 	int resid;  /* current enc page (not necessarily data) */
 
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(!con_secure(con));
 	WARN_ON(!iov_iter_is_bvec(&con->v2.in_iter));
 	resid = iov_iter_count(&con->v2.in_iter);
@@ -3713,6 +3872,7 @@ static void revoke_at_prepare_sparse_data(struct ceph_connection *con)
 	int resid;  /* current piece of data */
 	int remaining;
 
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(con_secure(con));
 	WARN_ON(!data_len(con->in_msg));
 	WARN_ON(!iov_iter_is_bvec(&con->v2.in_iter));
@@ -3729,6 +3889,8 @@ static void revoke_at_handle_epilogue(struct ceph_connection *con)
 {
 	int resid;
 
+	lockdep_assert_held(&con->mutex);
+
 	resid = iov_iter_count(&con->v2.in_iter);
 	WARN_ON(!resid);
 
@@ -3740,6 +3902,8 @@ static void revoke_at_handle_epilogue(struct ceph_connection *con)
 
 void ceph_con_v2_revoke_incoming(struct ceph_connection *con)
 {
+	lockdep_assert_held(&con->mutex);
+
 	switch (con->v2.in_state) {
 	case IN_S_PREPARE_SPARSE_DATA:
 	case IN_S_PREPARE_READ_DATA:
@@ -3770,6 +3934,8 @@ bool ceph_con_v2_opened(struct ceph_connection *con)
 
 void ceph_con_v2_reset_session(struct ceph_connection *con)
 {
+	lockdep_assert_held(&con->mutex);
+
 	con->v2.client_cookie = 0;
 	con->v2.server_cookie = 0;
 	con->v2.global_seq = 0;
@@ -3779,6 +3945,8 @@ void ceph_con_v2_reset_session(struct ceph_connection *con)
 
 void ceph_con_v2_reset_protocol(struct ceph_connection *con)
 {
+	lockdep_assert_held(&con->mutex);
+
 	iov_iter_truncate(&con->v2.in_iter, 0);
 	iov_iter_truncate(&con->v2.out_iter, 0);
 	con->v2.out_zero = 0;
