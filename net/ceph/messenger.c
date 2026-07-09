@@ -441,6 +441,7 @@ int ceph_tcp_connect(struct ceph_connection *con)
 
 	dout("%s con %p peer_addr %s\n", __func__, con,
 	     ceph_pr_addr(&con->peer_addr));
+	lockdep_assert_held(&con->mutex);
 	BUG_ON(con->sock);
 
 	/* sock_create_kern() allocates with GFP_KERNEL */
@@ -488,6 +489,8 @@ int ceph_con_close_socket(struct ceph_connection *con)
 	int rc = 0;
 
 	dout("%s con %p sock %p\n", __func__, con, con->sock);
+	lockdep_assert_held(&con->mutex);
+
 	if (con->sock) {
 		rc = con->sock->ops->shutdown(con->sock, SHUT_RDWR);
 		sock_release(con->sock);
@@ -509,6 +512,7 @@ int ceph_con_close_socket(struct ceph_connection *con)
 static void ceph_con_reset_protocol(struct ceph_connection *con)
 {
 	dout("%s con %p\n", __func__, con);
+	lockdep_assert_held(&con->mutex);
 
 	ceph_con_close_socket(con);
 	if (con->in_msg) {
@@ -556,6 +560,7 @@ void ceph_con_reset_session(struct ceph_connection *con)
 {
 	dout("%s con %p\n", __func__, con);
 
+	lockdep_assert_held(&con->mutex);
 	WARN_ON(con->in_msg);
 	WARN_ON(con->out_msg);
 	ceph_msg_remove_list(&con->out_queue);
@@ -678,6 +683,8 @@ void ceph_con_discard_sent(struct ceph_connection *con, u64 ack_seq)
 	u64 seq;
 
 	dout("%s con %p ack_seq %llu\n", __func__, con, ack_seq);
+	lockdep_assert_held(&con->mutex);
+
 	while (!list_empty(&con->out_sent)) {
 		msg = list_first_entry(&con->out_sent, struct ceph_msg,
 				       list_head);
@@ -703,6 +710,8 @@ void ceph_con_discard_requeued(struct ceph_connection *con, u64 reconnect_seq)
 	u64 seq;
 
 	dout("%s con %p reconnect_seq %llu\n", __func__, con, reconnect_seq);
+	lockdep_assert_held(&con->mutex);
+
 	while (!list_empty(&con->out_queue)) {
 		msg = list_first_entry(&con->out_queue, struct ceph_msg,
 				       list_head);
@@ -1405,6 +1414,7 @@ void ceph_con_process_message(struct ceph_connection *con)
 {
 	struct ceph_msg *msg = con->in_msg;
 
+	lockdep_assert_held(&con->mutex);
 	BUG_ON(con->in_msg->con != con);
 	con->in_msg = NULL;
 
@@ -1715,6 +1725,8 @@ static void msg_con_set(struct ceph_msg *msg, struct ceph_connection *con)
 
 static void clear_standby(struct ceph_connection *con)
 {
+	lockdep_assert_held(&con->mutex);
+
 	/* come back from STANDBY? */
 	if (con->state == CEPH_CON_S_STANDBY) {
 		dout("clear_standby %p\n", con);
@@ -2115,6 +2127,8 @@ int ceph_con_in_msg_alloc(struct ceph_connection *con,
 struct ceph_msg *ceph_con_get_out_msg(struct ceph_connection *con)
 {
 	struct ceph_msg *msg;
+
+	lockdep_assert_held(&con->mutex);
 
 	if (list_empty(&con->out_queue))
 		return NULL;
