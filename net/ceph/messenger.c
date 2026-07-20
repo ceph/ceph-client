@@ -610,6 +610,9 @@ void ceph_con_open(struct ceph_connection *con,
 
 	memcpy(&con->peer_addr, addr, sizeof(*addr));
 	con->delay = 0;      /* reset backoff memory */
+
+	ktime_get_real_ts64(&con->last_keepalive_ack);
+
 	mutex_unlock(&con->mutex);
 	queue_con(con);
 }
