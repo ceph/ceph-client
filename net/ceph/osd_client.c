@@ -54,6 +54,7 @@ static void link_linger(struct ceph_osd *osd,
 static void unlink_linger(struct ceph_osd *osd,
 			  struct ceph_osd_linger_request *lreq);
 static void clear_backoffs(struct ceph_osd *osd);
+static void kick_osd_requests(struct ceph_osd *osd);
 
 #if 1
 static inline bool rwsem_is_wrlocked(struct rw_semaphore *sem)
@@ -3421,6 +3422,15 @@ static int linger_notify_finish_wait(struct ceph_osd_linger_request *lreq,
 	return left;
 }
 
+static bool osd_keepalive_timed_out(struct ceph_osd *osd)
+{
+	if (!time_after_eq(jiffies,
+			   osd->o_keepalive_stamp + CEPH_OSD_PING_TIMEOUT))
+		return false;
+
+	return ceph_con_keepalive_expired(&osd->o_con, CEPH_OSD_PING_TIMEOUT);
+}
+
 /*
  * Timeout callback, called every N seconds.  When 1 or more OSD
  * requests has been active for more than N seconds, we send a keepalive
@@ -3481,8 +3491,11 @@ static void handle_timeout(struct work_struct *work)
 			mutex_unlock(&lreq->lock);
 		}
 
-		if (found)
+		if (found) {
 			list_move_tail(&osd->o_keepalive_item, &slow_osds);
+		} else {
+			osd->o_keepalive_stamp = 0;
+		}
 	}
 
 	if (opts->osd_request_timeout) {
@@ -3508,6 +3521,20 @@ static void handle_timeout(struct work_struct *work)
 							struct ceph_osd,
 							o_keepalive_item);
 		list_del_init(&osd->o_keepalive_item);
+
+		/* Record start of ping timeout from the first slow tick. */
+		if (!osd->o_keepalive_stamp) {
+			osd->o_keepalive_stamp = jiffies;
+		} else if (osd_keepalive_timed_out(osd)) {
+			pr_warn_ratelimited("osd%d not responding to keepalives, resetting session\n",
+					    osd->o_osd);
+			osd->o_sparse_op_idx = -1;
+			ceph_init_sparse_read(&osd->o_sparse_read);
+			if (!reopen_osd(osd))
+				kick_osd_requests(osd);
+			continue;
+		}
+
 		ceph_con_keepalive(&osd->o_con);
 	}
 
