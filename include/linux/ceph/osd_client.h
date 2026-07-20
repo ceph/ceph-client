@@ -94,6 +94,7 @@ struct ceph_osd {
 	struct ceph_auth_handshake o_auth;
 	unsigned long lru_ttl;
 	struct list_head o_keepalive_item;
+	unsigned long o_keepalive_stamp;
 	struct mutex lock;
 	struct ceph_sparse_read	o_sparse_read;
 };
