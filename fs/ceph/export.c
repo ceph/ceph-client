@@ -87,32 +87,42 @@ static int ceph_encode_snapfh(struct inode *inode, u32 *rawfh, int *max_len,
 	*max_len = snap_handle_length;
 	ret = FILEID_BTRFS_WITH_PARENT;
 out:
-	doutc(cl, "%p %llx.%llx ret=%d\n", inode, ceph_vinop(inode), ret);
+	boutc(cl, "%p %llx.%llx ret=%d\n", inode, ceph_vinop(inode), ret);
 	return ret;
 }
 
 static int ceph_encode_fh(struct inode *inode, u32 *rawfh, int *max_len,
 			  struct inode *parent_inode)
 {
+	struct ceph_fs_client *fsc = ceph_inode_to_fs_client(inode);
 	struct ceph_client *cl = ceph_inode_to_client(inode);
 	static const int handle_length = CEPH_FH_BASIC_SIZE;
 	static const int connected_handle_length = CEPH_FH_WITH_PARENT_SIZE;
 	int type;
+	struct ceph_journal_info __ji;
 
-	if (ceph_in_snap(inode))
-		return ceph_encode_snapfh(inode, rawfh, max_len, parent_inode);
+	ceph_blog_enter(fsc, &__ji);
+
+	if (ceph_in_snap(inode)) {
+		int ret = ceph_encode_snapfh(inode, rawfh, max_len,
+					     parent_inode);
+		ceph_blog_exit(&__ji);
+		return ret;
+	}
 
 	if (parent_inode && (*max_len < connected_handle_length)) {
 		*max_len = connected_handle_length;
+		ceph_blog_exit(&__ji);
 		return FILEID_INVALID;
 	} else if (*max_len < handle_length) {
 		*max_len = handle_length;
+		ceph_blog_exit(&__ji);
 		return FILEID_INVALID;
 	}
 
 	if (parent_inode) {
 		struct ceph_nfs_confh *cfh = (void *)rawfh;
-		doutc(cl, "%p %llx.%llx with parent %p %llx.%llx\n", inode,
+		boutc(cl, "%p %llx.%llx with parent %p %llx.%llx\n", inode,
 		      ceph_vinop(inode), parent_inode, ceph_vinop(parent_inode));
 		cfh->ino = ceph_ino(inode);
 		cfh->parent_ino = ceph_ino(parent_inode);
@@ -120,11 +130,12 @@ static int ceph_encode_fh(struct inode *inode, u32 *rawfh, int *max_len,
 		type = FILEID_INO32_GEN_PARENT;
 	} else {
 		struct ceph_nfs_fh *fh = (void *)rawfh;
-		doutc(cl, "%p %llx.%llx\n", inode, ceph_vinop(inode));
+		boutc(cl, "%p %llx.%llx\n", inode, ceph_vinop(inode));
 		fh->ino = ceph_ino(inode);
 		*max_len = handle_length;
 		type = FILEID_INO32_GEN;
 	}
+	ceph_blog_exit(&__ji);
 	return type;
 }
 
@@ -286,9 +297,9 @@ static struct dentry *__snapfh_to_dentry(struct super_block *sb,
 	ceph_mdsc_put_request(req);
 
 	if (want_parent) {
-		doutc(cl, "%llx.%llx\n err=%d\n", vino.ino, vino.snap, err);
+		boutc(cl, "%llx.%llx\n err=%d\n", vino.ino, vino.snap, err);
 	} else {
-		doutc(cl, "%llx.%llx parent %llx hash %x err=%d", vino.ino,
+		boutc(cl, "%llx.%llx parent %llx hash %x err=%d", vino.ino,
 		      vino.snap, sfh->parent_ino, sfh->hash, err);
 	}
 	/* see comments in ceph_get_parent() */
@@ -304,20 +315,31 @@ static struct dentry *ceph_fh_to_dentry(struct super_block *sb,
 {
 	struct ceph_fs_client *fsc = ceph_sb_to_fs_client(sb);
 	struct ceph_nfs_fh *fh = (void *)fid->raw;
+	struct dentry *dentry;
+	struct ceph_journal_info __ji;
+
+	ceph_blog_enter(fsc, &__ji);
 
 	if (fh_type == FILEID_BTRFS_WITH_PARENT) {
 		struct ceph_nfs_snapfh *sfh = (void *)fid->raw;
+		ceph_blog_exit(&__ji);
 		return __snapfh_to_dentry(sb, sfh, false);
 	}
 
 	if (fh_type != FILEID_INO32_GEN  &&
-	    fh_type != FILEID_INO32_GEN_PARENT)
+	    fh_type != FILEID_INO32_GEN_PARENT) {
+		ceph_blog_exit(&__ji);
 		return NULL;
-	if (fh_len < sizeof(*fh) / BYTES_PER_U32)
+	}
+	if (fh_len < sizeof(*fh) / BYTES_PER_U32) {
+		ceph_blog_exit(&__ji);
 		return NULL;
+	}
 
-	doutc(fsc->client, "%llx\n", fh->ino);
-	return __fh_to_dentry(sb, fh->ino);
+	boutc(fsc->client, "%llx\n", fh->ino);
+	dentry = __fh_to_dentry(sb, fh->ino);
+	ceph_blog_exit(&__ji);
+	return dentry;
 }
 
 static struct dentry *__get_parent(struct super_block *sb,
@@ -369,8 +391,12 @@ static struct dentry *__get_parent(struct super_block *sb,
 static struct dentry *ceph_get_parent(struct dentry *child)
 {
 	struct inode *inode = d_inode(child);
+	struct ceph_fs_client *fsc = ceph_inode_to_fs_client(inode);
 	struct ceph_client *cl = ceph_inode_to_client(inode);
 	struct dentry *dn;
+	struct ceph_journal_info __ji;
+
+	ceph_blog_enter(fsc, &__ji);
 
 	if (ceph_in_snap(inode)) {
 		struct inode* dir;
@@ -409,8 +435,9 @@ static struct dentry *ceph_get_parent(struct dentry *child)
 		dn = __get_parent(child->d_sb, child, 0);
 	}
 out:
-	doutc(cl, "child %p %p %llx.%llx err=%ld\n", child, inode,
+	boutc(cl, "child %p %p %llx.%llx err=%ld\n", child, inode,
 	      ceph_vinop(inode), (long)PTR_ERR_OR_ZERO(dn));
+	ceph_blog_exit(&__ji);
 	return dn;
 }
 
@@ -424,21 +451,30 @@ static struct dentry *ceph_fh_to_parent(struct super_block *sb,
 	struct ceph_fs_client *fsc = ceph_sb_to_fs_client(sb);
 	struct ceph_nfs_confh *cfh = (void *)fid->raw;
 	struct dentry *dentry;
+	struct ceph_journal_info __ji;
+
+	ceph_blog_enter(fsc, &__ji);
 
 	if (fh_type == FILEID_BTRFS_WITH_PARENT) {
 		struct ceph_nfs_snapfh *sfh = (void *)fid->raw;
+		ceph_blog_exit(&__ji);
 		return __snapfh_to_dentry(sb, sfh, true);
 	}
 
-	if (fh_type != FILEID_INO32_GEN_PARENT)
+	if (fh_type != FILEID_INO32_GEN_PARENT) {
+		ceph_blog_exit(&__ji);
 		return NULL;
-	if (fh_len < sizeof(*cfh) / BYTES_PER_U32)
+	}
+	if (fh_len < sizeof(*cfh) / BYTES_PER_U32) {
+		ceph_blog_exit(&__ji);
 		return NULL;
+	}
 
-	doutc(fsc->client, "%llx\n", cfh->parent_ino);
+	boutc(fsc->client, "%llx\n", cfh->parent_ino);
 	dentry = __get_parent(sb, NULL, cfh->ino);
 	if (unlikely(dentry == ERR_PTR(-ENOENT)))
 		dentry = __fh_to_dentry(sb, cfh->parent_ino);
+	ceph_blog_exit(&__ji);
 	return dentry;
 }
 
@@ -549,7 +585,7 @@ out:
 	if (req)
 		ceph_mdsc_put_request(req);
 	kfree(last_name);
-	doutc(fsc->client, "child dentry %p %p %llx.%llx err=%d\n", child,
+	boutc(fsc->client, "child dentry %p %p %llx.%llx err=%d\n", child,
 	      inode, ceph_vinop(inode), err);
 	return err;
 }
@@ -561,17 +597,25 @@ static int ceph_get_name(struct dentry *parent, char *name,
 	struct ceph_mds_request *req;
 	struct inode *dir = d_inode(parent);
 	struct inode *inode = d_inode(child);
+	struct ceph_fs_client *fsc = ceph_inode_to_fs_client(inode);
 	struct ceph_mds_reply_info_parsed *rinfo;
 	int err;
+	struct ceph_journal_info __ji;
 
-	if (ceph_in_snap(inode))
+	ceph_blog_enter(fsc, &__ji);
+
+	if (ceph_in_snap(inode)) {
+		ceph_blog_exit(&__ji);
 		return __get_snap_name(parent, name, child);
+	}
 
 	mdsc = ceph_inode_to_fs_client(inode)->mdsc;
 	req = ceph_mdsc_create_request(mdsc, CEPH_MDS_OP_LOOKUPNAME,
 				       USE_ANY_MDS);
-	if (IS_ERR(req))
+	if (IS_ERR(req)) {
+		ceph_blog_exit(&__ji);
 		return PTR_ERR(req);
+	}
 
 	inode_lock(dir);
 	req->r_inode = inode;
@@ -610,10 +654,11 @@ static int ceph_get_name(struct dentry *parent, char *name,
 		ceph_fname_free_buffer(dir, &oname);
 	}
 out:
-	doutc(mdsc->fsc->client, "child dentry %p %p %llx.%llx err %d %s%s\n",
+	boutc(mdsc->fsc->client, "child dentry %p %p %llx.%llx err %d %s%s\n",
 	      child, inode, ceph_vinop(inode), err, err ? "" : "name ",
 	      err ? "" : name);
 	ceph_mdsc_put_request(req);
+	ceph_blog_exit(&__ji);
 	return err;
 }
 
