@@ -135,6 +135,8 @@ struct ceph_client {
 	struct ceph_osd_client osdc;
 
 #ifdef CONFIG_DEBUG_FS
+	u32 blog_client_id;
+
 	struct dentry *debugfs_dir;
 	struct dentry *debugfs_monmap;
 	struct dentry *debugfs_osdmap;
