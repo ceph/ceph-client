@@ -69,7 +69,7 @@ static __le32 ceph_flags_sys2wire(struct ceph_mds_client *mdsc, u32 flags)
 #undef ceph_sys2wire
 
 	if (flags)
-		doutc(cl, "unused open flags: %x\n", flags);
+		boutc(cl, "unused open flags: %x\n", flags);
 
 	return cpu_to_le32(wire_flags);
 }
@@ -226,7 +226,7 @@ static int ceph_init_file_info(struct inode *inode, struct file *file,
 	struct ceph_file_info *fi;
 	int ret;
 
-	doutc(cl, "%p %llx.%llx %p 0%o (%s)\n", inode, ceph_vinop(inode),
+	boutc(cl, "%p %llx.%llx %p 0%o (%s)\n", inode, ceph_vinop(inode),
 	      file, inode->i_mode, isdir ? "dir" : "regular");
 	BUG_ON(inode->i_fop->release != ceph_release);
 
@@ -294,12 +294,12 @@ static int ceph_init_file(struct inode *inode, struct file *file, int fmode)
 		break;
 
 	case S_IFLNK:
-		doutc(cl, "%p %llx.%llx %p 0%o (symlink)\n", inode,
+		boutc(cl, "%p %llx.%llx %p 0%o (symlink)\n", inode,
 		      ceph_vinop(inode), file, inode->i_mode);
 		break;
 
 	default:
-		doutc(cl, "%p %llx.%llx %p 0%o (special)\n", inode,
+		boutc(cl, "%p %llx.%llx %p 0%o (special)\n", inode,
 		      ceph_vinop(inode), file, inode->i_mode);
 		/*
 		 * we need to drop the open ref now, since we don't
@@ -332,7 +332,7 @@ int ceph_renew_caps(struct inode *inode, int fmode)
 	    (!(wanted & CEPH_CAP_ANY_WR) || ci->i_auth_cap) &&
 	    (issued & wanted) == wanted) {
 		spin_unlock(&ci->i_ceph_lock);
-		doutc(cl, "%p %llx.%llx want %s issued %s updating mds_wanted\n",
+		boutc(cl, "%p %llx.%llx want %s issued %s updating mds_wanted\n",
 		      inode, ceph_vinop(inode), ceph_cap_string(wanted),
 		      ceph_cap_string(issued));
 		ceph_check_caps(ci, 0);
@@ -365,7 +365,7 @@ int ceph_renew_caps(struct inode *inode, int fmode)
 	err = ceph_mdsc_do_request(mdsc, NULL, req);
 	ceph_mdsc_put_request(req);
 out:
-	doutc(cl, "%p %llx.%llx open result=%d\n", inode, ceph_vinop(inode),
+	boutc(cl, "%p %llx.%llx open result=%d\n", inode, ceph_vinop(inode),
 	      err);
 	return err < 0 ? err : 0;
 }
@@ -390,9 +390,13 @@ int ceph_open(struct inode *inode, struct file *file)
 	char *path;
 	bool do_sync = false;
 	int mask = MAY_READ;
+	struct ceph_journal_info __ji;
+
+	ceph_blog_enter(fsc, &__ji);
 
 	if (fi) {
-		doutc(cl, "file %p is already opened\n", file);
+		boutc(cl, "file %p is already opened\n", file);
+		ceph_blog_exit(&__ji);
 		return 0;
 	}
 
@@ -402,11 +406,13 @@ int ceph_open(struct inode *inode, struct file *file)
 		flags = O_DIRECTORY;  /* mds likes to know */
 	} else if (S_ISREG(inode->i_mode)) {
 		err = fscrypt_file_open(inode, file);
-		if (err)
+		if (err) {
+			ceph_blog_exit(&__ji);
 			return err;
+		}
 	}
 
-	doutc(cl, "%p %llx.%llx file %p flags %d (%d)\n", inode,
+	boutc(cl, "%p %llx.%llx file %p flags %d (%d)\n", inode,
 	      ceph_vinop(inode), file, flags, file->f_flags);
 	fmode = ceph_flags_to_mode(flags);
 	wanted = ceph_caps_for_mode(fmode);
@@ -430,6 +436,7 @@ int ceph_open(struct inode *inode, struct file *file)
 
 		/* For none EACCES cases will let the MDS do the mds auth check */
 		if (err == -EACCES) {
+			ceph_blog_exit(&__ji);
 			return err;
 		} else if (err < 0) {
 			do_sync = true;
@@ -438,11 +445,14 @@ int ceph_open(struct inode *inode, struct file *file)
 	}
 
 	/* snapped files are read-only */
-	if (ceph_in_snap(inode) && (file->f_mode & FMODE_WRITE))
+	if (ceph_in_snap(inode) && (file->f_mode & FMODE_WRITE)) {
+		ceph_blog_exit(&__ji);
 		return -EROFS;
+	}
 
 	/* trivially open snapdir */
 	if (ceph_snap(inode) == CEPH_SNAPDIR) {
+		ceph_blog_exit(&__ji);
 		return ceph_init_file(inode, file, fmode);
 	}
 
@@ -457,7 +467,7 @@ int ceph_open(struct inode *inode, struct file *file)
 		int mds_wanted = __ceph_caps_mds_wanted(ci, true);
 		int issued = __ceph_caps_issued(ci, NULL);
 
-		doutc(cl, "open %p fmode %d want %s issued %s using existing\n",
+		boutc(cl, "open %p fmode %d want %s issued %s using existing\n",
 		      inode, fmode, ceph_cap_string(wanted),
 		      ceph_cap_string(issued));
 		__ceph_touch_fmode(ci, mdsc, fmode);
@@ -469,17 +479,19 @@ int ceph_open(struct inode *inode, struct file *file)
 		    ceph_snap(inode) != CEPH_SNAPDIR)
 			ceph_check_caps(ci, 0);
 
+		ceph_blog_exit(&__ji);
 		return ceph_init_file(inode, file, fmode);
 	} else if (!do_sync && ceph_in_snap(inode) &&
 		   (ci->i_snap_caps & wanted) == wanted) {
 		__ceph_touch_fmode(ci, mdsc, fmode);
 		spin_unlock(&ci->i_ceph_lock);
+		ceph_blog_exit(&__ji);
 		return ceph_init_file(inode, file, fmode);
 	}
 
 	spin_unlock(&ci->i_ceph_lock);
 
-	doutc(cl, "open fmode %d wants %s\n", fmode, ceph_cap_string(wanted));
+	boutc(cl, "open fmode %d wants %s\n", fmode, ceph_cap_string(wanted));
 	req = prepare_open_request(inode->i_sb, flags, 0);
 	if (IS_ERR(req)) {
 		err = PTR_ERR(req);
@@ -493,8 +505,9 @@ int ceph_open(struct inode *inode, struct file *file)
 	if (!err)
 		err = ceph_init_file(inode, file, req->r_fmode);
 	ceph_mdsc_put_request(req);
-	doutc(cl, "open result=%d on %llx.%llx\n", err, ceph_vinop(inode));
+	boutc(cl, "open result=%d on %llx.%llx\n", err, ceph_vinop(inode));
 out:
+	ceph_blog_exit(&__ji);
 	return err;
 }
 
@@ -748,7 +761,7 @@ static int ceph_finish_async_create(struct inode *dir, struct inode *inode,
 			      req->r_fmode, NULL);
 	up_read(&mdsc->snap_rwsem);
 	if (ret) {
-		doutc(cl, "failed to fill inode: %d\n", ret);
+		boutc(cl, "failed to fill inode: %d\n", ret);
 		ceph_dir_clear_complete(dir);
 		if (!d_unhashed(dentry))
 			d_drop(dentry);
@@ -756,7 +769,7 @@ static int ceph_finish_async_create(struct inode *dir, struct inode *inode,
 	} else {
 		struct dentry *dn;
 
-		doutc(cl, "d_adding new inode 0x%llx to 0x%llx/%s\n",
+		boutc(cl, "d_adding new inode 0x%llx to 0x%llx/%s\n",
 		      vino.ino, ceph_ino(dir), dentry->d_name.name);
 		ceph_dir_clear_ordered(dir);
 		ceph_init_inode_acls(inode, as_ctx);
@@ -807,17 +820,24 @@ int ceph_atomic_open(struct inode *dir, struct dentry *dentry,
 	int mask;
 	int err;
 	char *path;
+	struct ceph_journal_info __ji;
 
-	doutc(cl, "%p %llx.%llx dentry %p '%pd' %s flags %d mode 0%o\n",
-	      dir, ceph_vinop(dir), dentry, dentry,
+	ceph_blog_enter(fsc, &__ji);
+
+	boutc(cl, "%p %llx.%llx dentry %p '%s' %s flags %d mode 0%o\n",
+	      dir, ceph_vinop(dir), dentry, dentry->d_name.name,
 	      d_unhashed(dentry) ? "unhashed" : "hashed", flags, mode);
 
-	if (dentry->d_name.len > NAME_MAX)
+	if (dentry->d_name.len > NAME_MAX) {
+		ceph_blog_exit(&__ji);
 		return -ENAMETOOLONG;
+	}
 
 	err = ceph_wait_on_conflict_unlink(dentry);
-	if (err)
+	if (err) {
+		ceph_blog_exit(&__ji);
 		return err;
+	}
 	/*
 	 * Do not truncate the file, since atomic_open is called before the
 	 * permission check. The caller will do the truncation afterward.
@@ -846,6 +866,7 @@ int ceph_atomic_open(struct inode *dir, struct dentry *dentry,
 
 		/* For none EACCES cases will let the MDS do the mds auth check */
 		if (err == -EACCES) {
+			ceph_blog_exit(&__ji);
 			return err;
 		} else if (err < 0) {
 			try_async = false;
@@ -855,8 +876,10 @@ int ceph_atomic_open(struct inode *dir, struct dentry *dentry,
 
 retry:
 	if (flags & O_CREAT) {
-		if (ceph_quota_is_max_files_exceeded(dir))
+		if (ceph_quota_is_max_files_exceeded(dir)) {
+			ceph_blog_exit(&__ji);
 			return -EDQUOT;
+		}
 
 		new_inode = ceph_new_inode(dir, dentry, &mode, &as_ctx);
 		if (IS_ERR(new_inode)) {
@@ -869,6 +892,7 @@ retry:
 			try_async = false;
 	} else if (!d_in_lookup(dentry)) {
 		/* If it's not being looked up, it's negative */
+		ceph_blog_exit(&__ji);
 		return -ENOENT;
 	}
 
@@ -979,7 +1003,7 @@ retry:
 		goto out_req;
 	if (dn || d_really_is_negative(dentry) || d_is_symlink(dentry)) {
 		/* make vfs retry on splice, ENOENT, or symlink */
-		doutc(cl, "finish_no_open on dn %p\n", dn);
+		boutc(cl, "finish_no_open on dn %p\n", dn);
 		err = finish_no_open(file, dn);
 	} else {
 		if (IS_ENCRYPTED(dir) &&
@@ -990,7 +1014,7 @@ retry:
 			goto out_req;
 		}
 
-		doutc(cl, "finish_open on dn %p\n", dn);
+		boutc(cl, "finish_open on dn %p\n", dn);
 		if (req->r_op == CEPH_MDS_OP_CREATE && req->r_reply_info.has_create_ino) {
 			struct inode *newino = d_inode(dentry);
 
@@ -1009,18 +1033,23 @@ out_req:
 	iput(new_inode);
 out_ctx:
 	ceph_release_acl_sec_ctx(&as_ctx);
-	doutc(cl, "result=%d\n", err);
+	boutc(cl, "result=%d\n", err);
+	ceph_blog_exit(&__ji);
 	return err;
 }
 
 int ceph_release(struct inode *inode, struct file *file)
 {
+	struct ceph_fs_client *fsc = ceph_inode_to_fs_client(inode);
 	struct ceph_client *cl = ceph_inode_to_client(inode);
 	struct ceph_inode_info *ci = ceph_inode(inode);
+	struct ceph_journal_info __ji;
+
+	ceph_blog_enter(fsc, &__ji);
 
 	if (S_ISDIR(inode->i_mode)) {
 		struct ceph_dir_file_info *dfi = file->private_data;
-		doutc(cl, "%p %llx.%llx dir file %p\n", inode,
+		boutc(cl, "%p %llx.%llx dir file %p\n", inode,
 		      ceph_vinop(inode), file);
 		WARN_ON(!list_empty(&dfi->file_info.rw_contexts));
 
@@ -1033,7 +1062,7 @@ int ceph_release(struct inode *inode, struct file *file)
 		kmem_cache_free(ceph_dir_file_cachep, dfi);
 	} else {
 		struct ceph_file_info *fi = file->private_data;
-		doutc(cl, "%p %llx.%llx regular file %p\n", inode,
+		boutc(cl, "%p %llx.%llx regular file %p\n", inode,
 		      ceph_vinop(inode), file);
 		WARN_ON(!list_empty(&fi->rw_contexts));
 
@@ -1045,6 +1074,7 @@ int ceph_release(struct inode *inode, struct file *file)
 
 	/* wake up anyone waiting for caps on this inode */
 	wake_up_all(&ci->i_cap_wq);
+	ceph_blog_exit(&__ji);
 	return 0;
 }
 
@@ -1079,7 +1109,7 @@ ssize_t __ceph_sync_read(struct inode *inode, loff_t *ki_pos,
 	bool sparse = IS_ENCRYPTED(inode) || ceph_test_mount_opt(fsc, SPARSEREAD);
 	u64 objver = 0;
 
-	doutc(cl, "on inode %p %llx.%llx %llx~%llx\n", inode,
+	boutc(cl, "on inode %p %llx.%llx %llx~%llx\n", inode,
 	      ceph_vinop(inode), *ki_pos, len);
 
 	if (ceph_inode_is_shutdown(inode))
@@ -1115,7 +1145,7 @@ ssize_t __ceph_sync_read(struct inode *inode, loff_t *ki_pos,
 		/* determine new offset/length if encrypted */
 		ceph_fscrypt_adjust_off_and_len(inode, &read_off, &read_len);
 
-		doutc(cl, "orig %llu~%llu reading %llu~%llu", off, len,
+		boutc(cl, "orig %llu~%llu reading %llu~%llu", off, len,
 		      read_off, read_len);
 
 		req = ceph_osdc_new_request(osdc, &ci->i_layout,
@@ -1179,7 +1209,7 @@ ssize_t __ceph_sync_read(struct inode *inode, loff_t *ki_pos,
 			objver = req->r_version;
 
 		i_size = i_size_read(inode);
-		doutc(cl, "%llu~%llu got %zd i_size %llu%s\n", off, len,
+		boutc(cl, "%llu~%llu got %zd i_size %llu%s\n", off, len,
 		      ret, i_size, (more ? " MORE" : ""));
 
 		/* Fix it to go to end of extent map */
@@ -1226,7 +1256,7 @@ ssize_t __ceph_sync_read(struct inode *inode, loff_t *ki_pos,
 			int zlen = min(len - ret, i_size - off - ret);
 			int zoff = page_off + ret;
 
-			doutc(cl, "zero gap %llu~%llu\n", off + ret,
+			boutc(cl, "zero gap %llu~%llu\n", off + ret,
 			      off + ret + zlen);
 			ceph_zero_page_vector_range(zoff, zlen, pages);
 			ret += zlen;
@@ -1272,7 +1302,7 @@ ssize_t __ceph_sync_read(struct inode *inode, loff_t *ki_pos,
 		if (last_objver)
 			*last_objver = objver;
 	}
-	doutc(cl, "result %zd retry_op %d\n", ret, *retry_op);
+	boutc(cl, "result %zd retry_op %d\n", ret, *retry_op);
 	return ret;
 }
 
@@ -1283,7 +1313,7 @@ static ssize_t ceph_sync_read(struct kiocb *iocb, struct iov_iter *to,
 	struct inode *inode = file_inode(file);
 	struct ceph_client *cl = ceph_inode_to_client(inode);
 
-	doutc(cl, "on file %p %llx~%zx %s\n", file, iocb->ki_pos,
+	boutc(cl, "on file %p %llx~%zx %s\n", file, iocb->ki_pos,
 	      iov_iter_count(to),
 	      (file->f_flags & O_DIRECT) ? "O_DIRECT" : "");
 
@@ -1327,7 +1357,7 @@ static void ceph_aio_complete(struct inode *inode,
 	if (!ret)
 		ret = aio_req->total_len;
 
-	doutc(cl, "%p %llx.%llx rc %d\n", inode, ceph_vinop(inode), ret);
+	boutc(cl, "%p %llx.%llx rc %d\n", inode, ceph_vinop(inode), ret);
 
 	if (ret >= 0 && aio_req->write) {
 		int dirty;
@@ -1371,7 +1401,7 @@ static void ceph_aio_complete_req(struct ceph_osd_request *req)
 	BUG_ON(osd_data->type != CEPH_OSD_DATA_TYPE_BVECS);
 	BUG_ON(!osd_data->num_bvecs);
 
-	doutc(cl, "req %p inode %p %llx.%llx, rc %d bytes %u\n", req,
+	boutc(cl, "req %p inode %p %llx.%llx, rc %d bytes %u\n", req,
 	      inode, ceph_vinop(inode), rc, len);
 
 	if (rc == -EOLDSNAPC) {
@@ -1543,7 +1573,7 @@ ceph_direct_read_write(struct kiocb *iocb, struct iov_iter *iter,
 	if (write && ceph_in_snap(file_inode(file)))
 		return -EROFS;
 
-	doutc(cl, "sync_direct_%s on file %p %lld~%u snapc %p seq %lld\n",
+	boutc(cl, "sync_direct_%s on file %p %lld~%u snapc %p seq %lld\n",
 	      (write ? "write" : "read"), file, pos, (unsigned)count,
 	      snapc, snapc ? snapc->seq : 0);
 
@@ -1556,7 +1586,7 @@ ceph_direct_read_write(struct kiocb *iocb, struct iov_iter *iter,
 					pos >> PAGE_SHIFT,
 					(pos + count - 1) >> PAGE_SHIFT);
 		if (ret2 < 0)
-			doutc(cl, "invalidate_inode_pages2_range returned %d\n",
+			boutc(cl, "invalidate_inode_pages2_range returned %d\n",
 			      ret2);
 
 		flags = /* CEPH_OSD_FLAG_ORDERSNAP | */ CEPH_OSD_FLAG_WRITE;
@@ -1779,7 +1809,7 @@ ceph_sync_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos,
 	if (ceph_in_snap(file_inode(file)))
 		return -EROFS;
 
-	doutc(cl, "on file %p %lld~%u snapc %p seq %lld\n", file, pos,
+	boutc(cl, "on file %p %lld~%u snapc %p seq %lld\n", file, pos,
 	      (unsigned)count, snapc, snapc->seq);
 
 	ret = filemap_write_and_wait_range(inode->i_mapping,
@@ -1824,7 +1854,7 @@ ceph_sync_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos,
 		last = (pos + len) != (write_pos + write_len);
 		rmw = first || last;
 
-		doutc(cl, "ino %llx %lld~%llu adjusted %lld~%llu -- %srmw\n",
+		boutc(cl, "ino %llx %lld~%llu adjusted %lld~%llu -- %srmw\n",
 		      ceph_ino(inode), pos, len, write_pos, write_len,
 		      rmw ? "" : "no ");
 
@@ -2040,7 +2070,7 @@ ceph_sync_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos,
 			left -= ret;
 		}
 		if (ret < 0) {
-			doutc(cl, "write failed with %d\n", ret);
+			boutc(cl, "write failed with %d\n", ret);
 			ceph_release_page_vector(pages, num_pages);
 			break;
 		}
@@ -2049,7 +2079,7 @@ ceph_sync_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos,
 			ret = ceph_fscrypt_encrypt_pages(inode, pages,
 							 write_pos, write_len);
 			if (ret < 0) {
-				doutc(cl, "encryption failed with %d\n", ret);
+				boutc(cl, "encryption failed with %d\n", ret);
 				ceph_release_page_vector(pages, num_pages);
 				break;
 			}
@@ -2068,7 +2098,7 @@ ceph_sync_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos,
 			break;
 		}
 
-		doutc(cl, "write op %lld~%llu\n", write_pos, write_len);
+		boutc(cl, "write op %lld~%llu\n", write_pos, write_len);
 		osd_req_op_extent_osd_data_pages(req, rmw ? 1 : 0, pages, write_len,
 						 offset_in_page(write_pos), false,
 						 true);
@@ -2104,7 +2134,7 @@ ceph_sync_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos,
 						 write_len);
 		ceph_osdc_put_request(req);
 		if (ret != 0) {
-			doutc(cl, "osd write returned %d\n", ret);
+			boutc(cl, "osd write returned %d\n", ret);
 			/* Version changed! Must re-do the rmw cycle */
 			if ((assert_ver && (ret == -ERANGE || ret == -EOVERFLOW)) ||
 			    (!assert_ver && ret == -EEXIST)) {
@@ -2134,13 +2164,13 @@ ceph_sync_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos,
 				pos >> PAGE_SHIFT,
 				(pos + len - 1) >> PAGE_SHIFT);
 		if (ret < 0) {
-			doutc(cl, "invalidate_inode_pages2_range returned %d\n",
+			boutc(cl, "invalidate_inode_pages2_range returned %d\n",
 			      ret);
 			ret = 0;
 		}
 		pos += len;
 		written += len;
-		doutc(cl, "written %d\n", written);
+		boutc(cl, "written %d\n", written);
 		if (pos > i_size_read(inode)) {
 			check_caps = ceph_inode_set_size(inode, pos);
 			if (check_caps)
@@ -2154,7 +2184,7 @@ ceph_sync_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos,
 		ret = written;
 		iocb->ki_pos = pos;
 	}
-	doutc(cl, "returning %d\n", ret);
+	boutc(cl, "returning %d\n", ret);
 	return ret;
 }
 
@@ -2173,22 +2203,30 @@ static ssize_t ceph_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	struct inode *inode = file_inode(filp);
 	struct ceph_inode_info *ci = ceph_inode(inode);
 	bool direct_lock = iocb->ki_flags & IOCB_DIRECT;
+	struct ceph_fs_client *fsc = ceph_inode_to_fs_client(inode);
 	struct ceph_client *cl = ceph_inode_to_client(inode);
 	ssize_t ret;
 	int want = 0, got = 0;
 	int retry_op = 0, read = 0;
+	struct ceph_journal_info __ji;
+
+	ceph_blog_enter(fsc, &__ji);
 
 again:
-	doutc(cl, "%llu~%u trying to get caps on %p %llx.%llx\n",
+	boutc(cl, "%llu~%u trying to get caps on %p %llx.%llx\n",
 	      iocb->ki_pos, (unsigned)len, inode, ceph_vinop(inode));
 
-	if (ceph_inode_is_shutdown(inode))
+	if (ceph_inode_is_shutdown(inode)) {
+		ceph_blog_exit(&__ji);
 		return -ESTALE;
+	}
 
 	ret = direct_lock ? ceph_start_io_direct(inode) :
 			    ceph_start_io_read(inode);
-	if (ret)
+	if (ret) {
+		ceph_blog_exit(&__ji);
 		return ret;
+	}
 
 	if (!(fi->flags & CEPH_F_SYNC) && !direct_lock)
 		want |= CEPH_CAP_FILE_CACHE;
@@ -2201,6 +2239,7 @@ again:
 			ceph_end_io_direct(inode);
 		else
 			ceph_end_io_read(inode);
+		ceph_blog_exit(&__ji);
 		return ret;
 	}
 
@@ -2208,7 +2247,7 @@ again:
 	    (iocb->ki_flags & IOCB_DIRECT) ||
 	    (fi->flags & CEPH_F_SYNC)) {
 
-		doutc(cl, "sync %p %llx.%llx %llu~%u got cap refs on %s\n",
+		boutc(cl, "sync %p %llx.%llx %llu~%u got cap refs on %s\n",
 		      inode, ceph_vinop(inode), iocb->ki_pos, (unsigned)len,
 		      ceph_cap_string(got));
 
@@ -2228,7 +2267,7 @@ again:
 		}
 	} else {
 		CEPH_DEFINE_RW_CONTEXT(rw_ctx, got);
-		doutc(cl, "async %p %llx.%llx %llu~%u got cap refs on %s\n",
+		boutc(cl, "async %p %llx.%llx %llu~%u got cap refs on %s\n",
 		      inode, ceph_vinop(inode), iocb->ki_pos, (unsigned)len,
 		      ceph_cap_string(got));
 		ceph_add_rw_context(fi, &rw_ctx);
@@ -2236,7 +2275,7 @@ again:
 		ceph_del_rw_context(fi, &rw_ctx);
 	}
 
-	doutc(cl, "%p %llx.%llx dropping cap refs on %s = %d\n",
+	boutc(cl, "%p %llx.%llx dropping cap refs on %s = %d\n",
 	      inode, ceph_vinop(inode), ceph_cap_string(got), (int)ret);
 	ceph_put_cap_refs(ci, got);
 
@@ -2252,8 +2291,10 @@ again:
 		int mask = CEPH_STAT_CAP_SIZE;
 		if (retry_op == READ_INLINE) {
 			folio = folio_alloc(GFP_KERNEL, 0);
-			if (!folio)
+			if (!folio) {
+				ceph_blog_exit(&__ji);
 				return -ENOMEM;
+			}
 
 			mask = CEPH_STAT_CAP_INLINE_DATA;
 		}
@@ -2266,6 +2307,7 @@ again:
 				BUG_ON(retry_op != READ_INLINE);
 				goto again;
 			}
+			ceph_blog_exit(&__ji);
 			return statret;
 		}
 
@@ -2293,13 +2335,14 @@ again:
 				read += ret;
 			}
 			folio_put(folio);
+			ceph_blog_exit(&__ji);
 			return read;
 		}
 
 		/* hit EOF or hole? */
 		if (retry_op == CHECK_EOF && iocb->ki_pos < i_size &&
 		    ret < len) {
-			doutc(cl, "may hit hole, ppos %lld < size %lld, reading more\n",
+			boutc(cl, "may hit hole, ppos %lld < size %lld, reading more\n",
 			      iocb->ki_pos, i_size);
 
 			read += ret;
@@ -2312,6 +2355,7 @@ again:
 	if (ret >= 0)
 		ret += read;
 
+	ceph_blog_exit(&__ji);
 	return ret;
 }
 
@@ -2326,24 +2370,35 @@ static ssize_t ceph_splice_read(struct file *in, loff_t *ppos,
 {
 	struct ceph_file_info *fi = in->private_data;
 	struct inode *inode = file_inode(in);
+	struct ceph_fs_client *fsc = ceph_inode_to_fs_client(inode);
+	struct ceph_client *cl = fsc->client;
 	struct ceph_inode_info *ci = ceph_inode(inode);
 	ssize_t ret;
 	int want = 0, got = 0;
 	CEPH_DEFINE_RW_CONTEXT(rw_ctx, 0);
+	struct ceph_journal_info __ji;
 
-	dout("splice_read %p %llx.%llx %llu~%zu trying to get caps on %p\n",
+	ceph_blog_enter(fsc, &__ji);
+
+	boutc(cl, "splice_read %p %llx.%llx %llu~%zu trying to get caps on %p\n",
 	     inode, ceph_vinop(inode), *ppos, len, inode);
 
-	if (ceph_inode_is_shutdown(inode))
+	if (ceph_inode_is_shutdown(inode)) {
+		ceph_blog_exit(&__ji);
 		return -ESTALE;
+	}
 
 	if (ceph_has_inline_data(ci) ||
-	    (fi->flags & CEPH_F_SYNC))
+	    (fi->flags & CEPH_F_SYNC)) {
+		ceph_blog_exit(&__ji);
 		return copy_splice_read(in, ppos, pipe, len, flags);
+	}
 
 	ret = ceph_start_io_read(inode);
-	if (ret)
+	if (ret) {
+		ceph_blog_exit(&__ji);
 		return ret;
+	}
 
 	want = CEPH_CAP_FILE_CACHE;
 	if (fi->fmode & CEPH_FILE_MODE_LAZY)
@@ -2354,16 +2409,17 @@ static ssize_t ceph_splice_read(struct file *in, loff_t *ppos,
 		goto out_end;
 
 	if ((got & (CEPH_CAP_FILE_CACHE | CEPH_CAP_FILE_LAZYIO)) == 0) {
-		dout("splice_read/sync %p %llx.%llx %llu~%zu got cap refs on %s\n",
+		boutc(cl, "splice_read/sync %p %llx.%llx %llu~%zu got cap refs on %s\n",
 		     inode, ceph_vinop(inode), *ppos, len,
 		     ceph_cap_string(got));
 
 		ceph_put_cap_refs(ci, got);
 		ceph_end_io_read(inode);
+		ceph_blog_exit(&__ji);
 		return copy_splice_read(in, ppos, pipe, len, flags);
 	}
 
-	dout("splice_read %p %llx.%llx %llu~%zu got cap refs on %s\n",
+	boutc(cl, "splice_read %p %llx.%llx %llu~%zu got cap refs on %s\n",
 	     inode, ceph_vinop(inode), *ppos, len, ceph_cap_string(got));
 
 	rw_ctx.caps = got;
@@ -2371,12 +2427,13 @@ static ssize_t ceph_splice_read(struct file *in, loff_t *ppos,
 	ret = filemap_splice_read(in, ppos, pipe, len, flags);
 	ceph_del_rw_context(fi, &rw_ctx);
 
-	dout("splice_read %p %llx.%llx dropping cap refs on %s = %zd\n",
+	boutc(cl, "splice_read %p %llx.%llx dropping cap refs on %s = %zd\n",
 	     inode, ceph_vinop(inode), ceph_cap_string(got), ret);
 
 	ceph_put_cap_refs(ci, got);
 out_end:
 	ceph_end_io_read(inode);
+	ceph_blog_exit(&__ji);
 	return ret;
 }
 
@@ -2408,16 +2465,25 @@ static ssize_t ceph_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	u64 pool_flags;
 	loff_t pos;
 	loff_t limit = max(i_size_read(inode), fsc->max_file_size);
+	struct ceph_journal_info __ji;
 
-	if (ceph_inode_is_shutdown(inode))
+	ceph_blog_enter(fsc, &__ji);
+
+	if (ceph_inode_is_shutdown(inode)) {
+		ceph_blog_exit(&__ji);
 		return -ESTALE;
+	}
 
-	if (ceph_in_snap(inode))
+	if (ceph_in_snap(inode)) {
+		ceph_blog_exit(&__ji);
 		return -EROFS;
+	}
 
 	prealloc_cf = ceph_alloc_cap_flush();
-	if (!prealloc_cf)
+	if (!prealloc_cf) {
+		ceph_blog_exit(&__ji);
 		return -ENOMEM;
+	}
 
 	if ((iocb->ki_flags & (IOCB_DIRECT | IOCB_APPEND)) == IOCB_DIRECT)
 		direct_lock = true;
@@ -2466,7 +2532,7 @@ retry_snap:
 	if (err)
 		goto out;
 
-	doutc(cl, "%p %llx.%llx %llu~%zd getting caps. i_size %llu\n",
+	boutc(cl, "%p %llx.%llx %llu~%zd getting caps. i_size %llu\n",
 	      inode, ceph_vinop(inode), pos, count,
 	      i_size_read(inode));
 	if (!(fi->flags & CEPH_F_SYNC) && !direct_lock)
@@ -2490,7 +2556,7 @@ retry_snap:
 		loff_t cur_eof = i_size_read(inode);
 
 		if (cur_eof != pos) {
-			doutc(cl,
+			boutc(cl,
 			      "%p %llx.%llx O_APPEND: pos adjusted %lld -> %lld\n",
 			      inode, ceph_vinop(inode), pos, cur_eof);
 			iocb->ki_pos = cur_eof;
@@ -2532,7 +2598,7 @@ retry_snap:
 
 	inode_inc_iversion_raw(inode);
 
-	doutc(cl, "%p %llx.%llx %llu~%zd got cap refs on %s\n",
+	boutc(cl, "%p %llx.%llx %llu~%zd got cap refs on %s\n",
 	      inode, ceph_vinop(inode), pos, count, ceph_cap_string(got));
 
 	if ((got & (CEPH_CAP_FILE_BUFFER|CEPH_CAP_FILE_LAZYIO)) == 0 ||
@@ -2593,13 +2659,13 @@ retry_snap:
 			ceph_check_caps(ci, CHECK_CAPS_FLUSH);
 	}
 
-	doutc(cl, "%p %llx.%llx %llu~%u  dropping cap refs on %s\n",
+	boutc(cl, "%p %llx.%llx %llu~%u  dropping cap refs on %s\n",
 	      inode, ceph_vinop(inode), pos, (unsigned)count,
 	      ceph_cap_string(got));
 	ceph_put_cap_refs(ci, got);
 
 	if (written == -EOLDSNAPC) {
-		doutc(cl, "%p %llx.%llx %llu~%u" "got EOLDSNAPC, retrying\n",
+		boutc(cl, "%p %llx.%llx %llu~%u" "got EOLDSNAPC, retrying\n",
 		      inode, ceph_vinop(inode), pos, (unsigned)count);
 		goto retry_snap;
 	}
@@ -2622,6 +2688,7 @@ out:
 		ceph_end_io_write(inode);
 out_unlocked:
 	ceph_free_cap_flush(prealloc_cf);
+	ceph_blog_exit(&__ji);
 	return written ? written : err;
 }
 
@@ -2630,14 +2697,22 @@ out_unlocked:
  */
 static loff_t ceph_llseek(struct file *file, loff_t offset, int whence)
 {
+	struct inode *inode = file_inode(file);
+	struct ceph_fs_client *fsc = ceph_inode_to_fs_client(inode);
+	struct ceph_journal_info __ji;
+
+	ceph_blog_enter(fsc, &__ji);
+
 	if (whence == SEEK_END || whence == SEEK_DATA || whence == SEEK_HOLE) {
-		struct inode *inode = file_inode(file);
 		int ret;
 
 		ret = ceph_do_getattr(inode, CEPH_STAT_CAP_SIZE, false);
-		if (ret < 0)
+		if (ret < 0) {
+			ceph_blog_exit(&__ji);
 			return ret;
+		}
 	}
+	ceph_blog_exit(&__ji);
 	return generic_file_llseek(file, offset, whence);
 }
 
@@ -2794,22 +2869,34 @@ static long ceph_fallocate(struct file *file, int mode,
 	int ret = 0;
 	loff_t endoff = 0;
 	loff_t size;
+	struct ceph_fs_client *fsc = ceph_inode_to_fs_client(inode);
+	struct ceph_journal_info __ji;
 
-	doutc(cl, "%p %llx.%llx mode %x, offset %llu length %llu\n",
+	ceph_blog_enter(fsc, &__ji);
+
+	boutc(cl, "%p %llx.%llx mode %x, offset %llu length %llu\n",
 	      inode, ceph_vinop(inode), mode, offset, length);
 
-	if (mode != (FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE))
+	if (mode != (FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE)) {
+		ceph_blog_exit(&__ji);
 		return -EOPNOTSUPP;
+	}
 
-	if (!S_ISREG(inode->i_mode))
+	if (!S_ISREG(inode->i_mode)) {
+		ceph_blog_exit(&__ji);
 		return -EOPNOTSUPP;
+	}
 
-	if (IS_ENCRYPTED(inode))
+	if (IS_ENCRYPTED(inode)) {
+		ceph_blog_exit(&__ji);
 		return -EOPNOTSUPP;
+	}
 
 	prealloc_cf = ceph_alloc_cap_flush();
-	if (!prealloc_cf)
+	if (!prealloc_cf) {
+		ceph_blog_exit(&__ji);
 		return -ENOMEM;
+	}
 
 	inode_lock(inode);
 
@@ -2859,6 +2946,7 @@ put_caps:
 unlock:
 	inode_unlock(inode);
 	ceph_free_cap_flush(prealloc_cf);
+	ceph_blog_exit(&__ji);
 	return ret;
 }
 
@@ -2936,7 +3024,7 @@ static int is_file_size_ok(struct inode *src_inode, struct inode *dst_inode,
 	 * inode.
 	 */
 	if (src_off + len > size) {
-		doutc(cl, "Copy beyond EOF (%llu + %zu > %llu)\n", src_off,
+		boutc(cl, "Copy beyond EOF (%llu + %zu > %llu)\n", src_off,
 		      len, size);
 		return -EOPNOTSUPP;
 	}
@@ -3058,7 +3146,7 @@ static ssize_t ceph_do_objects_copy(struct ceph_inode_info *src_ci, u64 *src_off
 				pr_notice_client(cl,
 					"OSDs don't support copy-from2; disabling copy offload\n");
 			}
-			doutc(cl, "returned %d\n", ret);
+			boutc(cl, "returned %d\n", ret);
 			if (bytes <= 0)
 				bytes = ret;
 			goto out;
@@ -3097,8 +3185,16 @@ static ssize_t __ceph_copy_file_range(struct file *src_file, loff_t src_off,
 
 		if (ceph_fsid_compare(&src_fsc->client->fsid,
 				      &dst_fsc->client->fsid)) {
-			dout("Copying files across clusters: src: %pU dst: %pU\n",
-			     &src_fsc->client->fsid, &dst_fsc->client->fsid);
+			{
+				char src_uuid[40], dst_uuid[40];
+
+				snprintf(src_uuid, sizeof(src_uuid), "%pU",
+					 &src_fsc->client->fsid);
+				snprintf(dst_uuid, sizeof(dst_uuid), "%pU",
+					 &dst_fsc->client->fsid);
+				boutc(cl, "Copying files across clusters: src: %s dst: %s\n",
+				     src_uuid, dst_uuid);
+			}
 			return -EXDEV;
 		}
 	}
@@ -3128,7 +3224,7 @@ static ssize_t __ceph_copy_file_range(struct file *src_file, loff_t src_off,
 	    (src_ci->i_layout.stripe_count != 1) ||
 	    (dst_ci->i_layout.stripe_count != 1) ||
 	    (src_ci->i_layout.object_size != dst_ci->i_layout.object_size)) {
-		doutc(cl, "Invalid src/dst files layout\n");
+		boutc(cl, "Invalid src/dst files layout\n");
 		return -EOPNOTSUPP;
 	}
 
@@ -3146,12 +3242,12 @@ static ssize_t __ceph_copy_file_range(struct file *src_file, loff_t src_off,
 	/* Start by sync'ing the source and destination files */
 	ret = file_write_and_wait_range(src_file, src_off, (src_off + len));
 	if (ret < 0) {
-		doutc(cl, "failed to write src file (%zd)\n", ret);
+		boutc(cl, "failed to write src file (%zd)\n", ret);
 		goto out;
 	}
 	ret = file_write_and_wait_range(dst_file, dst_off, (dst_off + len));
 	if (ret < 0) {
-		doutc(cl, "failed to write dst file (%zd)\n", ret);
+		boutc(cl, "failed to write dst file (%zd)\n", ret);
 		goto out;
 	}
 
@@ -3163,7 +3259,7 @@ static ssize_t __ceph_copy_file_range(struct file *src_file, loff_t src_off,
 	err = get_rd_wr_caps(src_file, &src_got,
 			     dst_file, (dst_off + len), &dst_got);
 	if (err < 0) {
-		doutc(cl, "get_rd_wr_caps returned %d\n", err);
+		boutc(cl, "get_rd_wr_caps returned %d\n", err);
 		ret = -EOPNOTSUPP;
 		goto out;
 	}
@@ -3178,7 +3274,7 @@ static ssize_t __ceph_copy_file_range(struct file *src_file, loff_t src_off,
 					    dst_off >> PAGE_SHIFT,
 					    (dst_off + len) >> PAGE_SHIFT);
 	if (ret < 0) {
-		doutc(cl, "Failed to invalidate inode pages (%zd)\n",
+		boutc(cl, "Failed to invalidate inode pages (%zd)\n",
 			    ret);
 		ret = 0; /* XXX */
 	}
@@ -3200,7 +3296,7 @@ static ssize_t __ceph_copy_file_range(struct file *src_file, loff_t src_off,
 	 * starting at the src_off
 	 */
 	if (src_objoff) {
-		doutc(cl, "Initial partial copy of %u bytes\n", src_objlen);
+		boutc(cl, "Initial partial copy of %u bytes\n", src_objlen);
 
 		/*
 		 * we need to temporarily drop all caps as we'll be calling
@@ -3211,7 +3307,7 @@ static ssize_t __ceph_copy_file_range(struct file *src_file, loff_t src_off,
 					src_objlen);
 		/* Abort on short copies or on error */
 		if (ret < (long)src_objlen) {
-			doutc(cl, "Failed partial copy (%zd)\n", ret);
+			boutc(cl, "Failed partial copy (%zd)\n", ret);
 			goto out;
 		}
 		len -= ret;
@@ -3233,7 +3329,7 @@ static ssize_t __ceph_copy_file_range(struct file *src_file, loff_t src_off,
 			ret = bytes;
 		goto out_caps;
 	}
-	doutc(cl, "Copied %zu bytes out of %zu\n", bytes, len);
+	boutc(cl, "Copied %zu bytes out of %zu\n", bytes, len);
 	len -= bytes;
 	ret += bytes;
 
@@ -3261,13 +3357,13 @@ out_caps:
 	 * there were errors in remote object copies (len >= object_size).
 	 */
 	if (len && (len < src_ci->i_layout.object_size)) {
-		doutc(cl, "Final partial copy of %zu bytes\n", len);
+		boutc(cl, "Final partial copy of %zu bytes\n", len);
 		bytes = splice_file_range(src_file, &src_off, dst_file,
 					  &dst_off, len);
 		if (bytes > 0)
 			ret += bytes;
 		else
-			doutc(cl, "Failed partial copy (%zd)\n", bytes);
+			boutc(cl, "Failed partial copy (%zd)\n", bytes);
 	}
 
 out:
@@ -3280,7 +3376,11 @@ static ssize_t ceph_copy_file_range(struct file *src_file, loff_t src_off,
 				    struct file *dst_file, loff_t dst_off,
 				    size_t len, unsigned int flags)
 {
+	struct ceph_fs_client *fsc = ceph_inode_to_fs_client(file_inode(src_file));
 	ssize_t ret;
+	struct ceph_journal_info __ji;
+
+	ceph_blog_enter(fsc, &__ji);
 
 	ret = __ceph_copy_file_range(src_file, src_off, dst_file, dst_off,
 				     len, flags);
@@ -3288,6 +3388,7 @@ static ssize_t ceph_copy_file_range(struct file *src_file, loff_t src_off,
 	if (ret == -EOPNOTSUPP || ret == -EXDEV)
 		ret = splice_copy_file_range(src_file, src_off, dst_file,
 					     dst_off, len);
+	ceph_blog_exit(&__ji);
 	return ret;
 }
 
