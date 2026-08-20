@@ -3,7 +3,10 @@
 #define _FS_CEPH_SUPER_H
 
 #include <linux/ceph/ceph_debug.h>
+#include <linux/ceph/ceph_blog.h>
 #include <linux/ceph/osd_client.h>
+
+#include "blog.h"
 
 #include <linux/unaligned.h>
 #include <linux/backing-dev.h>
@@ -173,6 +176,9 @@ struct ceph_fs_client {
 	spinlock_t async_unlink_conflict_lock;
 
 #ifdef CONFIG_DEBUG_FS
+	bool blog_enabled;
+	struct mutex blog_mutex;
+	struct blog_module_context __rcu *blog_ctx;
 	struct dentry *debugfs_dentry_lru, *debugfs_caps;
 	struct dentry *debugfs_congestion_kb;
 	struct dentry *debugfs_bdi;
@@ -181,6 +187,7 @@ struct ceph_fs_client {
 	struct dentry *debugfs_mds_sessions;
 	struct dentry *debugfs_metrics_dir;
 	struct dentry *debugfs_reset_dir;
+	struct dentry *debugfs_blog;
 	struct dentry *debugfs_subvolume_metrics;
 #endif
 
