@@ -12,6 +12,7 @@
 #include <crypto/utils.h>
 #include <linux/bvec.h>
 #include <linux/crc32c.h>
+#include <linux/fips.h>
 #include <linux/net.h>
 #include <linux/scatterlist.h>
 #include <linux/socket.h>
@@ -751,6 +752,9 @@ static int setup_crypto(struct ceph_connection *con,
 		WARN_ON(con_secret_len);
 		return 0;  /* auth_none */
 	}
+
+	if (fips_enabled && session_key_len < 112 / 8)
+		return -EKEYREJECTED;
 
 	hmac_sha256_preparekey(&con->v2.hmac_key, session_key, session_key_len);
 	con->v2.hmac_key_set = true;
