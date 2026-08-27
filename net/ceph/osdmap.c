@@ -2307,25 +2307,39 @@ void ceph_osds_copy(struct ceph_osds *dest, const struct ceph_osds *src)
 bool ceph_pg_is_split(const struct ceph_pg *pgid, u32 old_pg_num,
 		      u32 new_pg_num)
 {
-	int old_bits = calc_bits_of(old_pg_num);
-	int old_mask = (1 << old_bits) - 1;
-	int n;
+	unsigned int old_bits;
+	u32 old_mask, n;
 
-	WARN_ON(pgid->seed >= old_pg_num);
-	if (new_pg_num <= old_pg_num)
+	if (!old_pg_num || new_pg_num <= old_pg_num)
 		return false;
 
-	for (n = 1; ; n++) {
-		int next_bit = n << (old_bits - 1);
-		u32 s = next_bit | pgid->seed;
+	WARN_ON(pgid->seed >= old_pg_num);
 
+	old_bits = calc_bits_of(old_pg_num);
+	if (old_bits >= 32)
+		old_mask = ~0U;
+	else
+		old_mask = (1U << old_bits) - 1;
+
+	for (n = 1; n; n++) {
+		u64 next_bit, s;
+		u32 parent;
+
+		next_bit = (u64)n << (old_bits - 1);
+		if (next_bit >= new_pg_num)
+			break;
+
+		s = next_bit | pgid->seed;
 		if (s < old_pg_num || s == pgid->seed)
 			continue;
 		if (s >= new_pg_num)
 			break;
 
-		s = ceph_stable_mod(s, old_pg_num, old_mask);
-		if (s == pgid->seed)
+		if ((s & old_mask) < old_pg_num)
+			parent = s & old_mask;
+		else
+			parent = s & (old_mask >> 1);
+		if (parent == pgid->seed)
 			return true;
 	}
 
