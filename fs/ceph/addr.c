@@ -485,6 +485,7 @@ static int ceph_init_request(struct netfs_io_request *rreq, struct file *file)
 	struct inode *inode = rreq->inode;
 	struct ceph_fs_client *fsc = ceph_inode_to_fs_client(inode);
 	struct ceph_client *cl = ceph_inode_to_client(inode);
+	struct ceph_file_info *fi = file ? file->private_data : NULL;
 	int got = 0, want = CEPH_CAP_FILE_CACHE;
 	struct ceph_netfs_request_data *priv;
 	int ret = 0;
@@ -492,45 +493,65 @@ static int ceph_init_request(struct netfs_io_request *rreq, struct file *file)
 	/* [DEPRECATED] Use PG_private_2 to mark folio being written to the cache. */
 	__set_bit(NETFS_RREQ_USE_PGPRIV2, &rreq->flags);
 
-	if (rreq->origin != NETFS_READAHEAD)
+	if (rreq->origin != NETFS_READAHEAD && rreq->origin != NETFS_READPAGE)
 		return 0;
 
 	priv = kzalloc_obj(*priv, GFP_NOFS);
 	if (!priv)
 		return -ENOMEM;
 
-	if (file) {
-		struct ceph_rw_context *rw_ctx;
-		struct ceph_file_info *fi = file->private_data;
-
+	if (fi) {
 		priv->file_ra_pages = file->f_ra.ra_pages;
 		priv->file_ra_disabled = file->f_mode & FMODE_RANDOM;
 
-		rw_ctx = ceph_find_rw_context(fi);
-		if (rw_ctx) {
+		/*
+		 * ceph_read_iter() and ceph_filemap_fault() hold caps and
+		 * register an rw context before entering the page cache.
+		 */
+		if (ceph_find_rw_context(fi)) {
 			rreq->netfs_priv = priv;
 			return 0;
 		}
 	}
 
-	/*
-	 * readahead callers do not necessarily hold Fcb caps
-	 * (e.g. fadvise, madvise).
-	 */
-	ret = ceph_try_get_caps(inode, CEPH_CAP_FILE_RD, want, true, &got);
-	if (ret < 0) {
-		doutc(cl, "%llx.%llx, error getting cap\n", ceph_vinop(inode));
-		goto out;
-	}
+	if (rreq->origin == NETFS_READAHEAD) {
+		/*
+		 * readahead callers do not necessarily hold Fcb caps
+		 * (e.g. fadvise, madvise).  Readahead is optional, so do
+		 * not block; without caps the VM falls back to read_folio.
+		 */
+		ret = ceph_try_get_caps(inode, CEPH_CAP_FILE_RD, want, true,
+					&got);
+		if (ret < 0) {
+			doutc(cl, "%llx.%llx, error getting cap\n",
+			      ceph_vinop(inode));
+			goto out;
+		}
 
-	if (!(got & want)) {
-		doutc(cl, "%llx.%llx, no cache cap\n", ceph_vinop(inode));
-		ret = -EACCES;
-		goto out;
-	}
-	if (ret == 0) {
-		ret = -EACCES;
-		goto out;
+		if (!(got & want)) {
+			doutc(cl, "%llx.%llx, no cache cap\n", ceph_vinop(inode));
+			ret = -EACCES;
+			goto out;
+		}
+		if (ret == 0) {
+			ret = -EACCES;
+			goto out;
+		}
+	} else {
+		/*
+		 * Make sure we have caps, just in case read_folio was
+		 * called directly (e.g. by erofs) which may have
+		 * bypassed the usual Ceph cap checks.  This branch
+		 * uses __ceph_get_caps() which blocks until the
+		 * required cap has been granted.
+		 */
+		ret = __ceph_get_caps(inode, fi, CEPH_CAP_FILE_RD, want, -1,
+				      &got);
+		if (ret < 0) {
+			doutc(cl, "%llx.%llx, error getting cap\n",
+			      ceph_vinop(inode));
+			goto out;
+		}
 	}
 
 	priv->caps = got;
