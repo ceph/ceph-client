@@ -4268,6 +4268,7 @@ done:
 bad:
 	pr_err("osdc handle_map corrupt msg\n");
 	ceph_msg_dump(msg);
+	kick_requests(osdc, &need_resend, &need_resend_linger);
 	up_write(&osdc->lock);
 }
 
