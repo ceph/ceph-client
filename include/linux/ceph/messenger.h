@@ -488,6 +488,7 @@ struct ceph_connection {
 
 	unsigned long flags;  /* CEPH_CON_F_* */
 	const char *error_msg;  /* error message, if any */
+	int error_code;  /* errno (negative), if any */
 
 	struct ceph_entity_name peer_name; /* peer name */
 	struct ceph_entity_addr peer_addr; /* peer address */
