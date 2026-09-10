@@ -398,6 +398,7 @@ static void ceph_sock_state_change(struct sock *sk)
 	case TCP_CLOSE_WAIT:
 		dout("%s TCP_CLOSE_WAIT\n", __func__);
 		con_sock_state_closing(con);
+		WRITE_ONCE(con->error_code, -READ_ONCE(sk->sk_err));
 		ceph_con_flag_set(con, CEPH_CON_F_SOCK_CLOSED);
 		queue_con(con);
 		break;
@@ -449,8 +450,10 @@ int ceph_tcp_connect(struct ceph_connection *con)
 	ret = sock_create_kern(read_pnet(&con->msgr->net), ss.ss_family,
 			       SOCK_STREAM, IPPROTO_TCP, &sock);
 	memalloc_noio_restore(noio_flag);
-	if (ret)
+	if (ret) {
+		con->error_code = ret;
 		return ret;
+	}
 	sock->sk->sk_allocation = GFP_NOFS;
 	sock->sk->sk_use_task_frag = false;
 
@@ -468,9 +471,9 @@ int ceph_tcp_connect(struct ceph_connection *con)
 		     ceph_pr_addr(&con->peer_addr),
 		     sock->sk->sk_state);
 	} else if (ret < 0) {
-		pr_err("connect %s error %d\n",
-		       ceph_pr_addr(&con->peer_addr), ret);
 		sock_release(sock);
+		/* reported by con_fault() */
+		con->error_code = ret;
 		return ret;
 	}
 
@@ -504,6 +507,7 @@ int ceph_con_close_socket(struct ceph_connection *con)
 	 * shut the socket down.
 	 */
 	ceph_con_flag_clear(con, CEPH_CON_F_SOCK_CLOSED);
+	con->error_code = 0;
 
 	con_sock_state_closed(con);
 	return rc;
@@ -1657,12 +1661,21 @@ static void ceph_con_workfn(struct work_struct *work)
  */
 static void con_fault(struct ceph_connection *con)
 {
+	int error_code;
+
 	dout("fault %p state %d to peer %s\n",
 	     con, con->state, ceph_pr_addr(&con->peer_addr));
 
-	pr_warn("%s%lld %s %s\n", ENTITY_NAME(con->peer_name),
-		ceph_pr_addr(&con->peer_addr), con->error_msg);
+	error_code = READ_ONCE(con->error_code);
+	if (error_code)
+		pr_warn("%s%lld %s %s (%pe)\n", ENTITY_NAME(con->peer_name),
+			ceph_pr_addr(&con->peer_addr), con->error_msg,
+			ERR_PTR(error_code));
+	else
+		pr_warn("%s%lld %s %s\n", ENTITY_NAME(con->peer_name),
+			ceph_pr_addr(&con->peer_addr), con->error_msg);
 	con->error_msg = NULL;
+	con->error_code = 0;
 
 	WARN_ON(con->state == CEPH_CON_S_STANDBY ||
 		con->state == CEPH_CON_S_CLOSED);
