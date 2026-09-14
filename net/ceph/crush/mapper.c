@@ -406,6 +406,21 @@ static int crush_bucket_choose(const struct crush_bucket *in,
 	}
 }
 
+static const struct crush_bucket *
+crush_get_bucket(const struct crush_map *map, int item)
+{
+	__u32 pos;
+
+	if (item >= 0 || map->max_buckets <= 0)
+		return NULL;
+
+	pos = -1U - (__u32)item;
+	if (pos >= (__u32)map->max_buckets)
+		return NULL;
+
+	return map->buckets[pos];
+}
+
 /*
  * true if device is marked "out" (failed, fully offloaded)
  * of the cluster
@@ -476,6 +491,7 @@ static int crush_choose_firstn(const struct crush_map *map,
 	int i;
 	int item = 0;
 	int itemtype;
+	const struct crush_bucket *item_bucket;
 	int collide, reject;
 	int count = out_size;
 
@@ -520,28 +536,29 @@ static int crush_choose_firstn(const struct crush_map *map,
 						(choose_args ?
 						 &choose_args[-1-in->id] : NULL),
 						outpos);
-				if (item >= map->max_devices) {
+				item_bucket = crush_get_bucket(map, item);
+				if (item >= map->max_devices ||
+				    (item < 0 && !item_bucket)) {
 					dprintk("   bad item %d\n", item);
 					skip_rep = 1;
 					break;
 				}
 
 				/* desired type? */
-				if (item < 0)
-					itemtype = map->buckets[-1-item]->type;
+				if (item_bucket)
+					itemtype = item_bucket->type;
 				else
 					itemtype = 0;
 				dprintk("  item %d type %d\n", item, itemtype);
 
 				/* keep going? */
 				if (itemtype != type) {
-					if (item >= 0 ||
-					    (-1-item) >= map->max_buckets) {
+					if (!item_bucket) {
 						dprintk("   bad item type %d\n", type);
 						skip_rep = 1;
 						break;
 					}
-					in = map->buckets[-1-item];
+					in = item_bucket;
 					retry_bucket = 1;
 					continue;
 				}
@@ -556,7 +573,7 @@ static int crush_choose_firstn(const struct crush_map *map,
 
 				reject = 0;
 				if (!collide && recurse_to_leaf) {
-					if (item < 0) {
+					if (item_bucket) {
 						int sub_r;
 						if (vary_r)
 							sub_r = r >> (vary_r-1);
@@ -565,7 +582,7 @@ static int crush_choose_firstn(const struct crush_map *map,
 						if (crush_choose_firstn(
 							    map,
 							    work,
-							    map->buckets[-1-item],
+							    item_bucket,
 							    weight, weight_max,
 							    x, stable ? 1 : outpos+1, 0,
 							    out2, outpos, count,
@@ -664,6 +681,7 @@ static void crush_choose_indep(const struct crush_map *map,
 	int i;
 	int item = 0;
 	int itemtype;
+	const struct crush_bucket *item_bucket;
 	int collide;
 
 	dprintk("CHOOSE%s INDEP bucket %d x %d outpos %d numrep %d\n", recurse_to_leaf ? "_LEAF" : "",
@@ -730,7 +748,9 @@ static void crush_choose_indep(const struct crush_map *map,
 					(choose_args ?
 					 &choose_args[-1-in->id] : NULL),
 					outpos);
-				if (item >= map->max_devices) {
+				item_bucket = crush_get_bucket(map, item);
+				if (item >= map->max_devices ||
+				    (item < 0 && !item_bucket)) {
 					dprintk("   bad item %d\n", item);
 					out[rep] = CRUSH_ITEM_NONE;
 					if (out2)
@@ -740,16 +760,15 @@ static void crush_choose_indep(const struct crush_map *map,
 				}
 
 				/* desired type? */
-				if (item < 0)
-					itemtype = map->buckets[-1-item]->type;
+				if (item_bucket)
+					itemtype = item_bucket->type;
 				else
 					itemtype = 0;
 				dprintk("  item %d type %d\n", item, itemtype);
 
 				/* keep going? */
 				if (itemtype != type) {
-					if (item >= 0 ||
-					    (-1-item) >= map->max_buckets) {
+					if (!item_bucket) {
 						dprintk("   bad item type %d\n", type);
 						out[rep] = CRUSH_ITEM_NONE;
 						if (out2)
@@ -758,7 +777,7 @@ static void crush_choose_indep(const struct crush_map *map,
 						left--;
 						break;
 					}
-					in = map->buckets[-1-item];
+					in = item_bucket;
 					continue;
 				}
 
@@ -774,11 +793,11 @@ static void crush_choose_indep(const struct crush_map *map,
 					break;
 
 				if (recurse_to_leaf) {
-					if (item < 0) {
+					if (item_bucket) {
 						crush_choose_indep(
 							map,
 							work,
-							map->buckets[-1-item],
+							item_bucket,
 							weight, weight_max,
 							x, 1, numrep, 0,
 							out2, rep,
