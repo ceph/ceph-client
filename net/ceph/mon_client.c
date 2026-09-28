@@ -714,6 +714,24 @@ static int wait_generic_request(struct ceph_mon_generic_request *req)
 	return ret;
 }
 
+static int wait_generic_request_timeout(struct ceph_mon_generic_request *req,
+					unsigned long timeout)
+{
+	long ret;
+
+	dout("%s greq %p tid %llu\n", __func__, req, req->tid);
+	ret = wait_for_completion_interruptible_timeout(&req->completion,
+							timeout);
+	if (ret == 0)
+		ret = -ETIMEDOUT;
+	if (ret < 0) {
+		cancel_generic_request(req);
+		return ret;
+	}
+
+	return req->result; /* completed */
+}
+
 static struct ceph_msg *get_generic_reply(struct ceph_connection *con,
 					 struct ceph_msg_header *hdr,
 					 int *skip)
@@ -1047,7 +1065,14 @@ int do_mon_command_vargs(struct ceph_mon_client *monc, const char *fmt,
 	send_generic_request(monc, req);
 	mutex_unlock(&monc->mutex);
 
-	ret = wait_generic_request(req);
+	/*
+	 * ceph_monc_blocklist_add() runs from messenger dispatch, in a
+	 * kworker, with session->s_mutex held.  No signal arrives there.
+	 * CEPH_MONC_PING_TIMEOUT is how long an unanswered monitor
+	 * keepalive may last before the session is reopened; use that
+	 * so this worker cannot sleep for good.
+	 */
+	ret = wait_generic_request_timeout(req, CEPH_MONC_PING_TIMEOUT);
 out:
 	put_generic_request(req);
 	return ret;
