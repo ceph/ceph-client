@@ -5497,12 +5497,18 @@ static struct ceph_msg *get_reply(struct ceph_connection *con,
 		pr_warn("%s osd%d tid %llu front %d > preallocated %d\n",
 			__func__, osd->o_osd, req->r_tid, front_len,
 			req->r_reply->front_alloc_len);
-		m = ceph_msg_new(CEPH_MSG_OSD_OPREPLY, front_len, GFP_NOFS,
-				 false);
-		if (!m)
+		kvfree(req->r_reply->front.iov_base);
+		req->r_reply->front.iov_base = kvmalloc(front_len, GFP_NOFS);
+		if (!req->r_reply->front.iov_base) {
+			dout("%s can't allocate %d bytes\n",
+			     __func__, front_len);
+			req->r_reply->front_alloc_len = 0;
+			req->r_reply->front.iov_len = 0;
+			*skip = 0;
 			goto out_unlock_session;
-		ceph_msg_put(req->r_reply);
-		req->r_reply = m;
+		}
+		req->r_reply->front_alloc_len = front_len;
+		req->r_reply->front.iov_len = front_len;
 	}
 
 	srlen = sparse_data_requested(req);

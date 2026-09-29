@@ -739,17 +739,15 @@ static struct ceph_msg *get_generic_reply(struct ceph_connection *con,
 	struct ceph_mon_client *monc = con->private;
 	struct ceph_mon_generic_request *req;
 	u64 tid = le64_to_cpu(hdr->tid);
-	int type = le16_to_cpu(hdr->type);
 	int front_len = le32_to_cpu(hdr->front_len);
 	u32 data_len = le32_to_cpu(hdr->data_len);
-	struct ceph_msg *m;
+	struct ceph_msg *m = NULL;
 
 	mutex_lock(&monc->mutex);
 	req = lookup_generic_request(&monc->generic_request_tree, tid);
 	if (!req) {
-		dout("get_generic_reply %lld dne\n", tid);
+		dout("%s %lld dne\n", __func__, tid);
 		*skip = 1;
-		m = NULL;
 		goto out;
 	}
 
@@ -757,7 +755,6 @@ static struct ceph_msg *get_generic_reply(struct ceph_connection *con,
 		pr_warn_ratelimited("mon generic reply tid %llu data %u > preallocated %zu, skipping\n",
 				    tid, data_len, req->reply->data_length);
 		*skip = 1;
-		m = NULL;
 		goto out;
 	}
 
@@ -766,21 +763,26 @@ static struct ceph_msg *get_generic_reply(struct ceph_connection *con,
 		pr_warn_ratelimited("tid %llu front %d > prealloc %d\n",
 				    tid, front_len,
 				    req->reply->front_alloc_len);
-		m = ceph_msg_new(type, front_len, GFP_NOFS, true);
-		if (m) {
-			ceph_msg_put(req->reply);
-			req->reply = m;
-			m = ceph_msg_get(req->reply);
+		kvfree(req->reply->front.iov_base);
+		req->reply->front.iov_base = kvmalloc(front_len, GFP_NOFS);
+		if (!req->reply->front.iov_base) {
+			dout("%s can't allocate %d bytes\n",
+			     __func__, front_len);
+			req->reply->front_alloc_len = 0;
+			req->reply->front.iov_len = 0;
+			goto out;
 		}
-	} else {
-		dout("get_generic_reply %lld got %p\n", tid, req->reply);
-		m = ceph_msg_get(req->reply);
-		/*
-		 * we don't need to track the connection reading into
-		 * this reply because we only have one open connection
-		 * at a time, ever.
-		 */
+		req->reply->front_alloc_len = front_len;
+		req->reply->front.iov_len = front_len;
 	}
+
+	dout("%s %lld got %p\n", __func__, tid, req->reply);
+	m = ceph_msg_get(req->reply);
+	/*
+	 * we don't need to track the connection reading into
+	 * this reply because we only have one open connection
+	 * at a time, ever.
+	 */
 
 out:
 	mutex_unlock(&monc->mutex);
