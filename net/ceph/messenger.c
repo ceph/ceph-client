@@ -2177,7 +2177,11 @@ int ceph_con_in_msg_alloc(struct ceph_connection *con,
 	}
 	memcpy(&con->in_msg->hdr, hdr, sizeof(*hdr));
 
-	if (middle_len && !con->in_msg->middle) {
+	if (middle_len &&
+	    (!con->in_msg->middle ||
+	     con->in_msg->middle->alloc_len < middle_len)) {
+		ceph_buffer_put(con->in_msg->middle);
+		con->in_msg->middle = NULL;
 		ret = ceph_alloc_middle(con, con->in_msg);
 		if (ret < 0) {
 			ceph_msg_put(con->in_msg);
