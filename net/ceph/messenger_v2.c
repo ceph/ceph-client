@@ -1102,6 +1102,7 @@ static int process_v2_sparse_read(struct ceph_connection *con,
 				  struct page **pages, int spos)
 {
 	struct ceph_msg_data_cursor cursor;
+	int data_end = spos + (int)data_len(con->in_msg);
 	int ret;
 
 	lockdep_assert_held(&con->mutex);
@@ -1121,9 +1122,13 @@ static int process_v2_sparse_read(struct ceph_connection *con,
 		do {
 			int idx = spos >> PAGE_SHIFT;
 			int soff = offset_in_page(spos);
-			struct page *spage = con->v2.in_enc_pages[idx];
 			int len = min_t(int, ret, PAGE_SIZE - soff);
+			struct page *spage;
 
+			if (spos + len > data_end)
+				return -EREMOTEIO;
+
+			spage = con->v2.in_enc_pages[idx];
 			if (buf) {
 				memcpy_from_page(buf, spage, soff, len);
 				buf += len;
