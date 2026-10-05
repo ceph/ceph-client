@@ -134,7 +134,7 @@ int ceph_compare_options(struct ceph_options *new_opt,
 	struct ceph_options *opt1 = new_opt;
 	struct ceph_options *opt2 = client->options;
 	struct ceph_monmap *monmap;
-	int ofs = offsetof(struct ceph_options, mon_addr);
+	int ofs = offsetof(struct ceph_options, num_mon);
 	int i;
 	int ret;
 
@@ -317,16 +317,11 @@ struct ceph_options *ceph_alloc_options(void)
 {
 	struct ceph_options *opt;
 
-	opt = kzalloc_obj(*opt);
+	opt = kzalloc_flex(*opt, mon_addr, CEPH_MAX_MON);
 	if (!opt)
 		return NULL;
 
 	opt->crush_locs = RB_ROOT;
-	opt->mon_addr = kzalloc_objs(*opt->mon_addr, CEPH_MAX_MON);
-	if (!opt->mon_addr) {
-		kfree(opt);
-		return NULL;
-	}
 
 	opt->flags = CEPH_OPT_DEFAULT;
 	opt->osd_keepalive_timeout = CEPH_OSD_KEEPALIVE_DEFAULT;
@@ -352,7 +347,6 @@ void ceph_destroy_options(struct ceph_options *opt)
 		ceph_crypto_key_destroy(opt->key);
 		kfree(opt->key);
 	}
-	kfree(opt->mon_addr);
 	kfree(opt);
 }
 EXPORT_SYMBOL(ceph_destroy_options);
