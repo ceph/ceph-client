@@ -58,15 +58,16 @@ struct ceph_options {
 	/*
 	 * any type that can't be simply compared or doesn't need
 	 * to be compared should go beyond this point,
-	 * ceph_compare_options() should be updated accordingly
+	 * ceph_compare_options() should be updated accordingly.
+	 * num_mon must stay the first member past this point, as
+	 * ceph_compare_options() uses it as the end of the memcmp().
 	 */
 
-	struct ceph_entity_addr *mon_addr; /* should be the first
-					      pointer type of args */
 	int num_mon;
 	char *name;
 	struct ceph_crypto_key *key;
 	struct rb_root crush_locs;
+	struct ceph_entity_addr mon_addr[];
 };
 
 /*
