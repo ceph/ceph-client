@@ -128,6 +128,15 @@ static int ceph_lock_message(u8 lock_type, u16 operation, struct inode *inode,
 	if (!err)
 		err = ceph_mdsc_wait_request(mdsc, req, wait ?
 					ceph_lock_wait_for_completion : NULL);
+	/*
+	 * ceph_lock_wait_for_completion() clears the wait flag when the
+	 * wait is interrupted. The MDS then cancels the wait (-EINTR) or,
+	 * if the request was resent, refuses a conflicting lock (-EAGAIN).
+	 * Either way the lock was not granted because of the interrupt.
+	 */
+	if (wait && !req->r_args.filelock_change.wait &&
+	    (err == -EINTR || err == -EAGAIN))
+		err = -ERESTARTSYS;
 	if (!err && operation == CEPH_MDS_OP_GETFILELOCK) {
 		fl->c.flc_pid = -le64_to_cpu(req->r_reply_info.filelock_reply->pid);
 		if (CEPH_LOCK_SHARED == req->r_reply_info.filelock_reply->type)
@@ -180,8 +189,11 @@ static int ceph_lock_wait_for_completion(struct ceph_mds_client *mdsc,
 	mutex_lock(&mdsc->mutex);
 	if (test_bit(CEPH_MDS_R_GOT_RESULT, &req->r_req_flags)) {
 		err = 0;
-	} else {
+	} else if (!req->r_session) {
 		/*
+		 * haven't sent the request, so the MDS can't have granted
+		 * the lock: abort it.
+		 *
 		 * ensure we aren't running concurrently with
 		 * ceph_fill_trace or ceph_readdir_prepopulate, which
 		 * rely on locks (dir mutex) held by our caller.
@@ -190,11 +202,20 @@ static int ceph_lock_wait_for_completion(struct ceph_mds_client *mdsc,
 		req->r_err = err;
 		set_bit(CEPH_MDS_R_ABORTED, &req->r_req_flags);
 		mutex_unlock(&req->r_fill_mutex);
-
-		if (!req->r_session) {
-			// haven't sent the request
-			err = 0;
-		}
+		err = 0;
+	} else {
+		/*
+		 * The MDS may have granted the lock already, and the
+		 * interrupt request below only cancels a waiting lock, it
+		 * does not undo a grant. So don't abort the request: if
+		 * its reply were dropped, a granted lock would never be
+		 * recorded locally and nothing would ever unlock it.
+		 *
+		 * Don't let the request wait on the MDS again if it has to
+		 * be resent (e.g. to a new MDS), so that its reply is not
+		 * held up behind a conflicting lock.
+		 */
+		req->r_args.filelock_change.wait = 0;
 	}
 	mutex_unlock(&mdsc->mutex);
 	if (!err)
@@ -219,10 +240,14 @@ static int ceph_lock_wait_for_completion(struct ceph_mds_client *mdsc,
 	if (err && err != -ERESTARTSYS)
 		return err;
 
-	err = wait_for_completion_killable(&req->r_safe_completion);
-	if (err)
-		return err;
-
+	/*
+	 * Once it has handled the interrupt, the MDS replies to the
+	 * original request: 0 if the lock was granted first, -EINTR if
+	 * the wait was cancelled. Wait for that reply even with a fatal
+	 * signal pending, so that the caller records a granted lock and
+	 * the lock gets released when the file is closed.
+	 */
+	wait_for_completion(&req->r_completion);
 	return 0;
 }
 
