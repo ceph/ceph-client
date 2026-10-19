@@ -7046,6 +7046,8 @@ void ceph_mdsc_destroy(struct ceph_fs_client *fsc)
 
 	/* flush out any connection work with references to us */
 	ceph_msgr_flush();
+	/* and the OSD request callbacks that update our metrics */
+	ceph_osdc_flush_completions(&fsc->client->osdc);
 
 	/*
 	 * Mark reset as failed and wake any blocked waiters before
