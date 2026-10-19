@@ -5165,6 +5165,17 @@ void ceph_osdc_flush_notifies(struct ceph_osd_client *osdc)
 }
 EXPORT_SYMBOL(ceph_osdc_flush_notifies);
 
+/*
+ * Wait for the request callbacks queued on completion_wq to finish - for
+ * use before freeing what those callbacks touch
+ */
+void ceph_osdc_flush_completions(struct ceph_osd_client *osdc)
+{
+	dout("%s osdc %p\n", __func__, osdc);
+	flush_workqueue(osdc->completion_wq);
+}
+EXPORT_SYMBOL(ceph_osdc_flush_completions);
+
 void ceph_osdc_maybe_request_map(struct ceph_osd_client *osdc)
 {
 	down_read(&osdc->lock);
