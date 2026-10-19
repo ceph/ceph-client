@@ -39,16 +39,6 @@ void ceph_subvolume_metrics_init(struct ceph_subvolume_metrics_tracker *tracker)
 	tracker->tree = RB_ROOT_CACHED;
 	tracker->nr_entries = 0;
 	tracker->enabled = false;
-	atomic64_set(&tracker->snapshot_attempts, 0);
-	atomic64_set(&tracker->snapshot_empty, 0);
-	atomic64_set(&tracker->snapshot_failures, 0);
-	atomic64_set(&tracker->record_calls, 0);
-	atomic64_set(&tracker->record_disabled, 0);
-	atomic64_set(&tracker->record_no_subvol, 0);
-	atomic64_set(&tracker->total_read_ops, 0);
-	atomic64_set(&tracker->total_read_bytes, 0);
-	atomic64_set(&tracker->total_write_ops, 0);
-	atomic64_set(&tracker->total_write_bytes, 0);
 }
 
 static struct ceph_subvol_metric_rb_entry *
@@ -196,14 +186,10 @@ void ceph_subvolume_metrics_record(struct ceph_subvolume_metrics_tracker *tracke
 			entry->write_ops++;
 			entry->write_bytes += size;
 			entry->write_latency_us += latency_us;
-			atomic64_inc(&tracker->total_write_ops);
-			atomic64_add(size, &tracker->total_write_bytes);
 		} else {
 			entry->read_ops++;
 			entry->read_bytes += size;
 			entry->read_latency_us += latency_us;
-			atomic64_inc(&tracker->total_read_ops);
-			atomic64_add(size, &tracker->total_read_bytes);
 		}
 		spin_unlock(&tracker->lock);
 		if (new_entry)
@@ -227,8 +213,6 @@ int ceph_subvolume_metrics_snapshot(struct ceph_subvolume_metrics_tracker *track
 	if (!READ_ONCE(tracker->enabled))
 		return 0;
 
-	atomic64_inc(&tracker->snapshot_attempts);
-
 	spin_lock(&tracker->lock);
 	for (node = rb_first_cached(&tracker->tree); node; node = rb_next(node)) {
 		struct ceph_subvol_metric_rb_entry *entry =
@@ -240,16 +224,12 @@ int ceph_subvolume_metrics_snapshot(struct ceph_subvolume_metrics_tracker *track
 	}
 	spin_unlock(&tracker->lock);
 
-	if (!count) {
-		atomic64_inc(&tracker->snapshot_empty);
+	if (!count)
 		return 0;
-	}
 
 	snap = kzalloc_objs(*snap, count, GFP_NOFS);
-	if (!snap) {
-		atomic64_inc(&tracker->snapshot_failures);
+	if (!snap)
 		return -ENOMEM;
-	}
 
 	spin_lock(&tracker->lock);
 	node = rb_first_cached(&tracker->tree);
@@ -380,18 +360,12 @@ void ceph_subvolume_metrics_record_io(struct ceph_mds_client *mdsc,
 		return;
 
 	tracker = &mdsc->subvol_metrics;
-	atomic64_inc(&tracker->record_calls);
-
-	if (!ceph_subvolume_metrics_enabled(tracker)) {
-		atomic64_inc(&tracker->record_disabled);
+	if (!ceph_subvolume_metrics_enabled(tracker))
 		return;
-	}
 
 	subvol_id = READ_ONCE(ci->i_subvolume_id);
-	if (subvol_id == CEPH_SUBVOLUME_ID_NONE) {
-		atomic64_inc(&tracker->record_no_subvol);
+	if (subvol_id == CEPH_SUBVOLUME_ID_NONE)
 		return;
-	}
 
 	delta_us = ktime_to_us(ktime_sub(end, start));
 	if (delta_us <= 0)
