@@ -196,6 +196,15 @@ static void ceph_netfs_expand_readahead(struct netfs_io_request *rreq)
 		else
 			max_pages = priv->file_ra_pages;
 
+		/*
+		 * A file read in records at a fixed stride: the records in
+		 * between are typically read by other clients, so rounding
+		 * the request out to the stripe unit would mostly read data
+		 * this client never uses.  ceph_stride_readahead() reads the
+		 * next records of the stride ahead instead.
+		 */
+		if (priv->file_ra_strided)
+			return;
 	}
 
 	/* Readahead is disabled */
@@ -219,6 +228,60 @@ static void ceph_netfs_expand_readahead(struct netfs_io_request *rreq)
 		rreq->start -= blockoff;
 		rreq->len += blockoff;
 	}
+}
+
+/*
+ * Read ahead for a file that is read in records at a fixed stride, as
+ * several clients reading interleaved records of a shared file do.  The
+ * generic readahead sees each record as a small random read and reads it
+ * as is, and ceph_netfs_expand_readahead() leaves strided files alone, so
+ * without this each record would be a synchronous round trip to the OSDs.
+ * Read the next records of the stride ahead instead, about a readahead
+ * window of them, each on its own so that the records in between are not
+ * read.  page_cache_ra_unbounded() skips the pages that are already cached.
+ *
+ * The caller holds the read caps and has registered its rw context.
+ */
+void ceph_stride_readahead(struct file *filp, struct ceph_file_info *fi,
+			   loff_t pos, size_t len)
+{
+	struct address_space *mapping = filp->f_mapping;
+	loff_t isize = i_size_read(mapping->host);
+	unsigned long window = (unsigned long)filp->f_ra.ra_pages << PAGE_SHIFT;
+	/*
+	 * Reads sharing this file update the stride detection without a
+	 * lock, so the stride may not be the one that marked the file as
+	 * strided: check it here rather than rely on that.
+	 */
+	loff_t stride = READ_ONCE(fi->ra_stride), next, end;
+	unsigned int nr;
+
+	if (!fi->ra_strided || !window || (filp->f_mode & FMODE_RANDOM))
+		return;
+	if (!len || stride <= 0 || pos < 0)
+		return;
+	nr = clamp_t(unsigned long, window / len, 1, CEPH_STRIDE_RA_MAX);
+	if (check_mul_overflow(stride, (loff_t)nr, &end) ||
+	    check_add_overflow(pos, end, &end))
+		return;
+	/* continue after the records already read ahead */
+	next = READ_ONCE(fi->ra_stride_next);
+	if (next <= pos || next > end)
+		next = pos + stride;
+
+	filemap_invalidate_lock_shared(mapping);
+	while (next >= 0 && next <= end && next < isize) {
+		pgoff_t first = next >> PAGE_SHIFT;
+		pgoff_t last = (next + min_t(loff_t, len, isize - next) - 1) >>
+			       PAGE_SHIFT;
+		DEFINE_READAHEAD(ractl, filp, &filp->f_ra, mapping, first);
+
+		page_cache_ra_unbounded(&ractl, last - first + 1, 0);
+		if (check_add_overflow(next, stride, &next))
+			break;
+	}
+	filemap_invalidate_unlock_shared(mapping);
+	fi->ra_stride_next = next;
 }
 
 static void finish_netfs_read(struct ceph_osd_request *req)
@@ -525,6 +588,7 @@ static int ceph_init_request(struct netfs_io_request *rreq, struct file *file)
 	if (fi) {
 		priv->file_ra_pages = file->f_ra.ra_pages;
 		priv->file_ra_disabled = file->f_mode & FMODE_RANDOM;
+		priv->file_ra_strided = READ_ONCE(fi->ra_strided);
 
 		/*
 		 * ceph_read_iter() and ceph_filemap_fault() hold caps and
