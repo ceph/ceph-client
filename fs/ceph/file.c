@@ -2203,6 +2203,33 @@ ceph_sync_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos,
  *
  * Hmm, the sync read case isn't actually async... should it be?
  */
+/*
+ * Is this file read in records at a fixed stride?  Look at the read()
+ * calls themselves, not at the page cache misses: those depend on what
+ * readahead has already brought in.  A read of the same length as the
+ * previous one, starting as far after it as that one did after its
+ * predecessor, with at least a page left out in between, for the second
+ * time in a row.  Sequential reads leave no gap and random reads have no
+ * fixed stride, so neither matches.
+ */
+static void ceph_note_read_stride(struct ceph_file_info *fi, loff_t pos,
+				  size_t len)
+{
+	loff_t stride = pos - fi->ra_prev_pos;
+
+	if (fi->ra_prev_len && len == fi->ra_prev_len &&
+	    stride >= (loff_t)len + PAGE_SIZE && stride == fi->ra_stride) {
+		if (fi->ra_stride_hits < 2)
+			fi->ra_stride_hits++;
+	} else {
+		fi->ra_stride_hits = 0;
+	}
+	fi->ra_stride = stride;
+	fi->ra_prev_pos = pos;
+	fi->ra_prev_len = len;
+	WRITE_ONCE(fi->ra_strided, fi->ra_stride_hits >= 2);
+}
+
 static ssize_t ceph_read_iter(struct kiocb *iocb, struct iov_iter *to)
 {
 	struct file *filp = iocb->ki_filp;
@@ -2278,7 +2305,9 @@ again:
 		boutc(cl, "async %p %llx.%llx %llu~%u got cap refs on %s\n",
 		      inode, ceph_vinop(inode), iocb->ki_pos, (unsigned)len,
 		      ceph_cap_string(got));
+		ceph_note_read_stride(fi, iocb->ki_pos, len);
 		ceph_add_rw_context(fi, &rw_ctx);
+		ceph_stride_readahead(filp, fi, iocb->ki_pos, len);
 		ret = generic_file_read_iter(iocb, to);
 		ceph_del_rw_context(fi, &rw_ctx);
 	}

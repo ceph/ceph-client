@@ -69,6 +69,7 @@
  * CEPH_MSG_MAX_DATA_LEN should be small enough. */
 #define CEPH_MAX_WRITE_SIZE		CEPH_MSG_MAX_DATA_LEN
 #define CEPH_RASIZE_DEFAULT             (8192*1024)    /* max readahead */
+#define CEPH_STRIDE_RA_MAX              64             /* records read ahead on a stride */
 #define CEPH_MAX_READDIR_DEFAULT        1024
 #define CEPH_MAX_READDIR_BYTES_DEFAULT  (512*1024)
 #define CEPH_SNAPDIRNAME_DEFAULT        ".snap"
@@ -568,6 +569,9 @@ struct ceph_netfs_request_data {
 
 	/* Set it if fadvise disables file readahead entirely */
 	bool file_ra_disabled;
+
+	/* Set it if the file is read in records at a fixed stride */
+	bool file_ra_strided;
 };
 
 static inline struct ceph_inode_info *
@@ -894,6 +898,9 @@ static inline bool __ceph_is_any_real_caps(const struct ceph_inode_info *ci)
 }
 
 extern int __ceph_caps_issued(struct ceph_inode_info *ci, int *implemented);
+struct ceph_file_info;
+extern void ceph_stride_readahead(struct file *filp, struct ceph_file_info *fi,
+				  loff_t pos, size_t len);
 extern int __ceph_caps_issued_mask(struct ceph_inode_info *ci, int mask, int t);
 extern int __ceph_caps_issued_mask_metric(struct ceph_inode_info *ci, int mask,
 					  int t);
@@ -988,6 +995,14 @@ struct ceph_file_info {
 	struct list_head rw_contexts;
 
 	u32 filp_gen;
+
+	/* stride detection of buffered reads, see ceph_note_read_stride() */
+	loff_t ra_prev_pos;
+	loff_t ra_stride;
+	size_t ra_prev_len;
+	unsigned int ra_stride_hits;
+	bool ra_strided;
+	loff_t ra_stride_next;	/* next record to read ahead */
 };
 
 struct ceph_dir_file_info {
