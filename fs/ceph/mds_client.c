@@ -7252,7 +7252,7 @@ static void mds_peer_reset(struct ceph_connection *con)
 {
 	struct ceph_mds_session *s = con->private;
 	struct ceph_mds_client *mdsc = s->s_mdsc;
-	int session_state;
+	int rc;
 
 	pr_warn_client(mdsc->fsc->client, "mds%d closed our session\n",
 		       s->s_mds);
@@ -7262,82 +7262,16 @@ static void mds_peer_reset(struct ceph_connection *con)
 		return;
 
 	/*
-	 * Only reconnect if MDS is in its RECONNECT phase.  An MDS past
-	 * RECONNECT (REJOIN, CLIENTREPLAY, ACTIVE) will reject reconnect
-	 * attempts, so those states fall through to session teardown below.
+	 * Our mdsmap may be stale: an MDS restarted on the same address
+	 * resets the connection before we learn that the rank failed.
+	 * Send the reconnect and let the MDS decide; one that is past
+	 * RECONNECT replies with CLOSE and handle_session() closes the
+	 * session so that new requests open a fresh one.
 	 */
-	if (ceph_mdsmap_get_state(mdsc->mdsmap, s->s_mds) == CEPH_MDS_STATE_RECONNECT) {
-		int rc = send_mds_reconnect(mdsc, s);
-
-		if (rc)
-			pr_warn_client(mdsc->fsc->client,
-				       "mds%d reconnect failed: %d\n",
-				       s->s_mds, rc);
-		return;
-	}
-
-	/*
-	 * MDS is active (past RECONNECT).  It will not accept a
-	 * CLIENT_RECONNECT from us, so tear the session down locally
-	 * and let new requests re-open a fresh session.
-	 *
-	 * Snapshot session state with READ_ONCE, then revalidate under
-	 * mdsc->mutex before acting.  The subsequent mdsc->mutex
-	 * section rechecks s_state to catch concurrent transitions, so
-	 * the lockless snapshot here is safe.  s->s_mutex is taken
-	 * separately for cleanup after unregistration, which avoids
-	 * introducing a new s->s_mutex + mdsc->mutex nesting.
-	 */
-	session_state = READ_ONCE(s->s_state);
-
-	switch (session_state) {
-	case CEPH_MDS_SESSION_RESTARTING:
-	case CEPH_MDS_SESSION_RECONNECTING:
-	case CEPH_MDS_SESSION_CLOSING:
-	case CEPH_MDS_SESSION_OPEN:
-	case CEPH_MDS_SESSION_HUNG:
-	case CEPH_MDS_SESSION_OPENING:
-		mutex_lock(&mdsc->mutex);
-		if (s->s_mds >= mdsc->max_sessions ||
-		    mdsc->sessions[s->s_mds] != s ||
-		    s->s_state != session_state) {
-			pr_info_client(mdsc->fsc->client,
-				       "mds%d state changed to %s during peer reset\n",
-				       s->s_mds,
-				       ceph_session_state_name(s->s_state));
-			mutex_unlock(&mdsc->mutex);
-			return;
-		}
-
-		ceph_get_mds_session(s);
-		s->s_state = CEPH_MDS_SESSION_CLOSED;
-		__unregister_session(mdsc, s);
-		__wake_requests(mdsc, &s->s_waiting);
-		mutex_unlock(&mdsc->mutex);
-
-		mutex_lock(&s->s_mutex);
-		cleanup_session_requests(mdsc, s);
-		remove_session_caps(s);
-		mutex_unlock(&s->s_mutex);
-
-		wake_up_all(&mdsc->session_close_wq);
-
-		mutex_lock(&mdsc->mutex);
-		kick_requests(mdsc, s->s_mds);
-		mutex_unlock(&mdsc->mutex);
-
-		ceph_put_mds_session(s);
-		break;
-	case CEPH_MDS_SESSION_CLOSED:
-	case CEPH_MDS_SESSION_REJECTED:
-		break;
-	default:
+	rc = send_mds_reconnect(mdsc, s);
+	if (rc && rc != -ESTALE && rc != -ENOENT)
 		pr_warn_client(mdsc->fsc->client,
-			       "mds%d peer reset in unexpected state %s\n",
-			       s->s_mds,
-			       ceph_session_state_name(session_state));
-		break;
-	}
+			       "mds%d reconnect failed: %d\n", s->s_mds, rc);
 }
 
 static void mds_dispatch(struct ceph_connection *con, struct ceph_msg *msg)
