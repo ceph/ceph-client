@@ -291,6 +291,14 @@ int ceph_lock(struct file *file, int cmd, struct file_lock *fl)
 	}
 
 	if (ceph_inode_is_shutdown(inode)) {
+		/*
+		 * The MDS can't be told any more, but an unlock must still
+		 * drop the local lock record: on close the VFS ignores our
+		 * return value and frees the file, and a record left behind
+		 * would keep pointing at it from the global lock list.
+		 */
+		if (!IS_GETLK(cmd) && lock_is_unlock(fl))
+			posix_lock_file(file, fl, NULL);
 		ceph_blog_exit(&__ji);
 		return -ESTALE;
 	}
@@ -374,6 +382,9 @@ int ceph_flock(struct file *file, int cmd, struct file_lock *fl)
 	}
 
 	if (ceph_inode_is_shutdown(inode)) {
+		/* See ceph_lock(): an unlock must drop the local record. */
+		if (lock_is_unlock(fl))
+			locks_lock_file_wait(file, fl);
 		ceph_blog_exit(&__ji);
 		return -ESTALE;
 	}
