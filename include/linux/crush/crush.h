@@ -87,7 +87,7 @@ struct crush_rule_mask {
 struct crush_rule {
 	__u32 len;
 	struct crush_rule_mask mask;
-	struct crush_rule_step steps[];
+	struct crush_rule_step steps[] __counted_by(len);
 };
 
 #define crush_rule_size(len) (sizeof(struct crush_rule) + \
