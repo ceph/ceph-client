@@ -560,8 +560,10 @@ static bool ceph_netfs_issue_op_inline(struct netfs_io_subrequest *subreq)
 
 	trace_netfs_sreq(subreq, netfs_sreq_trace_submit);
 	err = ceph_mdsc_do_request(mdsc, NULL, req);
-	if (err < 0)
+	if (err < 0) {
+		ceph_mdsc_put_request(req);
 		goto out;
+	}
 
 	rinfo = &req->r_reply_info;
 	iinfo = &rinfo->targeti;
