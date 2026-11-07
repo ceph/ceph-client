@@ -2211,8 +2211,6 @@ void ceph_check_caps(struct ceph_inode_info *ci, int flags)
 		return;
 	}
 
-	if (ci->i_ceph_flags & CEPH_I_FLUSH)
-		flags |= CHECK_CAPS_FLUSH;
 	/*
 	 * A revoke whose response was deferred (see handle_cap_grant()) must
 	 * still be acknowledged.  Replay the forced flush here so that even a
@@ -5056,10 +5054,20 @@ static unsigned long check_delayed_caps_list(struct ceph_mds_client *mdsc,
 
 		inode = igrab(&ci->netfs.inode);
 		if (inode) {
+			/*
+			 * Flush the dirty caps that ceph_write_inode()
+			 * queued here.  Only this work does it: other cap
+			 * checks leave them for it, so that a file under
+			 * writeback does not flush them after every write.
+			 */
+			int flags = test_bit(CEPH_I_FLUSH_BIT,
+					     &ci->i_ceph_flags) ?
+				    CHECK_CAPS_FLUSH : 0;
+
 			spin_unlock(&mdsc->cap_delay_lock);
 			doutc(cl, "on %p %llx.%llx\n", inode,
 			      ceph_vinop(inode));
-			ceph_check_caps(ci, 0);
+			ceph_check_caps(ci, flags);
 			iput(inode);
 			spin_lock(&mdsc->cap_delay_lock);
 		}
