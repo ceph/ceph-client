@@ -2148,6 +2148,58 @@ static int dir_lease_is_valid(struct inode *dir, struct dentry *dentry,
 }
 
 /*
+ * Check whether a cached dentry under .snap still names an existing snapshot.
+ *
+ * The MDS issues no lease for these dentries, but it sends a snap update to
+ * every client holding caps in a realm when a snapshot in it is created or
+ * removed.  So as long as we hold caps on the snapped directory, its realm's
+ * snap context tells us whether the snapshot still exists.  Without caps we
+ * cannot tell, and the caller has to ask the MDS.
+ */
+static int snapdir_dentry_is_valid(struct inode *dir, struct dentry *dentry,
+				   struct ceph_mds_client *mdsc)
+{
+	struct inode *inode = d_inode(dentry);
+	struct ceph_vino vino = {
+		.ino = ceph_ino(dir),
+		.snap = CEPH_NOSNAP,
+	};
+	struct ceph_snap_context *snapc = NULL;
+	struct ceph_inode_info *pci;
+	struct inode *parent;
+	u32 i;
+	int valid = 0;
+
+	if (!inode || ceph_snap(inode) > CEPH_MAXSNAP)
+		return 0;
+
+	parent = ceph_find_inode(dir->i_sb, vino);
+	if (!parent)
+		return 0;
+	pci = ceph_inode(parent);
+
+	down_read(&mdsc->snap_rwsem);
+	spin_lock(&pci->i_ceph_lock);
+	if (__ceph_is_any_real_caps(pci) && pci->i_snap_realm &&
+	    pci->i_snap_realm->cached_context)
+		snapc = ceph_get_snap_context(pci->i_snap_realm->cached_context);
+	spin_unlock(&pci->i_ceph_lock);
+	up_read(&mdsc->snap_rwsem);
+	iput(parent);
+
+	if (!snapc)
+		return 0;
+	for (i = 0; i < snapc->num_snaps; i++) {
+		if (snapc->snaps[i] == ceph_snap(inode)) {
+			valid = 1;
+			break;
+		}
+	}
+	ceph_put_snap_context(snapc);
+	return valid;
+}
+
+/*
  * Check if cached dentry can be trusted.
  */
 static int ceph_d_revalidate(struct inode *dir, const struct qstr *name,
@@ -2171,12 +2223,20 @@ static int ceph_d_revalidate(struct inode *dir, const struct qstr *name,
 
 	mdsc = ceph_sb_to_fs_client(dir->i_sb)->mdsc;
 
-	/* always trust cached snapped dentries, snapdir dentry */
-	if (ceph_in_snap(dir)) {
+	if (ceph_snap(dir) == CEPH_SNAPDIR) {
+		/* a snapshot under .snap may have been removed by others */
+		if (flags & LOOKUP_RCU)
+			return -ECHILD;
+		valid = snapdir_dentry_is_valid(dir, dentry, mdsc);
+		doutc(cl, "%p '%pd' inode %p under snapdir, valid %d\n",
+		      dentry, dentry, inode, valid);
+	} else if (ceph_in_snap(dir)) {
+		/* snapshots are immutable: trust dentries inside one */
 		doutc(cl, "%p '%pd' inode %p is SNAPPED\n", dentry,
 		      dentry, inode);
 		valid = 1;
 	} else if (inode && ceph_snap(inode) == CEPH_SNAPDIR) {
+		/* the .snap dentry itself */
 		valid = 1;
 	} else {
 		valid = dentry_lease_is_valid(dentry, flags);
