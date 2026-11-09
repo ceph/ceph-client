@@ -4130,14 +4130,38 @@ int ceph_mdsc_do_request(struct ceph_mds_client *mdsc,
 			 struct ceph_mds_request *req)
 {
 	struct ceph_client *cl = mdsc->fsc->client;
+	struct dentry *lookup_dn = req->r_dentry;
 	int err;
 
 	boutc(cl, "do_request on %p\n", req);
+
+	/*
+	 * lockdep sees the DCACHE_PAR_LOOKUP state of an in-lookup dentry as
+	 * a lock held by the task that started the lookup.  The reply to a
+	 * request for it (a lookup or an open) is handled by the messenger,
+	 * whose ceph_fill_trace() may end the lookup: hand the lock over to
+	 * it for as long as we wait, and take it back after, if the lookup
+	 * has not ended.  r_fill_mutex keeps that away from a running
+	 * ceph_fill_trace().
+	 */
+	if (lookup_dn && d_in_lookup(lookup_dn)) {
+		d_lookup_release(lookup_dn);
+		set_bit(CEPH_MDS_R_LOOKUP_HANDOFF, &req->r_req_flags);
+	} else {
+		lookup_dn = NULL;
+	}
 
 	/* issue */
 	err = ceph_mdsc_submit_request(mdsc, dir, req);
 	if (!err)
 		err = ceph_mdsc_wait_request(mdsc, req, NULL);
+
+	if (lookup_dn) {
+		mutex_lock(&req->r_fill_mutex);
+		clear_bit(CEPH_MDS_R_LOOKUP_HANDOFF, &req->r_req_flags);
+		d_lookup_acquire(lookup_dn);
+		mutex_unlock(&req->r_fill_mutex);
+	}
 	boutc(cl, "do_request %p done, result %d\n", req, err);
 	return err;
 }
@@ -4180,6 +4204,7 @@ static void handle_reply(struct ceph_mds_session *session, struct ceph_msg *msg)
 	struct ceph_mds_reply_info_parsed *rinfo;  /* parsed reply info */
 	struct ceph_snap_realm *realm;
 	unsigned int nofs_flags;
+	struct dentry *lookup_dn;
 	u64 tid;
 	int err, result;
 	int mds = session->s_mds;
@@ -4335,6 +4360,18 @@ static void handle_reply(struct ceph_mds_session *session, struct ceph_msg *msg)
 	/* insert trace into our cache */
 	mutex_lock(&req->r_fill_mutex);
 
+	/*
+	 * ceph_fill_trace() may end the lookup of an in-lookup r_dentry
+	 * (d_splice_alias()), which lockdep sees as releasing its
+	 * DCACHE_PAR_LOOKUP lock: own it here meanwhile, see
+	 * ceph_mdsc_do_request().  splice_dentry() may replace r_dentry.
+	 */
+	lookup_dn = NULL;
+	if (test_bit(CEPH_MDS_R_LOOKUP_HANDOFF, &req->r_req_flags)) {
+		lookup_dn = req->r_dentry;
+		d_lookup_acquire(lookup_dn);
+	}
+
 	/* Disable filesystem reclaim while journal_info carries Ceph state. */
 	nofs_flags = memalloc_nofs_save();
 	{
@@ -4350,6 +4387,9 @@ static void handle_reply(struct ceph_mds_session *session, struct ceph_msg *msg)
 		ceph_blog_exit(&ji);
 	}
 	memalloc_nofs_restore(nofs_flags);
+
+	if (lookup_dn)
+		d_lookup_release(lookup_dn);
 	mutex_unlock(&req->r_fill_mutex);
 
 	up_read(&mdsc->snap_rwsem);
