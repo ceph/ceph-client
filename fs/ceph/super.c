@@ -1634,6 +1634,14 @@ static void ceph_kill_sb(struct super_block *s)
 	 */
 	sync_filesystem(s);
 
+	/*
+	 * A shut down mount can't write back its dirty folios, and
+	 * writeback queued their invalidation instead: let it drop them,
+	 * and the references they hold to the inodes, before the inodes
+	 * get evicted.
+	 */
+	flush_workqueue(fsc->inode_wq);
+
 	if (atomic64_read(&mdsc->dirty_folios) > 0) {
 		wait_queue_head_t *wq = &mdsc->flush_end_wq;
 		long timeleft = wait_event_killable_timeout(*wq,

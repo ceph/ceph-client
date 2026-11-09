@@ -2097,6 +2097,20 @@ static int ceph_writepages_start(struct address_space *mapping,
 	      (wbc->sync_mode == WB_SYNC_ALL ? "ALL" : "HOLD"));
 
 	if (is_forced_umount(mapping)) {
+		/*
+		 * What is dirty here can never be written back now.  Left
+		 * dirty, each folio keeps its Fb cap ref, which holds the
+		 * inode, and its count in the dirty folios that umount
+		 * waits for.  ceph_purge_inode_cap() has them invalidated
+		 * when it removes the caps of a shut down inode, but the
+		 * session may have been closed (the client evicted), and
+		 * the caps removed, before the shut down.  Have them
+		 * dropped now, but not from here: putting the last Fb cap
+		 * ref may put the last reference to the inode, and its
+		 * eviction would wait for this writeback.
+		 */
+		if (mapping_tagged(mapping, PAGECACHE_TAG_DIRTY))
+			ceph_queue_invalidate(inode);
 		ceph_blog_exit(&__ji);
 		return -EIO;
 	}
