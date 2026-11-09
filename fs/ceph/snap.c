@@ -683,6 +683,15 @@ int __ceph_finish_cap_snap(struct ceph_inode_info *ci,
 		      capsnap->context->seq,
 		      ceph_cap_string(capsnap->dirty),
 		      capsnap->size, capsnap->dirty_pages);
+		/*
+		 * Write them back now, not when writeback or the next
+		 * write to them gets to it: they belong to the snapshot,
+		 * and with lazy I/O another client may already write to
+		 * the same objects with the new snap context.  Its first
+		 * write clones the objects for the snapshot, and what we
+		 * write with the old one after that misses the snapshot.
+		 */
+		ceph_queue_writeback(inode);
 		return 0;
 	}
 
