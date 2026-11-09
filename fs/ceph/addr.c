@@ -126,11 +126,14 @@ static struct ceph_snap_context *ceph_folio_detach_snapc(struct folio *folio)
 }
 
 /*
- * Every dirty byte of a lazy I/O folio lies beyond EOF now: there is
- * nothing to write back, and the bytes in front of its dirty range are
- * not this client's to send.  Drop the folio's dirty state, which the
- * caller has already cleared, with the folio locked, and its count in
- * the dirty folios that umount waits for.
+ * Drop the dirty state of a folio that will not be written back, with
+ * the folio locked: its snap context and dirty range, its Fb cap ref and
+ * its count in the dirty folios that umount waits for.  The caller has
+ * cleared the dirty flag already, or is about to (invalidate_folio).
+ *
+ * E.g. every dirty byte of a lazy I/O folio lies beyond EOF now: there
+ * is nothing to write back, and the bytes in front of its dirty range
+ * are not this client's to send.
  */
 static void ceph_folio_drop_dirty(struct inode *inode, struct folio *folio)
 {
@@ -304,8 +307,6 @@ static void ceph_invalidate_folio(struct folio *folio, size_t offset,
 	struct inode *inode = folio->mapping->host;
 	struct ceph_fs_client *fsc = ceph_inode_to_fs_client(inode);
 	struct ceph_client *cl = ceph_inode_to_client(inode);
-	struct ceph_inode_info *ci = ceph_inode(inode);
-	struct ceph_snap_context *snapc;
 	struct ceph_journal_info __ji;
 
 	ceph_blog_enter_gfp(fsc, &__ji, GFP_ATOMIC);
@@ -339,9 +340,12 @@ static void ceph_invalidate_folio(struct folio *folio, size_t offset,
 		boutc(cl, "%llx.%llx idx %lu full dirty page\n",
 		      ceph_vinop(inode), folio->index);
 
-		snapc = ceph_folio_detach_snapc(folio);
-		ceph_put_wrbuffer_cap_refs(ci, 1, snapc);
-		ceph_put_snap_context(snapc);
+		/*
+		 * The folio goes away dirty (a truncate, or a shut down
+		 * mount): it must leave the dirty folios count too, or
+		 * umount waits for it until mount_timeout.
+		 */
+		ceph_folio_drop_dirty(inode, folio);
 	}
 
 	netfs_invalidate_folio(folio, offset, length);
@@ -1210,6 +1214,11 @@ static int write_folio_nounlock(struct folio *folio,
 	folio_end_writeback(folio);
 	ceph_put_wrbuffer_cap_refs(ci, 1, snapc);
 	ceph_put_snap_context(snapc);  /* page's reference */
+
+	if (atomic64_dec_return(&fsc->mdsc->dirty_folios) <= 0) {
+		wake_up_all(&fsc->mdsc->flush_end_wq);
+		WARN_ON(atomic64_read(&fsc->mdsc->dirty_folios) < 0);
+	}
 
 	if (atomic_long_dec_return(&fsc->writeback_count) <
 	    CONGESTION_OFF_THRESH(fsc->mount_options->congestion_kb))
