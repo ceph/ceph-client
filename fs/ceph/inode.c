@@ -2140,9 +2140,7 @@ int ceph_readdir_prepopulate(struct ceph_mds_request *req,
 		struct ceph_mds_reply_dir_entry *rde = rinfo->dir_entries + i;
 		struct ceph_vino tvino;
 
-		dname.name = rde->name;
-		dname.len = rde->name_len;
-		dname.hash = full_name_hash(parent, dname.name, dname.len);
+		dname = QSTR_LEN(rde->name, rde->name_len);
 
 		tvino.ino = le64_to_cpu(rde->inode.in->ino);
 		tvino.snap = le64_to_cpu(rde->inode.in->snapid);
@@ -2158,24 +2156,21 @@ int ceph_readdir_prepopulate(struct ceph_mds_request *req,
 		}
 
 retry_lookup:
-		dn = d_lookup(parent, &dname);
-		doutc(cl, "d_lookup on parent=%p name=%.*s got %p\n",
+		dn = d_alloc_trylock(parent, &dname);
+		doutc(cl, "d_alloc_trylock on parent=%p name=%.*s got %p\n",
 		      parent, dname.len, dname.name, dn);
-
-		if (!dn) {
-			dn = d_alloc(parent, &dname);
-			doutc(cl, "d_alloc %p '%.*s' = %p\n", parent,
-			      dname.len, dname.name, dn);
-			if (!dn) {
-				doutc(cl, "d_alloc badness\n");
-				err = -ENOMEM;
-				goto out;
-			}
-			if (rde->is_nokey) {
-				spin_lock(&dn->d_lock);
-				dn->d_flags |= DCACHE_NOKEY_NAME;
-				spin_unlock(&dn->d_lock);
-			}
+		if (dn == ERR_PTR(-EWOULDBLOCK)) {
+			/* Some other thread is working on this name */
+			skipped++;
+			continue;
+		} else if (IS_ERR(dn)) {
+			doutc(cl, "d_alloc_trylock badness\n");
+			err = PTR_ERR(dn);
+			goto out;
+		} else if (d_in_lookup(dn) && rde->is_nokey) {
+			spin_lock(&dn->d_lock);
+			dn->d_flags |= DCACHE_NOKEY_NAME;
+			spin_unlock(&dn->d_lock);
 		} else if (d_really_is_positive(dn) &&
 			   (ceph_ino(d_inode(dn)) != tvino.ino ||
 			    ceph_snap(d_inode(dn)) != tvino.snap)) {
@@ -2204,6 +2199,7 @@ retry_lookup:
 			in = ceph_get_inode(parent->d_sb, tvino, NULL);
 			if (IS_ERR(in)) {
 				doutc(cl, "new_inode badness\n");
+				d_lookup_done(dn);
 				d_drop(dn);
 				dput(dn);
 				err = PTR_ERR(in);
@@ -2230,7 +2226,7 @@ retry_lookup:
 		if (inode_state_read_once(in) & I_NEW)
 			unlock_new_inode(in);
 
-		if (d_really_is_negative(dn)) {
+		if (d_in_lookup(dn) || d_really_is_negative(dn)) {
 			if (ceph_security_xattr_deadlock(in)) {
 				doutc(cl, " skip splicing dn %p to inode %p"
 				      " (security xattr deadlock)\n", dn, in);
@@ -2257,6 +2253,7 @@ retry_lookup:
 				err = ret;
 		}
 next_item:
+		d_lookup_done(dn);
 		dput(dn);
 	}
 out:
