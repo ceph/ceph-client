@@ -1609,8 +1609,12 @@ retry:
 	} else {
 		set_bit(CEPH_MDS_R_PARENT_LOCKED, &req->r_req_flags);
 		err = ceph_mdsc_do_request(mdsc, dir, req);
-		if (!err && !req->r_reply_info.head->is_dentry)
+		if (!err && !req->r_reply_info.head->is_dentry) {
 			d_delete(dentry);
+		} else if (err == -ENOENT) {
+			ceph_dir_clear_complete(dir);
+			d_drop(dentry);
+		}
 	}
 
 	ceph_mdsc_put_request(req);
