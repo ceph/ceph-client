@@ -1112,11 +1112,18 @@ static inline int ceph_adjust_caps_used_for_lazyio(struct ceph_inode_info *ci,
 	 */
 	if ((issued & CEPH_CAP_FILE_LAZYIO) && !__ceph_all_opens_lazy(ci))
 		return used;
-	if (!(issued & CEPH_CAP_FILE_CACHE)) {
+	/*
+	 * Only a use that the issued caps no longer cover moves to LAZYIO.
+	 * Clean pages under an issued CACHE are not using LAZYIO, so a
+	 * revoke of LAZYIO that leaves CACHE issued must not count them;
+	 * otherwise it is never acked from handle_cap_grant() and waits
+	 * for the delayed cap check.
+	 */
+	if ((used & CEPH_CAP_FILE_CACHE) && !(issued & CEPH_CAP_FILE_CACHE)) {
 		used &= ~CEPH_CAP_FILE_CACHE;
 		used |= CEPH_CAP_FILE_LAZYIO;
 	}
-	if (!(issued & CEPH_CAP_FILE_BUFFER)) {
+	if ((used & CEPH_CAP_FILE_BUFFER) && !(issued & CEPH_CAP_FILE_BUFFER)) {
 		used &= ~CEPH_CAP_FILE_BUFFER;
 		used |= CEPH_CAP_FILE_LAZYIO;
 	}
