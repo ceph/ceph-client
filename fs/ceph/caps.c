@@ -3684,23 +3684,24 @@ void ceph_put_wrbuffer_cap_refs(struct ceph_inode_info *ci, int nr,
 		}
 
 		capsnap->dirty_pages -= nr;
-		if (capsnap->dirty_pages == 0) {
+		if (capsnap->dirty_pages == 0)
 			complete_capsnap = true;
-			if (!capsnap->writing) {
-				if (ceph_try_drop_cap_snap(ci, capsnap)) {
-					put++;
-				} else {
-					set_bit(CEPH_I_FLUSH_SNAPS_BIT, &ci->i_ceph_flags);
-					flush_snaps = true;
-				}
-			}
-		}
+
 		doutc(cl, "%p %llx.%llx cap_snap %p snap %lld %d/%d -> %d/%d %s%s\n",
 		      inode, ceph_vinop(inode), capsnap, capsnap->context->seq,
 		      ci->i_wrbuffer_ref+nr, capsnap->dirty_pages + nr,
 		      ci->i_wrbuffer_ref, capsnap->dirty_pages,
 		      last ? " (wrbuffer last)" : "",
 		      complete_capsnap ? " (complete capsnap)" : "");
+
+		if (complete_capsnap && !capsnap->writing) {
+			if (ceph_try_drop_cap_snap(ci, capsnap)) {
+				put++;
+			} else {
+				set_bit(CEPH_I_FLUSH_SNAPS_BIT, &ci->i_ceph_flags);
+				flush_snaps = true;
+			}
+		}
 	}
 
 unlock:
