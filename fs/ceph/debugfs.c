@@ -109,6 +109,14 @@ static int mdsc_show(struct seq_file *s, void *p)
 		else
 			seq_puts(s, "\t");
 
+		/*
+		 * ceph_fill_trace() may replace r_dentry (dropping the
+		 * request's reference to the old one) or swap r_dentry
+		 * and r_old_dentry; it does so while holding
+		 * r_fill_mutex, so hold it while using them.
+		 */
+		mutex_lock(&req->r_fill_mutex);
+
 		if (req->r_inode) {
 			seq_printf(s, " #%llx", ceph_ino(req->r_inode));
 		} else if (req->r_dentry) {
@@ -150,6 +158,8 @@ static int mdsc_show(struct seq_file *s, void *p)
 			else
 				seq_printf(s, " %s", req->r_path2);
 		}
+
+		mutex_unlock(&req->r_fill_mutex);
 
 		seq_puts(s, "\n");
 	}
