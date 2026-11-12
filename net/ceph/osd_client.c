@@ -3674,6 +3674,28 @@ static int ceph_redirect_decode(void **p, void *end,
 		goto e_inval;
 	}
 
+	if (struct_v >= 2) {
+		u8 present;
+
+		/* legacy osd_instructions */
+		ceph_decode_32_safe(p, struct_end, len, e_inval);
+		ceph_decode_skip_n(p, struct_end, len, e_inval);
+
+		ceph_decode_8_safe(p, struct_end, present, e_inval);
+		if (present) {
+			redir->migration_wm =
+			    kzalloc_obj(*redir->migration_wm, GFP_NOIO);
+			if (!redir->migration_wm) {
+				ret = -ENOMEM;
+				goto out;
+			}
+
+			ret = decode_hoid(p, struct_end, redir->migration_wm);
+			if (ret)
+				goto out;
+		}
+	}
+
 	/* skip the rest */
 	*p = struct_end;
 out:
@@ -3790,6 +3812,7 @@ static void handle_reply(struct ceph_osd *osd, struct ceph_msg *msg)
 
 	dout("%s msg %p tid %llu\n", __func__, msg, tid);
 
+	m.redirect.migration_wm = NULL;
 	down_read(&osdc->lock);
 	if (!osd_registered(osd)) {
 		dout("%s osd%d unknown\n", __func__, osd->o_osd);
@@ -3900,6 +3923,7 @@ static void handle_reply(struct ceph_osd *osd, struct ceph_msg *msg)
 	up_read(&osdc->lock);
 
 	__complete_request(req);
+	free_hoid(m.redirect.migration_wm);
 	return;
 
 fail_request:
@@ -3908,6 +3932,7 @@ out_unlock_session:
 	mutex_unlock(&osd->lock);
 out_unlock_osdc:
 	up_read(&osdc->lock);
+	free_hoid(m.redirect.migration_wm);
 }
 
 static void set_pool_was_full(struct ceph_osd_client *osdc)

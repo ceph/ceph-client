@@ -19,6 +19,7 @@
 
 struct ceph_msg;
 struct ceph_snap_context;
+struct ceph_hobject_id;
 struct ceph_osd_request;
 struct ceph_osd_client;
 
@@ -286,6 +287,7 @@ struct ceph_osd_request {
 
 struct ceph_request_redirect {
 	struct ceph_object_locator oloc;
+	struct ceph_hobject_id *migration_wm;
 };
 
 /*
