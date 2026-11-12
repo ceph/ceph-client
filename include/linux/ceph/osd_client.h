@@ -20,6 +20,7 @@
 struct ceph_msg;
 struct ceph_snap_context;
 struct ceph_hobject_id;
+struct ceph_ec_split;
 struct ceph_osd_request;
 struct ceph_osd_client;
 
@@ -291,6 +292,7 @@ struct ceph_osd_request {
 	int r_attempts;
 	u32 r_map_dne_bound;
 	bool r_multi_data;                    /* reply data for several ops */
+	struct ceph_ec_split *r_ec_split;     /* EC split read in flight */
 
 	struct ceph_osd_req_op r_ops[] __counted_by(r_num_ops);
 };
