@@ -875,6 +875,62 @@ e_inval:
 	return -EINVAL;
 }
 
+/* pool_opts_t::type_t, and the one option the client needs */
+#define POOL_OPT_STR		0
+#define POOL_OPT_INT		1
+#define POOL_OPT_DOUBLE		2
+#define POOL_OPT_DEDUP_TIER	20
+
+static int decode_pool_opts(void **p, void *end, struct ceph_pg_pool_info *pi)
+{
+	u8 struct_v;
+	u32 struct_len, n;
+	void *opts_end;
+	int ret;
+
+	ret = ceph_start_decoding(p, end, 2, "pool_opts_t", &struct_v,
+				  &struct_len);
+	if (ret)
+		return ret;
+
+	opts_end = *p + struct_len;
+	ceph_decode_32_safe(p, opts_end, n, e_inval);
+	while (n--) {
+		s32 key, type, val32;
+		s64 val;
+
+		ceph_decode_32_safe(p, opts_end, key, e_inval);
+		ceph_decode_32_safe(p, opts_end, type, e_inval);
+		switch (type) {
+		case POOL_OPT_STR:
+			ceph_decode_skip_string(p, opts_end, e_inval);
+			break;
+		case POOL_OPT_INT:
+			if (struct_v >= 2) {
+				ceph_decode_64_safe(p, opts_end, val, e_inval);
+			} else {
+				ceph_decode_32_safe(p, opts_end, val32,
+						    e_inval);
+				val = val32;
+			}
+			if (key == POOL_OPT_DEDUP_TIER)
+				pi->dedup_tier = val;
+			break;
+		case POOL_OPT_DOUBLE:
+			ceph_decode_skip_64(p, opts_end, e_inval);
+			break;
+		default:
+			goto e_inval;
+		}
+	}
+
+	*p = opts_end;
+	return 0;
+
+e_inval:
+	return -EINVAL;
+}
+
 static int decode_pool(void **p, void *end, struct ceph_pg_pool_info *pi)
 {
 	u8 ev, cv;
@@ -938,15 +994,19 @@ static int decode_pool(void **p, void *end, struct ceph_pg_pool_info *pi)
 		ceph_decode_skip_n(p, end, 8 + 8, bad);
 
 	if (ev >= 9) {
-		/* tiers */
-		ceph_decode_skip_set(p, end, 64, bad);
+		ceph_decode_32_safe(p, end, num, bad);
+		pi->has_tiers = num;
+		while (num--)
+			ceph_decode_skip_64(p, end, bad);  /* tiers */
 
 		ceph_decode_need(p, end, 8 + 1 + 8 + 8, bad);
-		*p += 8;  /* skip tier_of */
+		pi->tier_of = ceph_decode_64(p);
 		*p += 1;  /* skip cache_mode */
 		pi->read_tier = ceph_decode_64(p);
 		pi->write_tier = ceph_decode_64(p);
 	} else {
+		pi->has_tiers = false;
+		pi->tier_of = -1;
 		pi->read_tier = -1;
 		pi->write_tier = -1;
 	}
@@ -1014,10 +1074,11 @@ static int decode_pool(void **p, void *end, struct ceph_pg_pool_info *pi)
 		/* hit_set_grade_decay_rate, hit_set_search_last_n */
 		ceph_decode_skip_n(p, end, 4 + 4, bad);
 
+	pi->dedup_tier = 0;
 	if (ev >= 24) {
-		/* opts (with versions) */
-		ceph_decode_skip_n(p, end, 2, bad);
-		ceph_decode_skip_string(p, end, bad);
+		ret = decode_pool_opts(p, end, pi);
+		if (ret)
+			return ret;
 	}
 
 	if (ev >= 25)
