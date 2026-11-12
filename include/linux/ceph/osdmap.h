@@ -66,6 +66,13 @@ struct ceph_pg_pool_info {
 	s8 shard_mapping[CEPH_PG_MAX_SIZE];
 	u8 ec_data_shard_count; /* 0 if not set */
 
+	s64 migration_src; /* -1 if none */
+	s64 migration_target; /* ditto */
+	s64 migration_root; /* ditto */
+	u32 *migrating_pgs; /* PG seeds, ascending */
+	u32 num_migrating_pgs;
+	u32 lowest_migrated_pg;
+
 	bool was_full;  /* for handle_one_map() */
 };
 
