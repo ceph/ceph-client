@@ -1407,6 +1407,554 @@ static void ec_optimizations_interval_test(struct kunit *test)
 	test_unwatch(lreq);
 }
 
+/* Sub-read @i's bytes of the read into its buffer: its length. */
+static u32 test_fill_sub(struct kunit *test, struct ceph_ec_split *sp, int i)
+{
+	struct ceph_osd_req_op *op = &sp->req->r_ops[0];
+	struct page **pages = sp->subs[i].req->r_ops[0].extent.osd_data.pages;
+	u64 off = op->extent.offset, end = off + op->extent.length, c, r;
+	u32 n = 0, raw = 0;
+
+	for (c = div_u64(off, sp->chunk); c * sp->chunk < end; c++) {
+		r = c;
+		raw = do_div(r, sp->k);
+		if (sp->raw_sub[raw] == i)
+			break;
+	}
+	for (c = div_u64(off, sp->chunk); c * sp->chunk < end; c++) {
+		u64 s = max(off, c * sp->chunk);
+		u64 e = min(end, (c + 1) * sp->chunk);
+
+		r = c;
+		if (do_div(r, sp->k) != raw)
+			continue;
+		test_fill(test, pages, n, s, e - s);
+		n += e - s;
+	}
+	return n;
+}
+
+/*
+ * Sub-read @i's reply: up to @max_len bytes of its data, and version 5 for
+ * every shard but its own at 4 if it is @stale.
+ */
+static void test_sub_reply(struct kunit *test, struct ceph_ec_split *sp,
+			   int i, int stale, u32 max_len)
+{
+	struct ec_split_sub *sub = &sp->subs[i];
+	struct ceph_osd_request *sreq = sub->req;
+	int last = sreq->r_num_ops - 1;
+	int rvals[2] = {}, vers[6][3], s;
+	u32 lens[2] = {};
+
+	for (s = 0; s < 6; s++) {
+		vers[s][0] = s;
+		vers[s][1] = s == stale && s == sub->shard ? 4 : 5;
+		vers[s][2] = 1;
+	}
+	if (sub->len)
+		lens[0] = min(test_fill_sub(test, sp, i), max_len);
+	test_set_versions(test, sub, sub->shard, vers, 6, sp->v1);
+	lens[last] = sreq->r_ops[last].outdata_len;
+	test_reply(test, sreq, 0, rvals, lens, NULL);
+}
+
+/* Sub-read @i fails with @result, an op too if -EOPNOTSUPP. */
+static void test_sub_error(struct kunit *test, struct ceph_ec_split *sp,
+			   int i, int result)
+{
+	struct ceph_osd_request *sreq = sp->subs[i].req;
+	int rvals[2] = {};
+
+	if (result == -EOPNOTSUPP)
+		rvals[sreq->r_num_ops - 1] = result;
+	test_reply(test, sreq, result, rvals, NULL, NULL);
+}
+
+/* Every sub-read's reply, agreeing on the versions unless @stale. */
+static void test_split_replies(struct kunit *test,
+			       struct ceph_osd_request *req, int stale)
+{
+	struct ceph_ec_split *sp = req->r_ec_split;
+	int i, n;
+
+	KUNIT_ASSERT_NOT_NULL(test, sp);
+	n = sp->num_subs;
+	for (i = 0; i < n; i++)
+		test_sub_reply(test, sp, i, stale, U32_MAX);
+}
+
+/* A read over chunks 0-3 of "obj": split between data shards 0 and 1 */
+static struct ceph_osd_request *test_split_read(struct kunit *test,
+						struct ceph_osd_client *osdc,
+						int opcode)
+{
+	struct ceph_osd_request *req;
+
+	req = test_read(test, osdc, TEST_POOL_EC, "obj", opcode, 100,
+			3 * TEST_CHUNK, CEPH_OSD_FLAG_BALANCE_READS);
+	ceph_osdc_start_request(osdc, req);
+	KUNIT_EXPECT_NOT_NULL(test, req->r_ec_split);
+	return req;
+}
+
+static void split_read_test(struct kunit *test)
+{
+	struct ceph_osd_client *osdc = test_osdc(test, &client_map);
+	struct ceph_osd_request *req;
+	struct ceph_ec_split *sp;
+	struct ceph_osds acting;
+	struct ceph_pg pgid;
+	int i;
+
+	test_acting(osdc, TEST_POOL_EC, "obj", &pgid, &acting);
+	req = test_split_read(test, osdc, CEPH_OSD_OP_READ);
+	sp = req->r_ec_split;
+	KUNIT_ASSERT_NOT_NULL(test, sp);
+	KUNIT_ASSERT_EQ(test, sp->num_subs, 2);
+	for (i = 0; i < 2; i++) {
+		struct ceph_osd_request *sreq = sp->subs[i].req;
+
+		KUNIT_EXPECT_EQ(test, sp->subs[i].shard, i);
+		KUNIT_EXPECT_EQ(test, sp->subs[i].len,
+				ec_shard_bytes(100, 3 * TEST_CHUNK, TEST_CHUNK,
+					       2, i));
+		KUNIT_EXPECT_EQ(test, test_osd(sreq), acting.osds[i]);
+		KUNIT_EXPECT_EQ(test, sreq->r_t.spgid.shard, i);
+		KUNIT_EXPECT_TRUE(test, sreq->r_flags &
+					CEPH_OSD_FLAG_FORCE_OSD);
+		KUNIT_EXPECT_EQ(test, sreq->r_ops[1].op,
+				CEPH_OSD_OP_GET_INTERNAL_VERSIONS_V2);
+	}
+
+	test_split_replies(test, req, -1);
+	KUNIT_EXPECT_TRUE(test, completion_done(&req->r_completion));
+	KUNIT_EXPECT_NULL(test, req->r_ec_split);
+	KUNIT_EXPECT_EQ(test, req->r_result, 3 * TEST_CHUNK);
+	KUNIT_EXPECT_EQ(test, req->r_ops[0].outdata_len, 3 * TEST_CHUNK);
+	test_check_data(test, test_pages(req, 0), 100, 3 * TEST_CHUNK);
+	test_put(test, req);
+}
+
+/*
+ * A shard read before a write that the others saw: the read goes to the
+ * primary.  With the split's sub-read count left at 0 (F6) the versions
+ * were never compared.
+ */
+static void split_read_mismatch_test(struct kunit *test)
+{
+	struct ceph_osd_client *osdc = test_osdc(test, &client_map);
+	struct ceph_osd_request *req;
+	struct ceph_osds acting;
+	struct ceph_pg pgid;
+
+	test_acting(osdc, TEST_POOL_EC, "obj", &pgid, &acting);
+	req = test_split_read(test, osdc, CEPH_OSD_OP_READ);
+	test_split_replies(test, req, 1);
+	KUNIT_EXPECT_FALSE(test, completion_done(&req->r_completion));
+	KUNIT_EXPECT_EQ(test, test_osd(req), acting.primary);
+	KUNIT_EXPECT_FALSE(test, req->r_flags & CEPH_OSD_FLAG_BALANCE_READS);
+	if (test_osd(req) == acting.primary) {
+		test_read_reply(test, req);
+		KUNIT_EXPECT_EQ(test, req->r_result, 3 * TEST_CHUNK);
+		test_check_data(test, test_pages(req, 0), 100,
+				3 * TEST_CHUNK);
+	}
+	test_put(test, req);
+}
+
+/* Every shard without the object: -ENOENT without asking the primary */
+static void split_read_enoent_test(struct kunit *test)
+{
+	struct ceph_osd_client *osdc = test_osdc(test, &client_map);
+	struct ceph_osd_request *req;
+	struct ceph_ec_split *sp;
+
+	req = test_split_read(test, osdc, CEPH_OSD_OP_READ);
+	sp = req->r_ec_split;
+	KUNIT_ASSERT_NOT_NULL(test, sp);
+	test_sub_error(test, sp, 0, -ENOENT);
+	test_sub_error(test, sp, 1, -ENOENT);
+	KUNIT_EXPECT_TRUE(test, completion_done(&req->r_completion));
+	KUNIT_EXPECT_EQ(test, req->r_result, -ENOENT);
+	KUNIT_EXPECT_EQ(test, req->r_ops[0].rval, -ENOENT);
+	test_put(test, req);
+}
+
+/* Sub-read @i's data if @result is 0, else its error */
+static void test_sub_answer(struct kunit *test, struct ceph_ec_split *sp,
+			    int i, int result)
+{
+	if (result)
+		test_sub_error(test, sp, i, result);
+	else
+		test_sub_reply(test, sp, i, -1, U32_MAX);
+}
+
+/* One shard's error, -ENOENT among them, sends the read to the primary. */
+static void split_read_error_test(struct kunit *test)
+{
+	static const int errs[][2] = {
+		{ 0, -EAGAIN }, { -EIO, 0 }, { -ENOENT, 0 }, { 0, -EOVERFLOW },
+	};
+	struct ceph_osd_client *osdc = test_osdc(test, &client_map);
+	struct ceph_osds acting;
+	struct ceph_pg pgid;
+	int i;
+
+	test_acting(osdc, TEST_POOL_EC, "obj", &pgid, &acting);
+	for (i = 0; i < ARRAY_SIZE(errs); i++) {
+		struct ceph_osd_request *req;
+		struct ceph_ec_split *sp;
+
+		req = test_split_read(test, osdc, CEPH_OSD_OP_READ);
+		sp = req->r_ec_split;
+		KUNIT_ASSERT_NOT_NULL(test, sp);
+		test_sub_answer(test, sp, 0, errs[i][0]);
+		test_sub_answer(test, sp, 1, errs[i][1]);
+		KUNIT_EXPECT_EQ_MSG(test, test_osd(req), acting.primary,
+				    "errors %d %d", errs[i][0], errs[i][1]);
+		if (test_osd(req) == acting.primary) {
+			test_read_reply(test, req);
+			KUNIT_EXPECT_EQ(test, req->r_result, 3 * TEST_CHUNK);
+		}
+		test_put(test, req);
+	}
+	KUNIT_EXPECT_FALSE(test, READ_ONCE(osdc->ec_split_v1));
+}
+
+/*
+ * OSDs without GET_INTERNAL_VERSIONS_V2 (Umbrella) fail it with
+ * -EOPNOTSUPP: that read goes to the primary, and the client uses
+ * GET_INTERNAL_VERSIONS from then on, with the primary's versions as the
+ * reference, read on their own if the primary holds none of the data.
+ */
+static void split_read_v1_test(struct kunit *test)
+{
+	struct test_osdmap *tm = ceph_kunit_osdmap_dup(test, &client_map);
+	struct ceph_osd_client *osdc = test_osdc(test, &client_map);
+	struct ceph_osd_request *req;
+	struct ceph_ec_split *sp;
+	struct ceph_osds acting;
+	struct ceph_pg pgid;
+	int i;
+
+	/* the parity shard's OSD is the primary */
+	test_acting(osdc, TEST_POOL_EC, "obj", &pgid, &acting);
+	tm->num_primary_temp = 1;
+	tm->primary_temp[0].pool = TEST_POOL_EC;
+	tm->primary_temp[0].seed = pgid.seed;
+	tm->primary_temp[0].osds[0] = acting.osds[2];
+	test_apply_map(test, osdc, tm);
+	test_acting(osdc, TEST_POOL_EC, "obj", &pgid, &acting);
+	KUNIT_ASSERT_EQ(test, acting.primary, acting.osds[2]);
+
+	req = test_split_read(test, osdc, CEPH_OSD_OP_READ);
+	sp = req->r_ec_split;
+	KUNIT_ASSERT_NOT_NULL(test, sp);
+	test_sub_error(test, sp, 0, -EOPNOTSUPP);
+	test_sub_error(test, sp, 1, -EOPNOTSUPP);
+	KUNIT_EXPECT_TRUE(test, READ_ONCE(osdc->ec_split_v1));
+	KUNIT_EXPECT_EQ(test, test_osd(req), acting.primary);
+	if (test_osd(req) == acting.primary)
+		test_read_reply(test, req);
+	test_put(test, req);
+
+	req = test_split_read(test, osdc, CEPH_OSD_OP_READ);
+	sp = req->r_ec_split;
+	KUNIT_ASSERT_NOT_NULL(test, sp);
+	KUNIT_EXPECT_TRUE(test, sp->v1);
+	KUNIT_ASSERT_EQ(test, sp->num_subs, 3);
+	KUNIT_EXPECT_EQ(test, sp->ref, 2);
+	for (i = 0; i < 3; i++) {
+		struct ceph_osd_request *sreq = sp->subs[i].req;
+
+		KUNIT_EXPECT_EQ(test, sreq->r_ops[sreq->r_num_ops - 1].op,
+				CEPH_OSD_OP_GET_INTERNAL_VERSIONS);
+	}
+	KUNIT_EXPECT_EQ(test, sp->subs[2].req->r_num_ops, 1);
+	KUNIT_EXPECT_EQ(test, sp->subs[2].shard, 2);
+	KUNIT_EXPECT_EQ(test, test_osd(sp->subs[2].req), acting.primary);
+	test_split_replies(test, req, -1);
+	KUNIT_EXPECT_EQ(test, req->r_result, 3 * TEST_CHUNK);
+	test_check_data(test, test_pages(req, 0), 100, 3 * TEST_CHUNK);
+	test_put(test, req);
+
+	/* a shard behind the primary */
+	req = test_split_read(test, osdc, CEPH_OSD_OP_READ);
+	if (req->r_ec_split) {
+		test_split_replies(test, req, 1);
+		KUNIT_EXPECT_EQ(test, test_osd(req), acting.primary);
+	}
+	test_put(test, req);
+}
+
+/*
+ * Only GET_INTERNAL_VERSIONS_V2 failing with -EOPNOTSUPP shows an OSD
+ * without it; the read op failing so leaves the client on V2.
+ */
+static void split_read_opnotsupp_test(struct kunit *test)
+{
+	struct ceph_osd_client *osdc = test_osdc(test, &client_map);
+	struct ceph_osd_request *req;
+	struct ceph_ec_split *sp;
+	struct ceph_osds acting;
+	struct ceph_pg pgid;
+	int rvals[2] = { -EOPNOTSUPP };
+
+	test_acting(osdc, TEST_POOL_EC, "obj", &pgid, &acting);
+	req = test_split_read(test, osdc, CEPH_OSD_OP_READ);
+	sp = req->r_ec_split;
+	KUNIT_ASSERT_NOT_NULL(test, sp);
+	test_reply(test, sp->subs[0].req, -EOPNOTSUPP, rvals, NULL, NULL);
+	test_sub_error(test, sp, 1, -EIO);
+	KUNIT_EXPECT_FALSE(test, osdc->ec_split_v1);
+	KUNIT_EXPECT_EQ(test, test_osd(req), acting.primary);
+	test_put(test, req);
+}
+
+/*
+ * Fail sub-read @i of @sp from the completion workqueue, as libceph fails
+ * requests itself, while the caller holds osdc->lock for write as
+ * ceph_osdc_cancel_request() does.  Give the completion time to go as far
+ * as it can without osdc->lock.
+ */
+static void test_sub_fail_locked(struct ceph_ec_split *sp, int i, int err)
+{
+	struct ceph_osd_request *sreq = sp->subs[i].req;
+	struct ceph_osd *osd = sreq->r_osd;
+	struct ceph_osd_request *req = sp->req;
+
+	verify_osdc_wrlocked(req->r_osdc);
+	mutex_lock(&osd->lock);
+	complete_request(sreq, err);
+	mutex_unlock(&osd->lock);
+	wait_for_completion_timeout(&req->r_completion, HZ / 2);
+}
+
+/*
+ * A split read cancelled while its last sub-read fails: once
+ * ceph_osdc_cancel_request() returns, the read must not go on to the
+ * primary.
+ */
+static void split_read_cancel_fallback_test(struct kunit *test)
+{
+	struct ceph_osd_client *osdc = test_osdc(test, &client_map);
+	struct ceph_osd_request *req;
+	struct ceph_ec_split *sp;
+
+	req = test_split_read(test, osdc, CEPH_OSD_OP_READ);
+	sp = req->r_ec_split;
+	KUNIT_ASSERT_NOT_NULL(test, sp);
+	test_sub_error(test, sp, 0, -EIO);
+
+	down_write(&osdc->lock);
+	test_sub_fail_locked(sp, 1, -EIO);
+	if (req->r_osd)
+		cancel_request(req);
+	else if (req->r_ec_split)
+		ec_split_cancel(req);
+	up_write(&osdc->lock);
+	flush_workqueue(osdc->completion_wq);
+
+	KUNIT_EXPECT_EQ(test, test_osd(req), -1);
+	test_put(test, req);
+}
+
+/*
+ * A split read cancelled as its last sub-read completes it: between
+ * ceph_osdc_cancel_request() finding the split and ec_split_cancel()
+ * using it, the completion must not clear and free it.
+ */
+static void split_read_cancel_complete_test(struct kunit *test)
+{
+	struct ceph_osd_client *osdc = test_osdc(test, &client_map);
+	struct ceph_osd_request *req;
+	struct ceph_ec_split *sp;
+
+	req = test_split_read(test, osdc, CEPH_OSD_OP_READ);
+	sp = req->r_ec_split;
+	KUNIT_ASSERT_NOT_NULL(test, sp);
+	test_sub_error(test, sp, 0, -ENOENT);
+
+	down_write(&osdc->lock);
+	KUNIT_EXPECT_PTR_EQ(test, req->r_ec_split, sp);
+	test_sub_fail_locked(sp, 1, -ENOENT);
+	KUNIT_EXPECT_PTR_EQ(test, req->r_ec_split, sp);
+	if (req->r_ec_split == sp)
+		ec_split_cancel(req);
+	up_write(&osdc->lock);
+	flush_workqueue(osdc->completion_wq);
+
+	KUNIT_EXPECT_TRUE(test, completion_done(&req->r_completion));
+	test_put(test, req);
+}
+
+static void test_count_cb(struct ceph_osd_request *req)
+{
+	(*(int *)req->r_priv)++;
+}
+
+/* A split read cancelled while its sub-reads are out. */
+static void split_read_cancel_test(struct kunit *test)
+{
+	struct ceph_osd_client *osdc = test_osdc(test, &client_map);
+	struct ceph_osd_request *req;
+	struct ceph_ec_split *sp;
+	int calls = 0;
+
+	req = test_read(test, osdc, TEST_POOL_EC, "obj", CEPH_OSD_OP_READ,
+			100, 3 * TEST_CHUNK, CEPH_OSD_FLAG_BALANCE_READS);
+	req->r_callback = test_count_cb;
+	req->r_priv = &calls;
+	ceph_osdc_start_request(osdc, req);
+	sp = req->r_ec_split;
+	KUNIT_ASSERT_NOT_NULL(test, sp);
+
+	test_sub_reply(test, sp, 0, -1, U32_MAX);
+	ceph_osdc_cancel_request(req);
+	KUNIT_EXPECT_TRUE(test, completion_done(&req->r_completion));
+	KUNIT_EXPECT_NULL(test, req->r_ec_split);
+	test_sub_reply(test, sp, 1, -1, U32_MAX);	/* the last frees it */
+	KUNIT_EXPECT_EQ(test, calls, 0);
+	KUNIT_EXPECT_EQ(test, atomic_read(&osdc->num_requests), 0);
+	ceph_osdc_put_request(req);
+}
+
+/*
+ * F5: a split SPARSE_READ completes as one extent in the array the caller
+ * allocated (CephFS does, for every sparse read), not in a new one.
+ */
+static void split_read_sparse_test(struct kunit *test)
+{
+	struct ceph_osd_client *osdc = test_osdc(test, &client_map);
+	struct ceph_sparse_extent *ext;
+	struct ceph_osd_req_op *op;
+	struct ceph_osd_request *req;
+	struct ceph_ec_split *sp;
+
+	req = test_read(test, osdc, TEST_POOL_EC, "obj",
+			CEPH_OSD_OP_SPARSE_READ, 100, 3 * TEST_CHUNK,
+			CEPH_OSD_FLAG_BALANCE_READS);
+	op = &req->r_ops[0];
+	KUNIT_ASSERT_EQ(test, ceph_alloc_sparse_ext_map(op, 16), 0);
+	ext = op->extent.sparse_ext;
+	ceph_osdc_start_request(osdc, req);
+	KUNIT_ASSERT_NOT_NULL(test, req->r_ec_split);
+
+	test_split_replies(test, req, -1);
+	KUNIT_EXPECT_EQ(test, req->r_result, 3 * TEST_CHUNK);
+	KUNIT_EXPECT_EQ(test, op->rval, 0);
+	KUNIT_EXPECT_PTR_EQ(test, op->extent.sparse_ext, ext);
+	KUNIT_ASSERT_EQ(test, op->extent.sparse_ext_cnt, 1);
+	KUNIT_EXPECT_EQ(test, op->extent.sparse_ext[0].off, 100);
+	KUNIT_EXPECT_EQ(test, op->extent.sparse_ext[0].len, 3 * TEST_CHUNK);
+	test_check_data(test, test_pages(req, 0), 100, 3 * TEST_CHUNK);
+	test_put(test, req);
+
+	/* the object ends in chunk 1: a shorter extent */
+	req = test_read(test, osdc, TEST_POOL_EC, "obj",
+			CEPH_OSD_OP_SPARSE_READ, 100, 3 * TEST_CHUNK,
+			CEPH_OSD_FLAG_BALANCE_READS);
+	op = &req->r_ops[0];
+	KUNIT_ASSERT_EQ(test, ceph_alloc_sparse_ext_map(op, 16), 0);
+	ext = op->extent.sparse_ext;
+	ceph_osdc_start_request(osdc, req);
+	sp = req->r_ec_split;
+	KUNIT_ASSERT_NOT_NULL(test, sp);
+	test_sub_reply(test, sp, 0, -1, U32_MAX);
+	test_sub_reply(test, sp, 1, -1, 1000);
+	KUNIT_EXPECT_EQ(test, req->r_result, TEST_CHUNK - 100 + 1000);
+	KUNIT_EXPECT_PTR_EQ(test, op->extent.sparse_ext, ext);
+	KUNIT_EXPECT_EQ(test, op->extent.sparse_ext_cnt, 1);
+	KUNIT_EXPECT_EQ(test, op->extent.sparse_ext[0].len,
+			TEST_CHUNK - 100 + 1000);
+	test_put(test, req);
+}
+
+/*
+ * No split reads while the pool takes part in a migration: the object can
+ * move to a pool with another layout before the sub-reads complete.
+ * Single-chunk direct reads go on.
+ */
+static void split_read_migration_test(struct kunit *test)
+{
+	struct test_osdmap *tm = ceph_kunit_osdmap_dup(test, &client_map);
+	struct ceph_osd_client *osdc;
+	struct ceph_osd_request *req;
+	struct ceph_osds acting;
+	struct ceph_pg pgid;
+
+	tm->pools[1].migration_target = TEST_POOL_DST;
+	tm->pools[3].migration_src = TEST_POOL_EC;
+	tm->pools[3].migration_root = TEST_POOL_EC;
+	osdc = test_osdc(test, tm);
+	test_acting(osdc, TEST_POOL_EC, "obj", &pgid, &acting);
+
+	req = test_read(test, osdc, TEST_POOL_EC, "obj", CEPH_OSD_OP_READ,
+			100, 3 * TEST_CHUNK, CEPH_OSD_FLAG_BALANCE_READS);
+	ceph_osdc_start_request(osdc, req);
+	KUNIT_EXPECT_NULL(test, req->r_ec_split);
+	KUNIT_EXPECT_EQ(test, test_osd(req), acting.primary);
+	test_put(test, req);
+
+	req = test_read(test, osdc, TEST_POOL_EC, "obj", CEPH_OSD_OP_READ,
+			TEST_CHUNK, 1000, CEPH_OSD_FLAG_BALANCE_READS);
+	ceph_osdc_start_request(osdc, req);
+	KUNIT_EXPECT_EQ(test, test_osd(req), acting.osds[1]);
+	test_put(test, req);
+}
+
+/*
+ * What F1 relies on: a read without the read_from_replica flags is never
+ * direct or split, so its reply carries the object's version; a split read
+ * has none.
+ */
+static void version_read_test(struct kunit *test)
+{
+	struct ceph_osd_client *osdc = test_osdc(test, &client_map);
+	struct ceph_osd_request *req;
+	struct ceph_osds acting;
+	struct ceph_pg pgid;
+
+	test_acting(osdc, TEST_POOL_EC, "obj", &pgid, &acting);
+	req = test_read(test, osdc, TEST_POOL_EC, "obj", CEPH_OSD_OP_READ,
+			100, 3 * TEST_CHUNK, 0);
+	ceph_osdc_start_request(osdc, req);
+	KUNIT_EXPECT_NULL(test, req->r_ec_split);
+	KUNIT_EXPECT_EQ(test, test_osd(req), acting.primary);
+	test_read_reply(test, req);
+	KUNIT_EXPECT_EQ(test, req->r_version, TEST_USER_VERSION);
+	test_put(test, req);
+
+	req = test_split_read(test, osdc, CEPH_OSD_OP_READ);
+	test_split_replies(test, req, -1);
+	KUNIT_EXPECT_EQ(test, req->r_version, 0);
+	test_put(test, req);
+}
+
+/*
+ * A split read cancelled and released by its owner while its sub-reads
+ * are out, as ceph_osdc_wait_request() leaves one when interrupted: the
+ * sub-reads complete without touching the parent (KASAN).
+ */
+static void split_read_cancel_release_test(struct kunit *test)
+{
+	struct ceph_osd_client *osdc = test_osdc(test, &client_map);
+	struct ceph_osd_request *req;
+	struct ceph_ec_split *sp;
+
+	req = test_split_read(test, osdc, CEPH_OSD_OP_READ);
+	sp = req->r_ec_split;
+	KUNIT_ASSERT_NOT_NULL(test, sp);
+	ceph_osdc_cancel_request(req);
+	ceph_osdc_put_request(req);
+
+	test_sub_error(test, sp, 0, -EIO);
+	test_sub_error(test, sp, 1, -EIO);	/* the last finishes it */
+	KUNIT_EXPECT_EQ(test, atomic_read(&osdc->num_requests), 0);
+}
+
 static struct kunit_case ceph_osd_client_test_cases[] = {
 	KUNIT_CASE(ec_direct_read_pool_test),
 	KUNIT_CASE(ec_direct_read_shard_test),
@@ -1442,5 +1990,28 @@ static struct kunit_suite ceph_osd_client_target_test_suite = {
 	.test_cases = ceph_osd_client_target_test_cases,
 };
 
+static struct kunit_case ceph_osd_client_split_test_cases[] = {
+	KUNIT_CASE(split_read_test),
+	KUNIT_CASE(split_read_mismatch_test),
+	KUNIT_CASE(split_read_enoent_test),
+	KUNIT_CASE(split_read_error_test),
+	KUNIT_CASE(split_read_v1_test),
+	KUNIT_CASE(split_read_cancel_test),
+	KUNIT_CASE(split_read_sparse_test),
+	KUNIT_CASE(split_read_migration_test),
+	KUNIT_CASE(version_read_test),
+	KUNIT_CASE(split_read_cancel_release_test),
+	KUNIT_CASE(split_read_opnotsupp_test),
+	KUNIT_CASE(split_read_cancel_fallback_test),
+	KUNIT_CASE(split_read_cancel_complete_test),
+	{}
+};
+
+static struct kunit_suite ceph_osd_client_split_test_suite = {
+	.name = "ceph_osd_client_split",
+	.test_cases = ceph_osd_client_split_test_cases,
+};
+
 kunit_test_suites(&ceph_osd_client_test_suite,
-		  &ceph_osd_client_target_test_suite);
+		  &ceph_osd_client_target_test_suite,
+		  &ceph_osd_client_split_test_suite);
