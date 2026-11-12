@@ -114,7 +114,7 @@ static size_t encode_pool(void *buf, const struct test_pool *tp)
 	ceph_encode_8(&p, tp->crush_rule);
 	ceph_encode_8(&p, CEPH_STR_HASH_RJENKINS);
 	ceph_encode_32(&p, tp->pg_num);
-	ceph_encode_32(&p, tp->pg_num);		/* pgp_num */
+	ceph_encode_32(&p, tp->pgp_num ?: tp->pg_num);
 	ceph_encode_64(&p, 0);			/* lpg_num, lpgp_num */
 	ceph_encode_32(&p, 1);			/* last_change */
 	ceph_encode_64(&p, 0);			/* snap_seq */
@@ -165,7 +165,7 @@ static size_t encode_pool(void *buf, const struct test_pool *tp)
 		ceph_start_encoding(&p, 2, 1, 4);
 		ceph_encode_32(&p, 0);
 	}
-	ceph_encode_32(&p, 0);			/* v25 */
+	ceph_encode_32(&p, tp->last_force_resend);	/* v25 */
 	ceph_encode_32(&p, 0);			/* v26 application_metadata */
 	ceph_encode_64(&p, 0);			/* v27 create_time */
 	for (i = 0; i < 6; i++)			/* v28 */

@@ -1934,6 +1934,603 @@ static void version_read_test(struct kunit *test)
 }
 
 /*
+ * The reply to @req with @wire_len bytes of @wire as its data, received as
+ * messenger v2 receives a reply with sparse reads
+ * (process_v2_sparse_read()): the front first, then the data through
+ * osd_sparse_read(), then the dispatch.
+ */
+static void test_receive(struct kunit *test, struct ceph_osd_request *req,
+			 const u32 *lens, const void *wire, int wire_len)
+{
+	struct ceph_osd *osd = req->r_osd;
+	struct ceph_msg_data_cursor cursor;
+	struct ceph_msg_header hdr;
+	struct ceph_msg *msg;
+	int skip = 0, pos = 0, ret;
+
+	KUNIT_ASSERT_NOT_NULL(test, osd);
+	KUNIT_ASSERT_EQ(test, test_encode_reply(test, req, req->r_reply, 0,
+						NULL, lens, NULL),
+			wire_len);
+	hdr = req->r_reply->hdr;
+	msg = get_reply(&osd->o_con, &hdr, &skip);
+	KUNIT_ASSERT_PTR_EQ(test, msg, req->r_reply);
+	KUNIT_ASSERT_NE(test, msg->sparse_read_total, 0);
+
+	osd->o_con.in_msg = msg;
+	ceph_msg_data_cursor_init(&cursor, msg, msg->sparse_read_total);
+	for (;;) {
+		char *buf = NULL;
+
+		ret = osd->o_con.ops->sparse_read(&osd->o_con, &cursor, &buf);
+		if (ret <= 0 || pos + ret > wire_len)
+			break;
+
+		if (buf) {
+			memcpy(buf, wire + pos, ret);
+			pos += ret;
+			continue;
+		}
+		while (ret) {
+			size_t off, len;
+			struct page *page = ceph_msg_data_next(&cursor, &off,
+							       &len);
+
+			len = min_t(size_t, len, ret);
+			memcpy_to_page(page, off, wire + pos, len);
+			ceph_msg_data_advance(&cursor, len);
+			pos += len;
+			ret -= len;
+		}
+	}
+	osd->o_con.in_msg = NULL;
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	KUNIT_EXPECT_EQ(test, pos, wire_len);
+
+	handle_reply(osd, msg);
+	ceph_msg_put(msg);
+}
+
+/* A sparse read's reply data: extents @ext and their bytes of the objects */
+static int test_sparse_wire(void *buf, const struct ceph_sparse_extent *ext,
+			    int n)
+{
+	void *p = buf;
+	u32 len = 0;
+	int i;
+
+	ceph_encode_32(&p, n);
+	for (i = 0; i < n; i++) {
+		ceph_encode_64(&p, ext[i].off);
+		ceph_encode_64(&p, ext[i].len);
+		len += ext[i].len;
+	}
+	ceph_encode_32(&p, len);
+	for (i = 0; i < n; i++) {
+		u64 j;
+
+		for (j = 0; j < ext[i].len; j++)
+			ceph_encode_8(&p, test_byte(ext[i].off + j));
+	}
+	return p - buf;
+}
+
+/* @pages hold extents @ext of the objects from @off, zeros in between. */
+static void test_check_sparse(struct kunit *test, struct page **pages,
+			      u64 off, const struct ceph_sparse_extent *ext,
+			      int n)
+{
+	u64 end = ext[n - 1].off + ext[n - 1].len, pos;
+	u8 *buf = kunit_kmalloc(test, end - off, GFP_KERNEL);
+	int i = 0;
+
+	KUNIT_ASSERT_NOT_NULL(test, buf);
+	ceph_copy_from_page_vector(pages, buf, 0, end - off);
+	for (pos = off; pos < end; pos++) {
+		u8 want = 0;
+
+		if (pos >= ext[i].off + ext[i].len)
+			i++;
+		if (pos >= ext[i].off)
+			want = test_byte(pos);
+		if (buf[pos - off] != want) {
+			KUNIT_FAIL(test, "byte %llu is %02x, not %02x", pos,
+				   buf[pos - off], want);
+			break;
+		}
+	}
+	kunit_kfree(test, buf);
+}
+
+/*
+ * F4: a sparse read's extents and data, with holes zeroed.  The case for
+ * plain ops of a multi-op reply sat between the data length state and the
+ * data state that it runs on into, and took every sparse read with data.
+ */
+static void sparse_read_receive_test(struct kunit *test)
+{
+	static const struct ceph_sparse_extent ext[] = {
+		{ TEST_CHUNK, TEST_CHUNK }, { 3 * TEST_CHUNK, 2048 },
+	};
+	struct ceph_osd_client *osdc = test_osdc(test, &client_map);
+	void *wire = kunit_kzalloc(test, 4 * TEST_CHUNK, GFP_KERNEL);
+	struct ceph_osd_request *req;
+	struct ceph_osd_req_op *op;
+	u32 len;
+	int i;
+
+	KUNIT_ASSERT_NOT_NULL(test, wire);
+	req = test_read(test, osdc, TEST_POOL_REP, "obj",
+			CEPH_OSD_OP_SPARSE_READ, 0, 4 * TEST_CHUNK, 0);
+	op = &req->r_ops[0];
+	KUNIT_ASSERT_EQ(test, ceph_alloc_sparse_ext_map(op, 16), 0);
+	ceph_osdc_start_request(osdc, req);
+
+	len = test_sparse_wire(wire, ext, ARRAY_SIZE(ext));
+	test_receive(test, req, &len, wire, len);
+	KUNIT_EXPECT_TRUE(test, completion_done(&req->r_completion));
+	KUNIT_EXPECT_EQ(test, req->r_result, len);
+	KUNIT_ASSERT_EQ(test, op->extent.sparse_ext_cnt, ARRAY_SIZE(ext));
+	for (i = 0; i < ARRAY_SIZE(ext); i++) {
+		KUNIT_EXPECT_EQ(test, op->extent.sparse_ext[i].off, ext[i].off);
+		KUNIT_EXPECT_EQ(test, op->extent.sparse_ext[i].len, ext[i].len);
+	}
+	test_check_sparse(test, test_pages(req, 0), 0, ext, ARRAY_SIZE(ext));
+	test_put(test, req);
+
+	/* no extents at all */
+	req = test_read(test, osdc, TEST_POOL_REP, "obj",
+			CEPH_OSD_OP_SPARSE_READ, 0, 4 * TEST_CHUNK, 0);
+	op = &req->r_ops[0];
+	KUNIT_ASSERT_EQ(test, ceph_alloc_sparse_ext_map(op, 16), 0);
+	ceph_osdc_start_request(osdc, req);
+	len = test_sparse_wire(wire, ext, 0);
+	test_receive(test, req, &len, wire, len);
+	KUNIT_EXPECT_TRUE(test, completion_done(&req->r_completion));
+	KUNIT_EXPECT_EQ(test, op->extent.sparse_ext_cnt, 0);
+	test_put(test, req);
+}
+
+/* A read and an op with a reply, as the sub-reads of split reads have. */
+static struct ceph_osd_request *test_multi_read(struct kunit *test,
+						struct ceph_osd_client *osdc,
+						int opcode, u64 len)
+{
+	struct ceph_osd_request *req;
+	struct page **pages;
+
+	req = ceph_osdc_alloc_request(osdc, NULL, 2, false, GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, req);
+	ceph_oid_printf(&req->r_base_oid, "obj");
+	req->r_base_oloc.pool = TEST_POOL_REP;
+	req->r_flags = CEPH_OSD_FLAG_READ;
+	req->r_multi_data = true;
+
+	osd_req_op_extent_init(req, 0, opcode, 0, len, 0, 0);
+	pages = ceph_alloc_page_vector(calc_pages_for(0, len), GFP_KERNEL);
+	KUNIT_ASSERT_FALSE(test, IS_ERR(pages));
+	osd_req_op_extent_osd_data_pages(req, 0, pages, len, 0, false, true);
+	if (opcode == CEPH_OSD_OP_SPARSE_READ)
+		KUNIT_ASSERT_EQ(test,
+				ceph_alloc_sparse_ext_map(&req->r_ops[0], 16),
+				0);
+
+	osd_req_op_init(req, 1, CEPH_OSD_OP_GET_INTERNAL_VERSIONS_V2, 0);
+	pages = ceph_alloc_page_vector(1, GFP_KERNEL);
+	KUNIT_ASSERT_FALSE(test, IS_ERR(pages));
+	osd_req_op_raw_data_in_pages(req, 1, pages, PAGE_SIZE, 0, false, true);
+	KUNIT_ASSERT_EQ(test, ceph_osdc_alloc_messages(req, GFP_KERNEL), 0);
+
+	ceph_osdc_start_request(osdc, req);
+	return req;
+}
+
+/* @n bytes of the versions op's reply after @len bytes of @wire */
+static void test_check_tail(struct kunit *test, struct ceph_osd_request *req,
+			    const u8 *wire, int len, int n)
+{
+	u8 *buf = kunit_kmalloc(test, n, GFP_KERNEL);
+
+	KUNIT_ASSERT_NOT_NULL(test, buf);
+	ceph_copy_from_page_vector(test_pages(req, 1), buf, 0, n);
+	KUNIT_EXPECT_MEMEQ(test, buf, wire + len, n);
+	kunit_kfree(test, buf);
+}
+
+/* A short read and the next op's data, each into its own buffer */
+static void multi_data_receive_test(struct kunit *test)
+{
+	static const u32 reads[] = { 5000, 0, 2 * TEST_CHUNK };
+	struct ceph_osd_client *osdc = test_osdc(test, &client_map);
+	u8 *wire = kunit_kzalloc(test, 4 * TEST_CHUNK, GFP_KERNEL);
+	int i, j;
+
+	KUNIT_ASSERT_NOT_NULL(test, wire);
+	for (i = 0; i < ARRAY_SIZE(reads); i++) {
+		struct ceph_osd_request *req;
+		u32 lens[2] = { reads[i], 30 };
+
+		for (j = 0; j < reads[i]; j++)
+			wire[j] = test_byte(j);
+		for (j = 0; j < 30; j++)
+			wire[reads[i] + j] = 0xa0 + j;
+
+		req = test_multi_read(test, osdc, CEPH_OSD_OP_READ,
+				      2 * TEST_CHUNK);
+		test_receive(test, req, lens, wire, lens[0] + lens[1]);
+		KUNIT_EXPECT_TRUE(test, completion_done(&req->r_completion));
+		KUNIT_EXPECT_EQ(test, req->r_ops[0].outdata_len, reads[i]);
+		KUNIT_EXPECT_EQ(test, req->r_ops[1].outdata_len, 30);
+		test_check_data(test, test_pages(req, 0), 0, reads[i]);
+		test_check_tail(test, req, wire, reads[i], 30);
+		test_put(test, req);
+	}
+}
+
+/* A sparse read and a plain op in one reply (F4 again) */
+static void sparse_plain_receive_test(struct kunit *test)
+{
+	static const struct ceph_sparse_extent ext[] = { { 1024, 1000 } };
+	struct ceph_osd_client *osdc = test_osdc(test, &client_map);
+	u8 *wire = kunit_kzalloc(test, 4 * TEST_CHUNK, GFP_KERNEL);
+	struct ceph_osd_request *req;
+	u32 lens[2];
+	int j;
+
+	KUNIT_ASSERT_NOT_NULL(test, wire);
+	lens[0] = test_sparse_wire(wire, ext, 1);
+	lens[1] = 30;
+	for (j = 0; j < 30; j++)
+		wire[lens[0] + j] = 0xa0 + j;
+
+	req = test_multi_read(test, osdc, CEPH_OSD_OP_SPARSE_READ,
+			      2 * TEST_CHUNK);
+	test_receive(test, req, lens, wire, lens[0] + lens[1]);
+	KUNIT_EXPECT_TRUE(test, completion_done(&req->r_completion));
+	KUNIT_ASSERT_EQ(test, req->r_ops[0].extent.sparse_ext_cnt, 1);
+	KUNIT_EXPECT_EQ(test, req->r_ops[0].extent.sparse_ext[0].off, 1024);
+	test_check_sparse(test, test_pages(req, 0), 0, ext, 1);
+	test_check_tail(test, req, wire, lens[0], 30);
+	test_put(test, req);
+}
+
+/* Objects o0, o1, ... in the PG of o0 of @pool, up to @n: how many. */
+static int test_pg_objects(struct ceph_osd_client *osdc, s64 pool,
+			   char (*names)[16], int n, u32 *seed)
+{
+	struct ceph_osds acting;
+	struct ceph_pg pgid;
+	char name[16];
+	int i, found = 0;
+
+	for (i = 0; i < 256 && found < n; i++) {
+		snprintf(name, sizeof(name), "o%d", i);
+		test_acting(osdc, pool, name, &pgid, &acting);
+		if (!i)
+			*seed = pgid.seed;
+		if (pgid.seed == *seed)
+			strscpy(names[found++], name, sizeof(names[0]));
+	}
+	return found;
+}
+
+/*
+ * Four objects of a PG of TEST_POOL_REP that is migrating to
+ * TEST_POOL_DST, in object order, and reads of them sent in another order.
+ */
+struct test_migration {
+	struct kunit *test;
+	struct ceph_osd_client *osdc;
+	char names[4][16];
+	struct ceph_osd_request_target t[4];
+	struct ceph_hobject_id hoids[4];
+	struct ceph_osd_request *reqs[4];
+	u64 tids[4];
+};
+
+static void test_migration_done(void *arg)
+{
+	struct test_migration *tm = arg;
+	int i;
+
+	for (i = 0; i < 4; i++) {
+		if (tm->reqs[i])
+			test_put(tm->test, tm->reqs[i]);
+		target_destroy(&tm->t[i]);
+	}
+}
+
+/* Fill @tm's targets and object ids from its names. */
+static void test_migration_hoids(struct test_migration *tm)
+{
+	struct ceph_pg_pool_info *pi;
+	int i;
+
+	pi = ceph_pg_pool_by_id(tm->osdc->osdmap, TEST_POOL_REP);
+	for (i = 0; i < 4; i++) {
+		struct ceph_osd_request_target *t = &tm->t[i];
+
+		target_destroy(t);
+		target_init(t);
+		ceph_oid_printf(&t->target_oid, "%s", tm->names[i]);
+		t->target_oloc.pool = TEST_POOL_REP;
+		__ceph_object_locator_to_pg(pi, &t->target_oid,
+					    &t->target_oloc, &t->pgid);
+		hoid_fill_from_target(&tm->hoids[i], t);
+	}
+}
+
+static struct test_migration *test_migration(struct kunit *test)
+{
+	static const int send_order[] = { 2, 0, 3, 1 };
+	struct test_migration *tm = kunit_kzalloc(test, sizeof(*tm),
+						  GFP_KERNEL);
+	struct test_osdmap *map = ceph_kunit_osdmap_dup(test, &client_map);
+	char names[4][16];
+	int rank[4] = {};
+	u32 seed;
+	int i, j;
+
+	KUNIT_ASSERT_NOT_NULL(test, tm);
+	tm->test = test;
+	tm->osdc = test_osdc(test, &client_map);
+	KUNIT_ASSERT_EQ(test, test_pg_objects(tm->osdc, TEST_POOL_REP,
+					      tm->names, 4, &seed), 4);
+	for (i = 0; i < 4; i++)
+		target_init(&tm->t[i]);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test,
+							test_migration_done,
+							tm), 0);
+
+	/* put the objects in order */
+	test_migration_hoids(tm);
+	for (i = 0; i < 4; i++) {
+		for (j = 0; j < 4; j++) {
+			if (hoid_compare(&tm->hoids[j], &tm->hoids[i]) < 0)
+				rank[i]++;
+		}
+	}
+	memcpy(names, tm->names, sizeof(names));
+	for (i = 0; i < 4; i++)
+		strscpy(tm->names[rank[i]], names[i], sizeof(names[0]));
+	test_migration_hoids(tm);
+
+	map->pools[0].migration_target = TEST_POOL_DST;
+	map->pools[0].num_migrating_pgs = 1;
+	map->pools[0].migrating_pgs[0] = seed;
+	map->pools[3].migration_src = TEST_POOL_REP;
+	map->pools[3].migration_root = TEST_POOL_REP;
+	test_apply_map(test, tm->osdc, map);
+
+	for (i = 0; i < 4; i++) {
+		int k = send_order[i];
+
+		tm->reqs[k] = test_read(test, tm->osdc, TEST_POOL_REP,
+					tm->names[k], CEPH_OSD_OP_READ, 0, 100,
+					0);
+		ceph_osdc_start_request(tm->osdc, tm->reqs[k]);
+		tm->tids[k] = tm->reqs[k]->r_tid;
+		KUNIT_ASSERT_EQ(test, tm->reqs[k]->r_t.target_oloc.pool,
+				TEST_POOL_REP);
+	}
+	return tm;
+}
+
+/* The pool a new read of object @i of @tm goes to */
+static s64 test_route_new(struct kunit *test, struct test_migration *tm,
+			  int i)
+{
+	struct ceph_osd_request *req;
+	s64 pool;
+
+	req = test_read(test, tm->osdc, TEST_POOL_REP, tm->names[i],
+			CEPH_OSD_OP_READ, 0, 100, 0);
+	ceph_osdc_start_request(tm->osdc, req);
+	pool = req->r_t.target_oloc.pool;
+	test_put(test, req);
+	return pool;
+}
+
+/*
+ * A migration redirect moves the PG's watermark forward only, and resends
+ * the requests for the objects it passed, and the redirected one, in the
+ * order they were sent; the other requests stay.
+ */
+static void migration_redirect_test(struct kunit *test)
+{
+	struct test_migration *tm = test_migration(test);
+	u64 max_tid = max(max(tm->tids[0], tm->tids[1]),
+			  max(tm->tids[2], tm->tids[3]));
+
+	/* objects 0 has migrated */
+	test_reply(test, tm->reqs[0], 0, NULL, NULL, &tm->hoids[1]);
+	KUNIT_EXPECT_EQ(test, tm->reqs[0]->r_t.target_oloc.pool,
+			TEST_POOL_DST);
+	KUNIT_EXPECT_GT(test, tm->reqs[0]->r_tid, max_tid);
+	KUNIT_EXPECT_EQ(test, tm->reqs[1]->r_tid, tm->tids[1]);
+	KUNIT_EXPECT_EQ(test, tm->reqs[2]->r_tid, tm->tids[2]);
+	KUNIT_EXPECT_EQ(test, test_route_new(test, tm, 0), TEST_POOL_DST);
+	KUNIT_EXPECT_EQ(test, test_route_new(test, tm, 1), TEST_POOL_REP);
+
+	/* objects 1 and 2 too: object 2 was sent first */
+	max_tid = tm->reqs[0]->r_tid;
+	test_reply(test, tm->reqs[2], 0, NULL, NULL, &tm->hoids[3]);
+	KUNIT_EXPECT_EQ(test, tm->reqs[1]->r_t.target_oloc.pool,
+			TEST_POOL_DST);
+	KUNIT_EXPECT_EQ(test, tm->reqs[2]->r_t.target_oloc.pool,
+			TEST_POOL_DST);
+	KUNIT_EXPECT_GT(test, tm->reqs[2]->r_tid, max_tid);
+	KUNIT_EXPECT_GT(test, tm->reqs[1]->r_tid, tm->reqs[2]->r_tid);
+	KUNIT_EXPECT_EQ(test, tm->reqs[3]->r_tid, tm->tids[3]);
+	KUNIT_EXPECT_EQ(test, tm->reqs[3]->r_t.target_oloc.pool,
+			TEST_POOL_REP);
+
+	/* a late redirect with a lower watermark doesn't take it back */
+	test_reply(test, tm->reqs[3], 0, NULL, NULL, &tm->hoids[1]);
+	KUNIT_EXPECT_EQ(test, tm->reqs[3]->r_t.target_oloc.pool,
+			TEST_POOL_REP);
+	KUNIT_EXPECT_NE(test, tm->reqs[3]->r_tid, tm->tids[3]);
+	KUNIT_EXPECT_EQ(test, test_route_new(test, tm, 2), TEST_POOL_DST);
+	KUNIT_EXPECT_EQ(test, test_route_new(test, tm, 1), TEST_POOL_DST);
+}
+
+/* A copy of @hoid as a reply decodes it, for the client to own */
+static struct ceph_hobject_id *test_hoid_dup(struct kunit *test,
+					     const struct ceph_hobject_id *hoid)
+{
+	struct ceph_hobject_id *dup = kzalloc_obj(*dup, GFP_KERNEL);
+
+	KUNIT_ASSERT_NOT_NULL(test, dup);
+	*dup = *hoid;
+	dup->key = NULL;
+	dup->key_len = 0;
+	dup->nspace = NULL;
+	dup->nspace_len = 0;
+	dup->oid = kmemdup(hoid->oid, hoid->oid_len, GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, dup->oid);
+	return dup;
+}
+
+/*
+ * Without memory to keep a PG's first watermark, the redirected request
+ * fails with -ENOMEM rather than going back to the source to be
+ * redirected again, and the other requests stay where they are.
+ */
+static void migration_wm_nomem_test(struct kunit *test)
+{
+	struct test_migration *tm = test_migration(test);
+	struct ceph_osd_client *osdc = tm->osdc;
+	struct ceph_osd_request *req = tm->reqs[0];
+	struct ceph_hobject_id *wm = test_hoid_dup(test, &tm->hoids[1]);
+
+	down_write(&osdc->lock);
+	handle_migration_redirect(osdc, req->r_osd, &req->r_t.spgid.pgid, wm,
+				  NULL, req->r_tid);
+	up_write(&osdc->lock);
+	flush_workqueue(osdc->completion_wq);
+
+	KUNIT_EXPECT_EQ(test, req->r_result, -ENOMEM);
+	KUNIT_EXPECT_EQ(test, tm->reqs[1]->r_tid, tm->tids[1]);
+	KUNIT_EXPECT_EQ(test, tm->reqs[2]->r_tid, tm->tids[2]);
+	KUNIT_EXPECT_EQ(test, test_route_new(test, tm, 0), TEST_POOL_REP);
+}
+
+/*
+ * A PG merge in the pool that a finished migration sends requests to.  The
+ * merge target is on the merge source's OSDs (pgp_num is reduced first),
+ * which drop requests for the source, so the request moves only because
+ * the monitors force a resend in that pool (last_force_op_resend_prenautilus).
+ */
+static void migration_merge_test(struct kunit *test)
+{
+	struct test_osdmap *tm = ceph_kunit_osdmap_dup(test, &client_map);
+	struct ceph_osd_client *osdc;
+	struct ceph_osd_request *req;
+	struct ceph_osds acting, merged;
+	struct ceph_pg pgid;
+	char name[16];
+	int i;
+
+	tm->pools[0].migration_target = TEST_POOL_DST;
+	tm->pools[3].migration_root = TEST_POOL_REP;
+	tm->pools[3].pgp_num = 4;
+	osdc = test_osdc(test, tm);
+	for (i = 0; i < 256; i++) {
+		snprintf(name, sizeof(name), "o%d", i);
+		test_acting(osdc, TEST_POOL_DST, name, &pgid, &acting);
+		if (pgid.seed == 7)
+			break;
+	}
+	KUNIT_ASSERT_LT(test, i, 256);
+	req = test_read(test, osdc, TEST_POOL_REP, name, CEPH_OSD_OP_READ, 0,
+			100, 0);
+	ceph_osdc_start_request(osdc, req);
+	KUNIT_ASSERT_EQ(test, req->r_t.target_oloc.pool, TEST_POOL_DST);
+	KUNIT_ASSERT_EQ(test, req->r_t.spgid.pgid.seed, 7);
+
+	/* PG 7 merges into PG 3 */
+	tm->pools[3].pg_num = 7;
+	tm->pools[3].last_force_resend = osdc->osdmap->epoch + 1;
+	test_apply_map(test, osdc, tm);
+	test_acting(osdc, TEST_POOL_DST, name, &pgid, &merged);
+	KUNIT_ASSERT_EQ(test, pgid.seed, 3);
+	KUNIT_ASSERT_EQ(test, merged.primary, acting.primary);
+	KUNIT_EXPECT_EQ(test, req->r_attempts, 2);
+	KUNIT_EXPECT_EQ(test, req->r_t.spgid.pgid.seed, 3);
+	test_put(test, req);
+}
+
+/* Watches on the redirected OSD follow objects that have migrated. */
+static void migration_linger_test(struct kunit *test)
+{
+	struct test_migration *tm = test_migration(test);
+	struct ceph_osd_linger_request *lreq;
+	struct ceph_osds acting;
+	struct ceph_pg pgid;
+	u64 tid;
+
+	lreq = test_watch(test, tm->osdc, TEST_POOL_REP, tm->names[0]);
+	tid = test_linger_tid(lreq);
+	KUNIT_EXPECT_EQ(test, lreq->t.target_oloc.pool, TEST_POOL_REP);
+
+	test_reply(test, tm->reqs[1], 0, NULL, NULL, &tm->hoids[2]);
+	test_acting(tm->osdc, TEST_POOL_DST, tm->names[0], &pgid, &acting);
+	KUNIT_EXPECT_EQ(test, lreq->t.target_oloc.pool, TEST_POOL_DST);
+	KUNIT_EXPECT_EQ(test, lreq->osd->o_osd, acting.primary);
+	KUNIT_EXPECT_GT(test, test_linger_tid(lreq), tid);
+	test_unwatch(lreq);
+}
+
+/*
+ * A single-chunk direct read redirected to a replicated pool by a pool
+ * migration goes to the primary there, as a plain read: OSDs fail EC
+ * direct reads on pools without EC optimizations with -EOPNOTSUPP.
+ */
+static void direct_read_migration_redirect_test(struct kunit *test)
+{
+	struct test_osdmap *tm = ceph_kunit_osdmap_dup(test, &client_map);
+	struct ceph_osd_client *osdc = test_osdc(test, &client_map);
+	struct ceph_osd_request *reqs[2], *req;
+	struct ceph_hobject_id hoids[2];
+	struct ceph_osds acting;
+	struct ceph_pg pgid;
+	char names[2][16];
+	u32 seed;
+	int i;
+
+	KUNIT_ASSERT_EQ(test, test_pg_objects(osdc, TEST_POOL_EC, names, 2,
+					      &seed), 2);
+	tm->pools[1].migration_target = TEST_POOL_DST;
+	tm->pools[1].num_migrating_pgs = 1;
+	tm->pools[1].migrating_pgs[0] = seed;
+	tm->pools[3].migration_src = TEST_POOL_EC;
+	tm->pools[3].migration_root = TEST_POOL_EC;
+	test_apply_map(test, osdc, tm);
+
+	test_acting(osdc, TEST_POOL_EC, names[0], &pgid, &acting);
+	for (i = 0; i < 2; i++) {
+		reqs[i] = test_read(test, osdc, TEST_POOL_EC, names[i],
+				    CEPH_OSD_OP_READ, TEST_CHUNK, 1000,
+				    CEPH_OSD_FLAG_BALANCE_READS);
+		ceph_osdc_start_request(osdc, reqs[i]);
+		KUNIT_ASSERT_EQ(test, test_osd(reqs[i]), acting.osds[1]);
+		hoid_fill_from_target(&hoids[i], &reqs[i]->r_t);
+	}
+
+	/* the shard redirects the object that sorts first */
+	i = hoid_compare(&hoids[0], &hoids[1]) > 0;
+	req = reqs[i];
+	test_reply(test, req, -ENOENT, NULL, NULL, &hoids[!i]);
+	test_acting(osdc, TEST_POOL_DST, names[i], &pgid, &acting);
+	KUNIT_EXPECT_EQ(test, req->r_t.target_oloc.pool, TEST_POOL_DST);
+	KUNIT_EXPECT_FALSE(test, req->r_flags & CEPH_OSD_FLAG_EC_DIRECT_READ);
+	KUNIT_EXPECT_EQ(test, test_osd(req), acting.primary);
+
+	for (i = 0; i < 2; i++)
+		test_put(test, reqs[i]);
+}
+
+/*
  * A split read cancelled and released by its owner while its sub-reads
  * are out, as ceph_osdc_wait_request() leaves one when interrupted: the
  * sub-reads complete without touching the parent (KASAN).
@@ -1953,6 +2550,70 @@ static void split_read_cancel_release_test(struct kunit *test)
 	test_sub_error(test, sp, 0, -EIO);
 	test_sub_error(test, sp, 1, -EIO);	/* the last finishes it */
 	KUNIT_EXPECT_EQ(test, atomic_read(&osdc->num_requests), 0);
+}
+
+/* An object of @pool in a PG other than 0, and its PG */
+static void test_pg_not_0(struct ceph_osd_client *osdc, s64 pool, char *name,
+			  struct ceph_pg *pgid)
+{
+	struct ceph_osds acting;
+	int i;
+
+	for (i = 0; i < 64; i++) {
+		snprintf(name, 16, "o%d", i);
+		test_acting(osdc, pool, name, pgid, &acting);
+		if (pgid->seed)
+			return;
+	}
+}
+
+/*
+ * Whether the object's PG is migrating is kept for that PG, not for
+ * last_pgid, which is PG 0 on a target's first calculation.  Otherwise,
+ * with PG 0 not migrating and the object's PG migrating, a single-chunk
+ * direct read would go to the primary as it is submitted (calc_target()
+ * runs twice then), and a watch would be resent on an unrelated map change.
+ */
+static void pg_migrating_first_calc_test(struct kunit *test)
+{
+	struct test_osdmap *tm = ceph_kunit_osdmap_dup(test, &client_map);
+	struct ceph_osd_client *osdc = test_osdc(test, &client_map);
+	struct ceph_osd_linger_request *lreq;
+	struct ceph_osd_request *req;
+	struct ceph_osds acting;
+	struct ceph_pg pgid;
+	char rep[16], ec[16];
+	u64 tid;
+
+	test_pg_not_0(osdc, TEST_POOL_REP, rep, &pgid);
+	KUNIT_ASSERT_NE(test, pgid.seed, 0);
+	tm->pools[0].migration_target = TEST_POOL_DST;
+	tm->pools[0].num_migrating_pgs = 1;
+	tm->pools[0].migrating_pgs[0] = pgid.seed;
+	tm->pools[3].migration_src = TEST_POOL_REP;
+	tm->pools[3].migration_root = TEST_POOL_REP;
+	test_pg_not_0(osdc, TEST_POOL_EC, ec, &pgid);
+	KUNIT_ASSERT_NE(test, pgid.seed, 0);
+	tm->pools[1].migration_target = TEST_POOL_EC_ZONES;
+	tm->pools[1].num_migrating_pgs = 1;
+	tm->pools[1].migrating_pgs[0] = pgid.seed;
+	tm->pools[2].migration_src = TEST_POOL_EC;
+	tm->pools[2].migration_root = TEST_POOL_EC;
+	test_apply_map(test, osdc, tm);
+
+	test_acting(osdc, TEST_POOL_EC, ec, &pgid, &acting);
+	req = test_read(test, osdc, TEST_POOL_EC, ec, CEPH_OSD_OP_READ,
+			TEST_CHUNK, 1000, CEPH_OSD_FLAG_BALANCE_READS);
+	ceph_osdc_start_request(osdc, req);
+	KUNIT_EXPECT_EQ(test, test_osd(req), acting.osds[1]);
+	test_put(test, req);
+
+	lreq = test_watch(test, osdc, TEST_POOL_REP, rep);
+	tid = test_linger_tid(lreq);
+	tm->pools[3].min_size = 1;		/* an unrelated change */
+	test_apply_map(test, osdc, tm);
+	KUNIT_EXPECT_EQ(test, test_linger_tid(lreq), tid);
+	test_unwatch(lreq);
 }
 
 static struct kunit_case ceph_osd_client_test_cases[] = {
@@ -2012,6 +2673,35 @@ static struct kunit_suite ceph_osd_client_split_test_suite = {
 	.test_cases = ceph_osd_client_split_test_cases,
 };
 
+static struct kunit_case ceph_osd_client_reply_test_cases[] = {
+	KUNIT_CASE(sparse_read_receive_test),
+	KUNIT_CASE(multi_data_receive_test),
+	KUNIT_CASE(sparse_plain_receive_test),
+	{}
+};
+
+static struct kunit_suite ceph_osd_client_reply_test_suite = {
+	.name = "ceph_osd_client_reply",
+	.test_cases = ceph_osd_client_reply_test_cases,
+};
+
+static struct kunit_case ceph_osd_client_migration_test_cases[] = {
+	KUNIT_CASE(migration_redirect_test),
+	KUNIT_CASE(migration_wm_nomem_test),
+	KUNIT_CASE(migration_linger_test),
+	KUNIT_CASE(direct_read_migration_redirect_test),
+	KUNIT_CASE(pg_migrating_first_calc_test),
+	KUNIT_CASE(migration_merge_test),
+	{}
+};
+
+static struct kunit_suite ceph_osd_client_migration_test_suite = {
+	.name = "ceph_osd_client_migration",
+	.test_cases = ceph_osd_client_migration_test_cases,
+};
+
 kunit_test_suites(&ceph_osd_client_test_suite,
 		  &ceph_osd_client_target_test_suite,
-		  &ceph_osd_client_split_test_suite);
+		  &ceph_osd_client_split_test_suite,
+		  &ceph_osd_client_reply_test_suite,
+		  &ceph_osd_client_migration_test_suite);

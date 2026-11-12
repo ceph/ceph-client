@@ -25,6 +25,7 @@ struct test_pool {
 	u8 min_size;			/* size - 1 if 0 */
 	u8 crush_rule;
 	u32 pg_num;
+	u32 pgp_num;			/* pg_num if 0 */
 	u64 flags;
 	u32 stripe_width;
 	u64 nonprimary_shards[2];
@@ -41,6 +42,7 @@ struct test_pool {
 	s64 tier_of;			/* none if 0 */
 	s64 tier;			/* the one entry of tiers if not 0 */
 	s64 dedup_tier;			/* in opts if not 0 */
+	u32 last_force_resend;		/* last_force_op_resend_prenautilus */
 };
 
 /* pg_temp, or primary_temp and pg_upmap_primaries in osds[0] */
