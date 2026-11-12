@@ -1624,7 +1624,8 @@ static u32 ec_data_shards(const struct ceph_pg_pool_info *pi)
 {
 	if (pi->ec_data_shard_count)
 		return pi->ec_data_shard_count;
-	return bitmap_weight(pi->nonprimary_shards, CEPH_POOL_MAX_SHARDS) + 1;
+	return bitmap_weight(pi->nonprimary_shards, CEPH_POOL_MAX_SHARDS) /
+	       pi->num_zones + 1;
 }
 
 /* The shard that holds data shard @raw, or -1. */

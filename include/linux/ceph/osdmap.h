@@ -80,8 +80,22 @@ struct ceph_pg_pool_info {
 	u32 num_migrating_pgs;
 	u32 lowest_migrated_pg;
 
+	u8 num_zones;
+
 	bool was_full;  /* for handle_one_map() */
 };
+
+static inline int ceph_pool_zone_size(const struct ceph_pg_pool_info *pi)
+{
+	return pi->size / pi->num_zones;
+}
+
+/* The position of @shard within its zone. */
+static inline int ceph_pool_relative_shard(const struct ceph_pg_pool_info *pi,
+					   int shard)
+{
+	return shard % ceph_pool_zone_size(pi);
+}
 
 static inline bool ceph_can_shift_osds(struct ceph_pg_pool_info *pool)
 {
