@@ -1167,6 +1167,11 @@ ssize_t __ceph_sync_read(struct inode *inode, loff_t *ki_pos,
 			break;
 		}
 
+		/* only the primary can be trusted with the object version */
+		if (last_objver)
+			req->r_flags &= ~(CEPH_OSD_FLAG_BALANCE_READS |
+					  CEPH_OSD_FLAG_LOCALIZE_READS);
+
 		/* adjust len downward if the request truncated the len */
 		if (off + len > read_off + read_len)
 			len = read_off + read_len - off;
@@ -1908,6 +1913,10 @@ ceph_sync_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos,
 				ret = PTR_ERR(req);
 				break;
 			}
+
+			/* assert_ver must come from the primary */
+			req->r_flags &= ~(CEPH_OSD_FLAG_BALANCE_READS |
+					  CEPH_OSD_FLAG_LOCALIZE_READS);
 
 			/* Something is misaligned! */
 			if (read_len != CEPH_FSCRYPT_BLOCK_SIZE) {
