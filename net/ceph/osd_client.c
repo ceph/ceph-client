@@ -57,6 +57,10 @@ static void unlink_linger(struct ceph_osd *osd,
 			  struct ceph_osd_linger_request *lreq);
 static void clear_backoffs(struct ceph_osd *osd);
 static void kick_osd_requests(struct ceph_osd *osd);
+static bool below_migration_wm(struct ceph_osd_client *osdc,
+			       const struct ceph_osd_request_target *t,
+			       const struct ceph_pg *raw_pgid,
+			       const struct ceph_pg *pgid);
 
 #if 1
 static inline bool rwsem_is_wrlocked(struct rw_semaphore *sem)
@@ -1610,8 +1614,8 @@ static bool has_pg_migrated(const struct ceph_pg_pool_info *pi, u32 seed)
  * that holds the object, as Objecter does.  The tip of a migration chain
  * carries the pool's name, so go back to the chain's root first, then to
  * the latest source, and on to the target once the object's PG has
- * migrated.  Ops for a pool flagged EIO on the way are sent to it, for its
- * OSDs to fail them.
+ * migrated or the object sorts below the PG's watermark.  Ops for a pool
+ * flagged EIO on the way are sent to it, for its OSDs to fail them.
  */
 static int calc_migration_target(struct ceph_osd_client *osdc,
 				 struct ceph_osd_request_target *t,
@@ -1653,7 +1657,13 @@ static int calc_migration_target(struct ceph_osd_client *osdc,
 		pgid.pool = raw_pgid.pool;
 		pgid.seed = ceph_stable_mod(raw_pgid.seed, pi->pg_num,
 					    pi->pg_num_mask);
-		migrated = has_pg_migrated(pi, pgid.seed);
+		if (has_pg_migrated(pi, pgid.seed))
+			migrated = true;
+		else if (is_pg_migrating(pi, pgid.seed))
+			migrated = below_migration_wm(osdc, t, &raw_pgid,
+						      &pgid);
+		else
+			migrated = false;
 	}
 	if (migrated)
 		pi = tpi;
@@ -2135,6 +2145,57 @@ static void hoid_fill_from_target(struct ceph_hobject_id *hoid,
 	}
 	hoid->pool = t->target_oloc.pool;
 	ceph_hoid_build_hash_cache(hoid);
+}
+
+/*
+ * The migration watermark of a PG of a migration source: objects that
+ * sort below it are in the target pool.
+ */
+struct migration_wm {
+	struct rb_node node;
+	struct ceph_pg pgid;
+	struct ceph_hobject_id *wm;
+};
+
+static struct migration_wm *alloc_migration_wm(void)
+{
+	struct migration_wm *mw;
+
+	mw = kzalloc_obj(*mw, GFP_NOIO);
+	if (!mw)
+		return NULL;
+
+	RB_CLEAR_NODE(&mw->node);
+	return mw;
+}
+
+static void free_migration_wm(struct migration_wm *mw)
+{
+	WARN_ON(!RB_EMPTY_NODE(&mw->node));
+
+	free_hoid(mw->wm);
+	kfree(mw);
+}
+
+DEFINE_RB_FUNCS2(migration_wm, struct migration_wm, pgid, ceph_pg_compare,
+		 RB_BYPTR, const struct ceph_pg *, node)
+
+static bool below_migration_wm(struct ceph_osd_client *osdc,
+			       const struct ceph_osd_request_target *t,
+			       const struct ceph_pg *raw_pgid,
+			       const struct ceph_pg *pgid)
+{
+	struct migration_wm *mw;
+	struct ceph_hobject_id hoid;
+
+	mw = lookup_migration_wm(&osdc->migration_wms, pgid);
+	if (!mw)
+		return false;
+
+	hoid_fill_from_target(&hoid, t);
+	hoid.hash = raw_pgid->seed;
+	ceph_hoid_build_hash_cache(&hoid);
+	return hoid_compare(&hoid, mw->wm) < 0;
 }
 
 static bool should_plug_request(struct ceph_osd_request *req)
@@ -3910,6 +3971,121 @@ e_inval:
 	return -EINVAL;
 }
 
+/* Compare @hoid with the head of the watermark @wm. */
+static int hoid_compare_wm(const struct ceph_hobject_id *hoid,
+			   const struct ceph_hobject_id *wm)
+{
+	struct ceph_hobject_id head = *wm;
+
+	head.snapid = CEPH_NOSNAP;
+	return hoid_compare(hoid, &head);
+}
+
+/*
+ * The source of a pool migration redirected request @tid because its
+ * object has migrated, with PG @pgid's watermark @wm.  Resend, in tid
+ * order, the requests on @osd for objects between the old watermark and
+ * @wm, @tid among them, so that they reach the target in the order they
+ * were sent.  Replies to the old tids are ignored.  @new_mw keeps the
+ * watermark of a PG that has none yet: without it, request @tid fails with
+ * -ENOMEM rather than going back to the source.  Takes ownership of @wm
+ * and @new_mw.
+ */
+static void handle_migration_redirect(struct ceph_osd_client *osdc,
+				      struct ceph_osd *osd,
+				      const struct ceph_pg *pgid,
+				      struct ceph_hobject_id *wm,
+				      struct migration_wm *new_mw, u64 tid)
+{
+	struct migration_wm *mw;
+	struct rb_root resend = RB_ROOT;
+	struct rb_node *n;
+
+	verify_osdc_wrlocked(osdc);
+
+	mw = lookup_migration_wm(&osdc->migration_wms, pgid);
+	if (!mw && !new_mw) {
+		struct ceph_osd_request *req;
+
+		mutex_lock(&osd->lock);
+		req = lookup_request(&osd->o_requests, tid);
+		if (req)
+			complete_request(req, -ENOMEM);
+		mutex_unlock(&osd->lock);
+		free_hoid(wm);
+		return;
+	}
+
+	mutex_lock(&osd->lock);
+	for (n = rb_first(&osd->o_requests); n; ) {
+		struct ceph_osd_request *req =
+		    rb_entry(n, struct ceph_osd_request, r_node);
+		struct ceph_hobject_id hoid;
+
+		n = rb_next(n); /* unlink_request() */
+
+		if (ceph_pg_compare(&req->r_t.spgid.pgid, pgid))
+			continue;
+
+		hoid_fill_from_target(&hoid, &req->r_t);
+		if (req->r_tid != tid &&
+		    ((mw && hoid_compare_wm(&hoid, mw->wm) < 0) ||
+		     hoid_compare_wm(&hoid, wm) >= 0))
+			continue;
+
+		dout("%s req %p tid %llu resend\n", __func__, req, req->r_tid);
+		cancel_map_check(req);
+		unlink_request(osd, req);
+		insert_request(&resend, req);
+	}
+	mutex_unlock(&osd->lock);
+
+	if (!mw) {
+		mw = new_mw;
+		new_mw = NULL;
+		mw->pgid = *pgid;
+		swap(mw->wm, wm);
+		insert_migration_wm(&osdc->migration_wms, mw);
+	} else if (hoid_compare(wm, mw->wm) > 0) {
+		swap(mw->wm, wm);
+	}
+	free_hoid(wm);
+	if (new_mw)
+		free_migration_wm(new_mw);
+
+	for (n = rb_first(&resend); n; ) {
+		struct ceph_osd_request *req =
+		    rb_entry(n, struct ceph_osd_request, r_node);
+
+		n = rb_next(n); /* erase_request() */
+
+		erase_request(&resend, req);
+		req->r_tid = 0;
+		__submit_request(req, true);
+	}
+}
+
+/* Forget the watermarks of PGs that are no longer migrating. */
+static void prune_migration_wms(struct ceph_osd_client *osdc)
+{
+	struct rb_node *n;
+
+	for (n = rb_first(&osdc->migration_wms); n; ) {
+		struct migration_wm *mw =
+		    rb_entry(n, struct migration_wm, node);
+		struct ceph_pg_pool_info *pi;
+
+		n = rb_next(n); /* erase_migration_wm() */
+
+		pi = ceph_pg_pool_by_id(osdc->osdmap, mw->pgid.pool);
+		if (pi && is_pg_migrating(pi, mw->pgid.seed))
+			continue;
+
+		erase_migration_wm(&osdc->migration_wms, mw);
+		free_migration_wm(mw);
+	}
+}
+
 /*
  * Handle MOSDOpReply.  Set ->r_result and call the callback if it is
  * specified.
@@ -3964,6 +4140,30 @@ static void handle_reply(struct ceph_osd *osd, struct ceph_msg *msg)
 		}
 	} else {
 		WARN_ON(1); /* MOSDOpReply v4 is assumed */
+	}
+
+	if (m.redirect.migration_wm) {
+		struct ceph_pg pgid = m.pgid; /* struct */
+		struct migration_wm *mw;
+
+		dout("req %p tid %llu migration redirect pool %lld\n", req,
+		     req->r_tid, m.redirect.oloc.pool);
+		mutex_unlock(&osd->lock);
+		up_read(&osdc->lock);
+
+		mw = alloc_migration_wm();
+		down_write(&osdc->lock);
+		if (osd_registered(osd)) {
+			handle_migration_redirect(osdc, osd, &pgid,
+						  m.redirect.migration_wm, mw,
+						  tid);
+		} else {
+			free_hoid(m.redirect.migration_wm);
+			if (mw)
+				free_migration_wm(mw);
+		}
+		up_write(&osdc->lock);
+		return;
 	}
 
 	if (!ceph_oloc_empty(&m.redirect.oloc)) {
@@ -4225,6 +4425,7 @@ static int handle_one_map(struct ceph_osd_client *osdc,
 	}
 
 	was_full &= !ceph_osdmap_flag(osdc, CEPH_OSDMAP_FULL);
+	prune_migration_wms(osdc);
 	scan_requests(&osdc->homeless_osd, skipped_map, was_full, true,
 		      need_resend, need_resend_linger);
 
@@ -5417,6 +5618,7 @@ int ceph_osdc_init(struct ceph_osd_client *osdc, struct ceph_client *client)
 	osdc->linger_requests = RB_ROOT;
 	osdc->map_checks = RB_ROOT;
 	osdc->linger_map_checks = RB_ROOT;
+	osdc->migration_wms = RB_ROOT;
 	INIT_DELAYED_WORK(&osdc->timeout_work, handle_timeout);
 	INIT_DELAYED_WORK(&osdc->osds_timeout_work, handle_osds_timeout);
 
@@ -5493,6 +5695,15 @@ void ceph_osdc_stop(struct ceph_osd_client *osdc)
 	WARN_ON(!RB_EMPTY_ROOT(&osdc->linger_map_checks));
 	WARN_ON(atomic_read(&osdc->num_requests));
 	WARN_ON(atomic_read(&osdc->num_homeless));
+
+	while (!RB_EMPTY_ROOT(&osdc->migration_wms)) {
+		struct migration_wm *mw =
+		    rb_entry(rb_first(&osdc->migration_wms),
+			     struct migration_wm, node);
+
+		erase_migration_wm(&osdc->migration_wms, mw);
+		free_migration_wm(mw);
+	}
 
 	ceph_osdmap_destroy(osdc->osdmap);
 	mempool_destroy(osdc->req_mempool);
