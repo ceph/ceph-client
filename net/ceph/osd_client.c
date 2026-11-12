@@ -3981,12 +3981,16 @@ static int hoid_compare_wm(const struct ceph_hobject_id *hoid,
 	return hoid_compare(hoid, &head);
 }
 
+static enum calc_target_result
+recalc_linger_target(struct ceph_osd_linger_request *lreq);
+
 /*
  * The source of a pool migration redirected request @tid because its
  * object has migrated, with PG @pgid's watermark @wm.  Resend, in tid
  * order, the requests on @osd for objects between the old watermark and
  * @wm, @tid among them, so that they reach the target in the order they
- * were sent.  Replies to the old tids are ignored.  @new_mw keeps the
+ * were sent.  Replies to the old tids are ignored.  Then move the linger
+ * requests on @osd whose objects have migrated.  @new_mw keeps the
  * watermark of a PG that has none yet: without it, request @tid fails with
  * -ENOMEM rather than going back to the source.  Takes ownership of @wm
  * and @new_mw.
@@ -4062,6 +4066,17 @@ static void handle_migration_redirect(struct ceph_osd_client *osdc,
 		erase_request(&resend, req);
 		req->r_tid = 0;
 		__submit_request(req, true);
+	}
+
+	for (n = rb_first(&osd->o_linger_requests); n; ) {
+		struct ceph_osd_linger_request *lreq =
+		    rb_entry(n, struct ceph_osd_linger_request, node);
+
+		n = rb_next(n); /* recalc_linger_target() */
+
+		if (recalc_linger_target(lreq) == CALC_TARGET_NEED_RESEND &&
+		    !osd_homeless(lreq->osd))
+			send_linger(lreq);
 	}
 }
 
