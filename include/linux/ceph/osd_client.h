@@ -233,6 +233,8 @@ struct ceph_osd_request_target {
 
 	unsigned int flags;                /* CEPH_OSD_FLAG_* */
 	bool used_replica;
+	u64 ec_read_off;                   /* the read of a 1-op request */
+	u64 ec_read_len;                   /* ditto */
 	bool paused;
 
 	u32 epoch;
