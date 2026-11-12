@@ -808,6 +808,7 @@ static void __remove_pg_pool(struct rb_root *root, struct ceph_pg_pool_info *pi)
 {
 	erase_pg_pool(root, pi);
 	kfree(pi->name);
+	kfree(pi->migrating_pgs);
 	kfree(pi);
 }
 
@@ -824,6 +825,54 @@ static int decode_shard_id_set(void **p, void *end, unsigned long *bits)
 	}
 	bitmap_from_arr64(bits, words, CEPH_POOL_MAX_SHARDS);
 	return 0;
+}
+
+static int decode_optional_pool_id(void **p, void *end, s64 *id)
+{
+	u8 present;
+
+	ceph_decode_8_safe(p, end, present, e_inval);
+	if (present)
+		ceph_decode_64_safe(p, end, *id, e_inval);
+	else
+		*id = -1;
+	return 0;
+
+e_inval:
+	return -EINVAL;
+}
+
+static int decode_migrating_pgs(void **p, void *end,
+				struct ceph_pg_pool_info *pi)
+{
+	u32 *pgs = NULL;
+	u32 len, i;
+	int ret;
+
+	ceph_decode_32_safe(p, end, len, e_inval);
+	if (len) {
+		pgs = kmalloc_array(len, sizeof(*pgs), GFP_NOIO);
+		if (!pgs)
+			return -ENOMEM;
+	}
+	for (i = 0; i < len; i++) {
+		struct ceph_pg pgid;
+
+		ret = ceph_decode_pgid(p, end, &pgid);
+		if (ret) {
+			kfree(pgs);
+			return ret;
+		}
+		pgs[i] = pgid.seed;
+	}
+
+	kfree(pi->migrating_pgs);
+	pi->migrating_pgs = pgs;
+	pi->num_migrating_pgs = len;
+	return 0;
+
+e_inval:
+	return -EINVAL;
 }
 
 static int decode_pool(void **p, void *end, struct ceph_pg_pool_info *pi)
@@ -1043,6 +1092,34 @@ static int decode_pool(void **p, void *end, struct ceph_pg_pool_info *pi)
 	} else {
 		pi->shard_mapping_len = 0;
 		pi->ec_data_shard_count = 0;
+	}
+
+	if (ev >= 34) {
+		ret = decode_optional_pool_id(p, end, &pi->migration_src);
+		if (ret)
+			return ret;
+
+		ret = decode_optional_pool_id(p, end, &pi->migration_target);
+		if (ret)
+			return ret;
+
+		ret = decode_migrating_pgs(p, end, pi);
+		if (ret)
+			return ret;
+
+		ceph_decode_32_safe(p, end, pi->lowest_migrated_pg, bad);
+
+		ret = decode_optional_pool_id(p, end, &pi->migration_root);
+		if (ret)
+			return ret;
+	} else {
+		pi->migration_src = -1;
+		pi->migration_target = -1;
+		pi->migration_root = -1;
+		kfree(pi->migrating_pgs);
+		pi->migrating_pgs = NULL;
+		pi->num_migrating_pgs = 0;
+		pi->lowest_migrated_pg = 0;
 	}
 
 	/* ignore the rest */
