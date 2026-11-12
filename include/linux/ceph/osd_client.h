@@ -48,6 +48,7 @@ enum ceph_sparse_read_state {
 	CEPH_SPARSE_READ_DATA_LEN,
 	CEPH_SPARSE_READ_DATA_PRE,
 	CEPH_SPARSE_READ_DATA,
+	CEPH_SPARSE_READ_PLAIN,
 };
 
 /*
@@ -70,6 +71,9 @@ struct ceph_sparse_read {
 	u32				sr_count;    /* extent count in reply */
 	int				sr_ext_len;  /* length of extent array */
 	struct ceph_sparse_extent	*sr_extent;  /* extent array */
+	u64				sr_plain_cap; /* plain op buffer size */
+	u32				sr_plain_len; /* plain op data size */
+	bool				sr_plain;     /* current op is plain */
 };
 
 /*
@@ -283,6 +287,7 @@ struct ceph_osd_request {
 	ktime_t r_end_latency;                /* ktime_t */
 	int r_attempts;
 	u32 r_map_dne_bound;
+	bool r_multi_data;                    /* reply data for several ops */
 
 	struct ceph_osd_req_op r_ops[] __counted_by(r_num_ops);
 };

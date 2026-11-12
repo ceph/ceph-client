@@ -3895,6 +3895,48 @@ struct MOSDOpReply {
 	struct ceph_request_redirect redirect;
 };
 
+/* oid, pgid, flags, result, bad_replay_version, epoch and ops */
+static int decode_MOSDOpReply_ops(void **p, void *end, struct MOSDOpReply *m,
+				  struct ceph_eversion *bad_replay_version)
+{
+	u32 len;
+	int ret;
+	int i;
+
+	ceph_decode_32_safe(p, end, len, e_inval);
+	ceph_decode_need(p, end, len, e_inval);
+	*p += len; /* skip oid */
+
+	ret = ceph_decode_pgid(p, end, &m->pgid);
+	if (ret)
+		return ret;
+
+	ceph_decode_64_safe(p, end, m->flags, e_inval);
+	ceph_decode_32_safe(p, end, m->result, e_inval);
+	ceph_decode_need(p, end, sizeof(*bad_replay_version), e_inval);
+	memcpy(bad_replay_version, *p, sizeof(*bad_replay_version));
+	*p += sizeof(*bad_replay_version);
+	ceph_decode_32_safe(p, end, m->epoch, e_inval);
+
+	ceph_decode_32_safe(p, end, m->num_ops, e_inval);
+	if (m->num_ops > ARRAY_SIZE(m->outdata_len))
+		goto e_inval;
+
+	ceph_decode_need(p, end, m->num_ops * sizeof(struct ceph_osd_op),
+			 e_inval);
+	for (i = 0; i < m->num_ops; i++) {
+		struct ceph_osd_op *op = *p;
+
+		m->outdata_len[i] = le32_to_cpu(op->payload_len);
+		*p += sizeof(*op);
+	}
+
+	return 0;
+
+e_inval:
+	return -EINVAL;
+}
+
 static int decode_MOSDOpReply(const struct ceph_msg *msg, struct MOSDOpReply *m)
 {
 	void *p = msg->front.iov_base;
@@ -3902,37 +3944,12 @@ static int decode_MOSDOpReply(const struct ceph_msg *msg, struct MOSDOpReply *m)
 	u16 version = le16_to_cpu(msg->hdr.version);
 	struct ceph_eversion bad_replay_version;
 	u8 decode_redir;
-	u32 len;
 	int ret;
 	int i;
 
-	ceph_decode_32_safe(&p, end, len, e_inval);
-	ceph_decode_need(&p, end, len, e_inval);
-	p += len; /* skip oid */
-
-	ret = ceph_decode_pgid(&p, end, &m->pgid);
+	ret = decode_MOSDOpReply_ops(&p, end, m, &bad_replay_version);
 	if (ret)
 		return ret;
-
-	ceph_decode_64_safe(&p, end, m->flags, e_inval);
-	ceph_decode_32_safe(&p, end, m->result, e_inval);
-	ceph_decode_need(&p, end, sizeof(bad_replay_version), e_inval);
-	memcpy(&bad_replay_version, p, sizeof(bad_replay_version));
-	p += sizeof(bad_replay_version);
-	ceph_decode_32_safe(&p, end, m->epoch, e_inval);
-
-	ceph_decode_32_safe(&p, end, m->num_ops, e_inval);
-	if (m->num_ops > ARRAY_SIZE(m->outdata_len))
-		goto e_inval;
-
-	ceph_decode_need(&p, end, m->num_ops * sizeof(struct ceph_osd_op),
-			 e_inval);
-	for (i = 0; i < m->num_ops; i++) {
-		struct ceph_osd_op *op = p;
-
-		m->outdata_len[i] = le32_to_cpu(op->payload_len);
-		p += sizeof(*op);
-	}
 
 	ceph_decode_32_safe(&p, end, m->retry_attempt, e_inval);
 	for (i = 0; i < m->num_ops; i++)
@@ -5814,12 +5831,37 @@ static void osd_dispatch(struct ceph_connection *con, struct ceph_msg *msg)
 	ceph_msg_put(msg);
 }
 
+/* The reply buffer length of an op of an r_multi_data request. */
+static u64 plain_op_data_len(struct ceph_osd_req_op *op)
+{
+	switch (op->op) {
+	case CEPH_OSD_OP_READ:
+		return ceph_osd_data_length(&op->extent.osd_data);
+	case CEPH_OSD_OP_STAT:
+	case CEPH_OSD_OP_GET_INTERNAL_VERSIONS_V2:
+		return ceph_osd_data_length(&op->raw_data_in);
+	default:
+		return 0;
+	}
+}
+
 /* How much sparse data was requested? */
 static u64 sparse_data_requested(struct ceph_osd_request *req)
 {
 	u64 len = 0;
 
-	if (req->r_flags & CEPH_OSD_FLAG_READ) {
+	if (req->r_multi_data) {
+		int i;
+
+		for (i = 0; i < req->r_num_ops; ++i) {
+			struct ceph_osd_req_op *op = &req->r_ops[i];
+
+			if (op->op == CEPH_OSD_OP_SPARSE_READ)
+				len += op->extent.length;
+			else
+				len += plain_op_data_len(op);
+		}
+	} else if (req->r_flags & CEPH_OSD_FLAG_READ) {
 		int i;
 
 		for (i = 0; i < req->r_num_ops; ++i) {
@@ -6149,6 +6191,25 @@ static void advance_cursor(struct ceph_msg_data_cursor *cursor, size_t len,
 	}
 }
 
+/* The outdata length of op @i of the MOSDOpReply being received. */
+static int reply_outdata_len(const struct ceph_msg *msg, int i, u32 *len)
+{
+	void *p = msg->front.iov_base;
+	void *const end = p + msg->front.iov_len;
+	struct ceph_eversion bad_replay_version;
+	struct MOSDOpReply m;
+	int ret;
+
+	ret = decode_MOSDOpReply_ops(&p, end, &m, &bad_replay_version);
+	if (ret)
+		return ret;
+	if (i >= m.num_ops)
+		return -EINVAL;
+
+	*len = m.outdata_len[i];
+	return 0;
+}
+
 static int prep_next_sparse_read(struct ceph_connection *con,
 				 struct ceph_msg_data_cursor *cursor)
 {
@@ -6167,6 +6228,10 @@ static int prep_next_sparse_read(struct ceph_connection *con,
 	if (o->o_sparse_op_idx < 0) {
 		dout("%s: [%d] starting new sparse read req\n",
 		     __func__, o->o_osd);
+	} else if (sr->sr_plain) {
+		/* skip the rest of the plain op's buffer */
+		advance_cursor(cursor, sr->sr_plain_cap - sr->sr_plain_len,
+			       false);
 	} else {
 		u64 end;
 
@@ -6194,6 +6259,32 @@ static int prep_next_sparse_read(struct ceph_connection *con,
 		op = &req->r_ops[o->o_sparse_op_idx];
 		if (op->op == CEPH_OSD_OP_SPARSE_READ)
 			goto found;
+		if (req->r_multi_data) {
+			u64 cap = plain_op_data_len(op);
+			u32 len;
+			int ret;
+
+			ret = reply_outdata_len(con->in_msg,
+						o->o_sparse_op_idx, &len);
+			if (ret || len > cap) {
+				spin_unlock(&o->o_requests_lock);
+				pr_warn_ratelimited("%s osd%d tid %llu op %d bad outdata len\n",
+						    __func__, o->o_osd,
+						    req->r_tid,
+						    o->o_sparse_op_idx);
+				return -EREMOTEIO;
+			}
+			if (!len) {
+				advance_cursor(cursor, cap, false);
+				continue;
+			}
+
+			sr->sr_plain = true;
+			sr->sr_plain_cap = cap;
+			sr->sr_plain_len = len;
+			spin_unlock(&o->o_requests_lock);
+			return 1;
+		}
 	}
 
 	/* reset for next sparse read request */
@@ -6276,6 +6367,14 @@ next_op:
 		ret = prep_next_sparse_read(con, cursor);
 		if (ret <= 0)
 			return ret;
+
+		if (sr->sr_plain) {
+			/* the plain op's data straight into its buffer */
+			sr->sr_state = CEPH_SPARSE_READ_PLAIN;
+			cursor->sr_resid = sr->sr_plain_len;
+			*pbuf = NULL;
+			return sr->sr_plain_len;
+		}
 
 		/* number of extents */
 		ret = sizeof(sr->sr_count);
@@ -6363,6 +6462,9 @@ next_op:
 		/* Bump the array index */
 		++sr->sr_index;
 		break;
+	case CEPH_SPARSE_READ_PLAIN:
+		sr->sr_state = CEPH_SPARSE_READ_HDR;
+		goto next_op;
 	}
 	return ret;
 }
