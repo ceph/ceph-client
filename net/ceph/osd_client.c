@@ -402,6 +402,7 @@ static void osd_req_op_data_release(struct ceph_osd_request *osd_req,
 		ceph_osd_data_release(&op->xattr.osd_data);
 		break;
 	case CEPH_OSD_OP_STAT:
+	case CEPH_OSD_OP_GET_INTERNAL_VERSIONS:
 	case CEPH_OSD_OP_GET_INTERNAL_VERSIONS_V2:
 		ceph_osd_data_release(&op->raw_data_in);
 		break;
@@ -690,6 +691,7 @@ static void get_num_data_items(struct ceph_osd_request *req,
 		case CEPH_OSD_OP_READ:
 		case CEPH_OSD_OP_SPARSE_READ:
 		case CEPH_OSD_OP_LIST_WATCHERS:
+		case CEPH_OSD_OP_GET_INTERNAL_VERSIONS:
 		case CEPH_OSD_OP_GET_INTERNAL_VERSIONS_V2:
 			*num_reply_data_items += 1;
 			break;
@@ -984,6 +986,7 @@ static u32 osd_req_encode_op(struct ceph_osd_op *dst,
 {
 	switch (src->op) {
 	case CEPH_OSD_OP_STAT:
+	case CEPH_OSD_OP_GET_INTERNAL_VERSIONS:
 	case CEPH_OSD_OP_GET_INTERNAL_VERSIONS_V2:
 		break;
 	case CEPH_OSD_OP_READ:
@@ -2375,6 +2378,7 @@ static void setup_request_data(struct ceph_osd_request *req)
 
 		/* reply */
 		case CEPH_OSD_OP_STAT:
+		case CEPH_OSD_OP_GET_INTERNAL_VERSIONS:
 		case CEPH_OSD_OP_GET_INTERNAL_VERSIONS_V2:
 			ceph_osdc_msg_data_add(reply_msg,
 					       &op->raw_data_in);
@@ -2939,6 +2943,8 @@ struct ceph_ec_split {
 	u32 chunk;
 	u32 k;
 	int raw_sub[CEPH_PG_MAX_SIZE];	/* data shard -> subs[] */
+	bool v1;			/* GET_INTERNAL_VERSIONS */
+	int ref;			/* v1: the primary's subs[] */
 	int num_subs;
 	struct ec_split_sub subs[] __counted_by(num_subs);
 };
@@ -3058,11 +3064,15 @@ static void ec_copy_to_osd_data(struct ceph_osd_data *osd_data, u64 off,
 	}
 }
 
-/* The version of @shard in @req's internal_versions_v2_response_t. */
-static int ec_shard_version(struct ceph_osd_request *req, int shard,
+/*
+ * The version of @shard in the reply to sub-read @req's last op:
+ * internal_versions_v2_response_t, or for GET_INTERNAL_VERSIONS (@v1) the
+ * map that it holds.
+ */
+static int ec_shard_version(struct ceph_osd_request *req, bool v1, int shard,
 			    struct ec_version *v)
 {
-	struct ceph_osd_req_op *op = &req->r_ops[1];
+	struct ceph_osd_req_op *op = &req->r_ops[req->r_num_ops - 1];
 	void *base, *p, *end;
 	u32 struct_len, n, i;
 	u8 struct_v;
@@ -3074,10 +3084,13 @@ static int ec_shard_version(struct ceph_osd_request *req, int shard,
 	base = kmap_local_page(op->raw_data_in.pages[0]);
 	p = base;
 	end = p + op->outdata_len;
-	ret = ceph_start_decoding(&p, end, 1, "internal_versions_v2_response_t",
-				  &struct_v, &struct_len);
-	if (ret)
-		goto out;
+	if (!v1) {
+		ret = ceph_start_decoding(&p, end, 1,
+					  "internal_versions_v2_response_t",
+					  &struct_v, &struct_len);
+		if (ret)
+			goto out;
+	}
 
 	ret = -ENOENT;
 	ceph_decode_32_safe(&p, end, n, e_inval);
@@ -3111,21 +3124,26 @@ static int ec_version_cmp(const struct ec_version *lhs,
 }
 
 /*
- * The sub-read whose shard has the newest version is the reference: every
- * other shard must have the version that the reference has for it.
+ * GET_INTERNAL_VERSIONS_V2: the sub-read whose shard has the newest version
+ * is the reference.  GET_INTERNAL_VERSIONS: the primary's sub-read is.
+ * Every other shard must have the version that the reference has for it.
  */
 static bool ec_split_versions_match(struct ceph_ec_split *sp)
 {
-	struct ec_split_sub *ref = NULL;
+	struct ec_split_sub *ref = sp->v1 ? &sp->subs[sp->ref] : NULL;
 	struct ec_version v;
 	int i;
 
 	for (i = 0; i < sp->num_subs; i++) {
 		struct ec_split_sub *sub = &sp->subs[i];
 
-		if (ec_shard_version(sub->req, sub->shard, &sub->version))
+		if (sp->v1 && sub == ref)
+			continue;
+		if (ec_shard_version(sub->req, sp->v1, sub->shard,
+				     &sub->version))
 			return false;
-		if (!ref || ec_version_cmp(&sub->version, &ref->version) > 0)
+		if (!sp->v1 &&
+		    (!ref || ec_version_cmp(&sub->version, &ref->version) > 0))
 			ref = sub;
 	}
 
@@ -3134,7 +3152,7 @@ static bool ec_split_versions_match(struct ceph_ec_split *sp)
 
 		if (sub == ref)
 			continue;
-		if (ec_shard_version(ref->req, sub->shard, &v) ||
+		if (ec_shard_version(ref->req, sp->v1, sub->shard, &v) ||
 		    ec_version_cmp(&sub->version, &v))
 			return false;
 	}
@@ -3238,25 +3256,46 @@ static void ec_split_complete(struct ceph_osd_request *req, int result)
 	finish_request(req);
 }
 
+static bool ec_split_sub_ok(struct ceph_osd_request *sreq)
+{
+	int i;
+
+	if (sreq->r_result < 0)
+		return false;
+
+	for (i = 0; i < sreq->r_num_ops; i++) {
+		if (sreq->r_ops[i].rval)
+			return false;
+	}
+	return true;
+}
+
 static void ec_split_finish(struct ceph_ec_split *sp)
 {
 	struct ceph_osd_client *osdc = sp->osdc;
 	struct ceph_osd_request *req = sp->req;
 	int i, ok = 0, enoent = 0;
+	bool opnotsupp = false;
 	bool done, absent;
 
 	for (i = 0; i < sp->num_subs; i++) {
 		struct ceph_osd_request *sreq = sp->subs[i].req;
+		int rval = sreq->r_ops[sreq->r_num_ops - 1].rval;
 
-		dout("%s req %p sub %d shard %d result %d rval %d/%d len %u\n",
-		     __func__, req, i, sp->subs[i].shard, sreq->r_result,
-		     sreq->r_ops[0].rval, sreq->r_ops[1].rval,
-		     sreq->r_ops[0].outdata_len);
-		if (sreq->r_result >= 0 && !sreq->r_ops[0].rval &&
-		    !sreq->r_ops[1].rval)
+		dout("%s req %p sub %d shard %d result %d versions %d\n",
+		     __func__, req, i, sp->subs[i].shard, sreq->r_result, rval);
+		if (ec_split_sub_ok(sreq))
 			ok++;
 		else if (sreq->r_result == -ENOENT)
 			enoent++;
+		else if (rval == -EOPNOTSUPP)
+			opnotsupp = true;
+	}
+
+	/* an OSD from before GET_INTERNAL_VERSIONS_V2 */
+	if (opnotsupp && !READ_ONCE(osdc->ec_split_v1)) {
+		WRITE_ONCE(osdc->ec_split_v1, true);
+		pr_notice("OSDs don't support get-internal-versions-v2; split reads will use get-internal-versions\n");
 	}
 
 	done = ok == sp->num_subs && ec_split_versions_match(sp);
@@ -3322,15 +3361,20 @@ static void ec_split_cancel(struct ceph_osd_request *req)
 	cancel_request(req);
 }
 
-/* A sub-read of @req's range from @sub's shard, with its versions. */
+/*
+ * A sub-read of @req's range from @sub's shard and of the shard's versions,
+ * or only of the versions if @sub has no data to read.
+ */
 static int init_ec_split_sub(struct ceph_osd_request *req,
-			     struct ec_split_sub *sub)
+			     struct ec_split_sub *sub, bool v1)
 {
 	struct ceph_osd_req_op *op = &req->r_ops[0];
+	int num_ops = sub->len ? 2 : 1;
 	struct ceph_osd_request *sreq;
 	struct page **pages;
 
-	sreq = ceph_osdc_alloc_request(req->r_osdc, NULL, 2, false, GFP_NOIO);
+	sreq = ceph_osdc_alloc_request(req->r_osdc, NULL, num_ops, false,
+				       GFP_NOIO);
 	if (!sreq)
 		return -ENOMEM;
 
@@ -3344,23 +3388,29 @@ static int init_ec_split_sub(struct ceph_osd_request *req,
 	sreq->r_callback = ec_split_sub_cb;
 	sreq->r_priv = sub;
 
-	pages = ceph_alloc_page_vector(calc_pages_for(0, sub->len), GFP_NOIO);
-	if (IS_ERR(pages))
-		return PTR_ERR(pages);
+	if (sub->len) {
+		pages = ceph_alloc_page_vector(calc_pages_for(0, sub->len),
+					       GFP_NOIO);
+		if (IS_ERR(pages))
+			return PTR_ERR(pages);
 
-	osd_req_op_extent_init(sreq, 0, CEPH_OSD_OP_READ, op->extent.offset,
-			       op->extent.length, op->extent.truncate_size,
-			       op->extent.truncate_seq);
-	osd_req_op_extent_osd_data_pages(sreq, 0, pages, sub->len, 0, false,
-					 true);
+		osd_req_op_extent_init(sreq, 0, CEPH_OSD_OP_READ,
+				       op->extent.offset, op->extent.length,
+				       op->extent.truncate_size,
+				       op->extent.truncate_seq);
+		osd_req_op_extent_osd_data_pages(sreq, 0, pages, sub->len, 0,
+						 false, true);
+	}
 
 	pages = ceph_alloc_page_vector(1, GFP_NOIO);
 	if (IS_ERR(pages))
 		return PTR_ERR(pages);
 
-	osd_req_op_init(sreq, 1, CEPH_OSD_OP_GET_INTERNAL_VERSIONS_V2, 0);
-	osd_req_op_raw_data_in_pages(sreq, 1, pages, PAGE_SIZE, 0, false,
-				     true);
+	osd_req_op_init(sreq, num_ops - 1,
+			v1 ? CEPH_OSD_OP_GET_INTERNAL_VERSIONS :
+			     CEPH_OSD_OP_GET_INTERNAL_VERSIONS_V2, 0);
+	osd_req_op_raw_data_in_pages(sreq, num_ops - 1, pages, PAGE_SIZE, 0,
+				     false, true);
 
 	return ceph_osdc_alloc_messages(sreq, GFP_NOIO);
 }
@@ -3378,8 +3428,10 @@ static bool submit_ec_split_read(struct ceph_osd_request *req, bool wrlocked)
 	struct ceph_pg_pool_info *pi;
 	int shards[CEPH_PG_MAX_SIZE];
 	struct ceph_ec_split *sp;
-	u32 k, chunk, count, i;
+	u32 k, chunk, count, num_subs, i;
 	u64 first, last;
+	int ref = -1;
+	bool v1;
 
 	verify_osdc_locked(osdc);
 
@@ -3414,30 +3466,49 @@ static bool submit_ec_split_read(struct ceph_osd_request *req, bool wrlocked)
 		    t->acting.osds[shard] == CRUSH_ITEM_NONE)
 			return false;
 		shards[raw] = shard;
+		if (shard == t->spgid.shard)
+			ref = i;
 	}
 
-	sp = alloc_ec_split(req, chunk, k, count);
+	/* GET_INTERNAL_VERSIONS: the primary's versions are the reference */
+	num_subs = count;
+	v1 = READ_ONCE(osdc->ec_split_v1);
+	if (v1 && ref < 0) {
+		if (t->spgid.shard < 0 || t->spgid.shard >= t->acting.size ||
+		    t->acting.osds[t->spgid.shard] != t->acting.primary)
+			return false;
+		ref = num_subs++;
+	}
+
+	sp = alloc_ec_split(req, chunk, k, num_subs);
 	if (!sp)
 		return false;
 
-	for (i = 0; i < count; i++) {
+	sp->v1 = v1;
+	sp->ref = ref;
+	for (i = 0; i < num_subs; i++) {
 		struct ec_split_sub *sub = &sp->subs[i];
-		u64 c = first + i;
-		u32 raw = do_div(c, k);
 
-		sp->raw_sub[raw] = i;
-		sub->shard = shards[raw];
-		sub->len = ec_shard_bytes(off, len, chunk, k, raw);
-		if (init_ec_split_sub(req, sub)) {
+		if (i < count) {
+			u64 c = first + i;
+			u32 raw = do_div(c, k);
+
+			sp->raw_sub[raw] = i;
+			sub->shard = shards[raw];
+			sub->len = ec_shard_bytes(off, len, chunk, k, raw);
+		} else {
+			sub->shard = t->spgid.shard;
+		}
+		if (init_ec_split_sub(req, sub, v1)) {
 			ec_split_release(sp);
 			return false;
 		}
 	}
 
-	dout("%s req %p %llu~%llu over %u shards\n", __func__, req, off, len,
-	     count);
+	dout("%s req %p %llu~%llu over %u shards%s\n", __func__, req, off, len,
+	     count, v1 ? " (v1)" : "");
 	req->r_ec_split = sp;
-	for (i = 0; i < count; i++)
+	for (i = 0; i < num_subs; i++)
 		submit_request(sp->subs[i].req, wrlocked);
 	return true;
 }
@@ -6533,6 +6604,7 @@ static u64 plain_op_data_len(struct ceph_osd_req_op *op)
 	case CEPH_OSD_OP_READ:
 		return ceph_osd_data_length(&op->extent.osd_data);
 	case CEPH_OSD_OP_STAT:
+	case CEPH_OSD_OP_GET_INTERNAL_VERSIONS:
 	case CEPH_OSD_OP_GET_INTERNAL_VERSIONS_V2:
 		return ceph_osd_data_length(&op->raw_data_in);
 	default:
