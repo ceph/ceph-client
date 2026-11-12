@@ -3558,3 +3558,7 @@ int ceph_get_crush_locality(struct ceph_osdmap *osdmap, int id,
 			return type_id;
 	}
 }
+
+#if IS_ENABLED(CONFIG_CEPH_LIB_KUNIT_TEST)
+#include "osdmap_kunit.c"
+#endif

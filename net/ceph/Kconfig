@@ -45,3 +45,16 @@ config CEPH_LIB_USE_DNS_RESOLVER
 	  Documentation/networking/dns_resolver.rst
 
 	  If unsure, say N.
+
+config CEPH_LIB_KUNIT_TEST
+	bool "KUnit tests for libceph" if !KUNIT_ALL_TESTS
+	depends on CEPH_LIB && KUNIT=y
+	default KUNIT_ALL_TESTS
+	help
+	  Build KUnit tests for libceph: the decoding of OSD maps and pools,
+	  the placement of PGs, and the targeting, redirecting, splitting and
+	  completion of OSD requests.  The tests use maps encoded as the
+	  monitors encode them and play OSD replies through the client, whose
+	  sessions never connect.  They run when libceph is loaded.
+
+	  If unsure, say N.
