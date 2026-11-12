@@ -452,6 +452,7 @@ static void target_copy(struct ceph_osd_request_target *dest,
 	dest->min_size = src->min_size;
 	dest->sort_bitwise = src->sort_bitwise;
 	dest->recovery_deletes = src->recovery_deletes;
+	dest->ec_optimizations = src->ec_optimizations;
 
 	dest->flags = src->flags;
 	dest->used_replica = src->used_replica;
@@ -1599,6 +1600,7 @@ static enum calc_target_result calc_target(struct ceph_osd_client *osdc,
 	bool sort_bitwise = ceph_osdmap_flag(osdc, CEPH_OSDMAP_SORTBITWISE);
 	bool recovery_deletes = ceph_osdmap_flag(osdc,
 						 CEPH_OSDMAP_RECOVERY_DELETES);
+	bool ec_optimizations;
 	enum calc_target_result ct_res;
 
 	t->epoch = osdc->osdmap->epoch;
@@ -1638,6 +1640,7 @@ static enum calc_target_result calc_target(struct ceph_osd_client *osdc,
 	__ceph_object_locator_to_pg(pi, &t->target_oid, &t->target_oloc, &pgid);
 	last_pgid.pool = pgid.pool;
 	last_pgid.seed = ceph_stable_mod(pgid.seed, t->pg_num, t->pg_num_mask);
+	ec_optimizations = pi->flags & CEPH_POOL_FLAG_EC_OPTIMIZATIONS;
 
 	ceph_pg_to_up_acting_osds(osdc->osdmap, pi, &pgid, &up, &acting);
 	if (any_change &&
@@ -1655,6 +1658,8 @@ static enum calc_target_result calc_target(struct ceph_osd_client *osdc,
 				 sort_bitwise,
 				 t->recovery_deletes,
 				 recovery_deletes,
+				 t->ec_optimizations,
+				 ec_optimizations,
 				 &last_pgid))
 		force_resend = true;
 
@@ -1685,6 +1690,7 @@ static enum calc_target_result calc_target(struct ceph_osd_client *osdc,
 		t->pg_num_mask = pi->pg_num_mask;
 		t->sort_bitwise = sort_bitwise;
 		t->recovery_deletes = recovery_deletes;
+		t->ec_optimizations = ec_optimizations;
 
 		if ((t->flags & (CEPH_OSD_FLAG_BALANCE_READS |
 				 CEPH_OSD_FLAG_LOCALIZE_READS)) &&
