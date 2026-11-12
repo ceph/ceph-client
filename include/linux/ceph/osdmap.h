@@ -41,6 +41,7 @@ int ceph_spg_compare(const struct ceph_spg *lhs, const struct ceph_spg *rhs);
 #define CEPH_POOL_FLAG_FULL_QUOTA	(1ULL << 10) /* pool ran out of quota,
 							will set FULL too */
 #define CEPH_POOL_FLAG_NEARFULL		(1ULL << 11) /* pool is nearfull */
+#define CEPH_POOL_FLAG_EC_OPTIMIZATIONS	(1ULL << 19) /* optimized EC */
 
 #define CEPH_POOL_MAX_SHARDS		128 /* shard_id_set */
 
