@@ -194,6 +194,26 @@ ceph_decode_skip_n(p, end, sizeof(u8), bad)
 	} while (0)
 
 /*
+ * denc varint: 7 bits per byte, least significant first, the high bit
+ * set in every byte but the last
+ */
+static inline int ceph_decode_varint64(void **p, void *end, u64 *v)
+{
+	int shift = 0;
+	u8 byte;
+
+	*v = 0;
+	do {
+		if (shift > 63 || !ceph_has_room(p, end, 1))
+			return -EINVAL;
+		byte = ceph_decode_8(p);
+		*v |= (u64)(byte & 0x7f) << shift;
+		shift += 7;
+	} while (byte & 0x80);
+	return 0;
+}
+
+/*
  * struct ceph_timespec <-> struct timespec64
  */
 static inline void ceph_decode_timespec64(struct timespec64 *ts,
