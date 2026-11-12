@@ -464,6 +464,8 @@ static void target_copy(struct ceph_osd_request_target *dest,
 
 	dest->flags = src->flags;
 	dest->used_replica = src->used_replica;
+	dest->ec_read_off = src->ec_read_off;
+	dest->ec_read_len = src->ec_read_len;
 	dest->paused = src->paused;
 
 	dest->epoch = src->epoch;
@@ -1585,6 +1587,83 @@ static int pick_closest_replica(struct ceph_osd_client *osdc,
 	return best_i;
 }
 
+/* pg_pool_t::allows_nonprimary_reads() */
+static bool allows_nonprimary_reads(const struct ceph_pg_pool_info *pi)
+{
+	return pi->tier_of < 0 && !pi->has_tiers && pi->dedup_tier <= 0;
+}
+
+/*
+ * EC direct reads: a client that reads from replicas can read from the
+ * shards of an optimized EC pool that allows it, rather than from the
+ * primary.  A read within one chunk goes straight to the shard that holds
+ * the chunk, flagged CEPH_OSD_FLAG_EC_DIRECT_READ.  If that shard can't
+ * serve it, the OSD fails it with -EAGAIN and it is retried on the primary.
+ */
+static bool ec_direct_read_pool(const struct ceph_osd_request_target *t,
+				const struct ceph_pg_pool_info *pi)
+{
+	if (!(t->flags & CEPH_OSD_FLAG_BALANCE_READS) ||
+	    (t->flags & CEPH_OSD_FLAG_WRITE))
+		return false;
+
+	return pi->type == CEPH_POOL_TYPE_EC &&
+	       (pi->flags & CEPH_POOL_FLAG_CLIENT_SPLIT_READS) &&
+	       !(pi->flags & (CEPH_POOL_FLAG_CRIMSON | CEPH_POOL_FLAG_EIO)) &&
+	       allows_nonprimary_reads(pi);
+}
+
+static u32 ec_data_shards(const struct ceph_pg_pool_info *pi)
+{
+	if (pi->ec_data_shard_count)
+		return pi->ec_data_shard_count;
+	return bitmap_weight(pi->nonprimary_shards, CEPH_POOL_MAX_SHARDS) + 1;
+}
+
+/* The shard that holds data shard @raw, or -1. */
+static int ec_raw_to_shard(const struct ceph_pg_pool_info *pi, u32 raw)
+{
+	if (!pi->shard_mapping_len)
+		return raw;
+	if (pi->shard_mapping_len > CEPH_PG_MAX_SIZE ||
+	    raw >= pi->shard_mapping_len)
+		return -1;
+	return pi->shard_mapping[raw];
+}
+
+/*
+ * The shard to send @t's read to if it lies within one chunk and the
+ * shard has an OSD, or -1.
+ */
+static int ec_direct_read_shard(const struct ceph_osd_request_target *t,
+				const struct ceph_pg_pool_info *pi,
+				const struct ceph_osds *acting)
+{
+	u64 first, last;
+	u32 k, chunk;
+	int shard;
+
+	if (!t->ec_read_len || !ec_direct_read_pool(t, pi))
+		return -1;
+
+	k = ec_data_shards(pi);
+	if (!pi->stripe_width || pi->stripe_width % k)
+		return -1;
+
+	chunk = pi->stripe_width / k;
+	first = div_u64(t->ec_read_off, chunk);
+	last = div_u64(t->ec_read_off + t->ec_read_len - 1, chunk);
+	if (first != last)
+		return -1;
+
+	shard = ec_raw_to_shard(pi, do_div(first, k));
+	if (shard < 0 || shard >= acting->size ||
+	    acting->osds[shard] == CRUSH_ITEM_NONE)
+		return -1;
+
+	return shard;
+}
+
 enum calc_target_result {
 	CALC_TARGET_NO_ACTION = 0,
 	CALC_TARGET_NEED_RESEND,
@@ -1761,7 +1840,8 @@ static enum calc_target_result calc_target(struct ceph_osd_client *osdc,
 	pool_pgs_migrating = pi->num_migrating_pgs;
 
 	ceph_pg_to_up_acting_osds(osdc->osdmap, pi, &pgid, &up, &acting);
-	if (any_change &&
+	/* OSDs drop direct reads sent in an earlier interval */
+	if ((any_change || (t->flags & CEPH_OSD_FLAG_EC_DIRECT_READ)) &&
 	    ceph_is_new_interval(&t->acting,
 				 &acting,
 				 &t->up,
@@ -1816,6 +1896,12 @@ static enum calc_target_result calc_target(struct ceph_osd_client *osdc,
 		t->pg_migrating = pg_migrating;
 		t->pool_pgs_migrating = pool_pgs_migrating;
 
+		/* a direct read whose PG changed goes to the primary */
+		if (t->flags & CEPH_OSD_FLAG_EC_DIRECT_READ)
+			t->flags &= ~(CEPH_OSD_FLAG_BALANCE_READS |
+				      CEPH_OSD_FLAG_LOCALIZE_READS |
+				      CEPH_OSD_FLAG_EC_DIRECT_READ);
+
 		if ((t->flags & (CEPH_OSD_FLAG_BALANCE_READS |
 				 CEPH_OSD_FLAG_LOCALIZE_READS)) &&
 		    !is_write && pi->type == CEPH_POOL_TYPE_REP &&
@@ -1831,8 +1917,19 @@ static enum calc_target_result calc_target(struct ceph_osd_client *osdc,
 			t->osd = acting.osds[pos];
 			t->used_replica = pos > 0;
 		} else {
-			t->osd = acting.primary;
-			t->used_replica = false;
+			int shard = ec_direct_read_shard(t, pi, &acting);
+
+			if (shard >= 0) {
+				t->osd = acting.osds[shard];
+				t->spgid.shard = shard;
+				t->used_replica = true;
+				t->flags |= CEPH_OSD_FLAG_EC_DIRECT_READ;
+				dout("%s t %p EC direct read shard %d osd%d\n",
+				     __func__, t, shard, t->osd);
+			} else {
+				t->osd = acting.primary;
+				t->used_replica = false;
+			}
 		}
 	}
 
@@ -2656,10 +2753,25 @@ promote:
 	goto again;
 }
 
+/* Note the extent of a request that is a single read of the head. */
+static void init_ec_read_extent(struct ceph_osd_request *req)
+{
+	struct ceph_osd_req_op *op = &req->r_ops[0];
+
+	req->r_t.ec_read_off = 0;
+	req->r_t.ec_read_len = 0;
+	if (req->r_num_ops == 1 && req->r_snapid == CEPH_NOSNAP &&
+	    (op->op == CEPH_OSD_OP_READ || op->op == CEPH_OSD_OP_SPARSE_READ)) {
+		req->r_t.ec_read_off = op->extent.offset;
+		req->r_t.ec_read_len = op->extent.length;
+	}
+}
+
 static void account_request(struct ceph_osd_request *req)
 {
 	WARN_ON(req->r_flags & (CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK));
 	WARN_ON(!(req->r_flags & (CEPH_OSD_FLAG_READ | CEPH_OSD_FLAG_WRITE)));
+	init_ec_read_extent(req);
 
 	req->r_flags |= CEPH_OSD_FLAG_ONDISK;
 	atomic_inc(&req->r_osdc->num_requests);
@@ -4223,15 +4335,16 @@ static void handle_reply(struct ceph_osd *osd, struct ceph_msg *msg)
 		mutex_unlock(&osd->lock);
 
 		/*
-		 * The object is missing on the replica or not (yet)
-		 * readable.  Clear pgid to force a resend to the primary
-		 * via legacy_change.
+		 * The object is missing on the replica or shard or not
+		 * (yet) readable.  Clear pgid to force a resend to the
+		 * primary via legacy_change.
 		 */
 		req->r_t.pgid.pool = 0;
 		req->r_t.pgid.seed = 0;
 		WARN_ON(!req->r_t.used_replica);
 		req->r_flags &= ~(CEPH_OSD_FLAG_BALANCE_READS |
-				  CEPH_OSD_FLAG_LOCALIZE_READS);
+				  CEPH_OSD_FLAG_LOCALIZE_READS |
+				  CEPH_OSD_FLAG_EC_DIRECT_READ);
 		req->r_tid = 0;
 		__submit_request(req, false);
 		goto out_unlock_osdc;
