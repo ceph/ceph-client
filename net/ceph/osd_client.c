@@ -1610,7 +1610,10 @@ static bool allows_nonprimary_reads(const struct ceph_pg_pool_info *pi)
 static bool ec_direct_read_pool(const struct ceph_osd_request_target *t,
 				const struct ceph_pg_pool_info *pi)
 {
-	if (!(t->flags & CEPH_OSD_FLAG_BALANCE_READS) ||
+	bool localize = (t->flags & CEPH_OSD_FLAG_LOCALIZE_READS) &&
+			pi->num_zones > 1;
+
+	if ((!(t->flags & CEPH_OSD_FLAG_BALANCE_READS) && !localize) ||
 	    (t->flags & CEPH_OSD_FLAG_WRITE))
 		return false;
 
@@ -1640,10 +1643,88 @@ static int ec_raw_to_shard(const struct ceph_pg_pool_info *pi, u32 raw)
 }
 
 /*
+ * The zone of a pool over zones that localized reads use: the one whose
+ * first OSD in @acting is nearest the client, zone 0 if the client has no
+ * crush_location.
+ */
+static int ec_local_zone(struct ceph_osd_client *osdc,
+			 const struct ceph_pg_pool_info *pi,
+			 const struct ceph_osds *acting)
+{
+	struct ceph_options *opt = osdc->client->options;
+	int zone_size = ceph_pool_zone_size(pi);
+	int best_zone = 0, best_locality = INT_MAX;
+	int zone, pos, locality;
+
+	if (pi->num_zones < 2 || RB_EMPTY_ROOT(&opt->crush_locs) ||
+	    acting->size < pi->size)
+		return 0;
+
+	for (zone = 0; zone < pi->num_zones; zone++) {
+		int end = (zone + 1) * zone_size;
+
+		for (pos = zone * zone_size; pos < end; pos++) {
+			if (acting->osds[pos] != CRUSH_ITEM_NONE)
+				break;
+		}
+		if (pos == end)
+			continue;
+
+		locality = ceph_get_crush_locality(osdc->osdmap,
+						   acting->osds[pos],
+						   &opt->crush_locs);
+		if (locality >= 0 && locality < best_locality) {
+			best_zone = zone;
+			best_locality = locality;
+		}
+	}
+	return best_zone;
+}
+
+/*
+ * The position in @acting to read data shard @shard from: its copy in
+ * @zone, or in a random zone that has an OSD for it if @zone is -1.  -1
+ * if there is none.
+ */
+static int ec_choose_read_shard(const struct ceph_pg_pool_info *pi,
+				const struct ceph_osds *acting, int zone,
+				int shard)
+{
+	int zone_size = ceph_pool_zone_size(pi);
+	int readable[CEPH_PG_MAX_SIZE];
+	int n = 0, z;
+
+	for (z = 0; z < pi->num_zones; z++) {
+		int pos = shard + z * zone_size;
+
+		if (zone >= 0 && z != zone)
+			continue;
+		if (pos < acting->size && acting->osds[pos] != CRUSH_ITEM_NONE)
+			readable[n++] = pos;
+	}
+	if (!n)
+		return -1;
+
+	return readable[n > 1 ? get_random_u32_below(n) : 0];
+}
+
+/* The zone to read from: the local one if localized, else -1 for any. */
+static int ec_read_zone(struct ceph_osd_client *osdc,
+			const struct ceph_osd_request_target *t,
+			const struct ceph_pg_pool_info *pi,
+			const struct ceph_osds *acting)
+{
+	if (t->flags & CEPH_OSD_FLAG_LOCALIZE_READS)
+		return ec_local_zone(osdc, pi, acting);
+	return -1;
+}
+
+/*
  * The shard to send @t's read to if it lies within one chunk and the
  * shard has an OSD, or -1.
  */
-static int ec_direct_read_shard(const struct ceph_osd_request_target *t,
+static int ec_direct_read_shard(struct ceph_osd_client *osdc,
+				const struct ceph_osd_request_target *t,
 				const struct ceph_pg_pool_info *pi,
 				const struct ceph_osds *acting)
 {
@@ -1665,11 +1746,11 @@ static int ec_direct_read_shard(const struct ceph_osd_request_target *t,
 		return -1;
 
 	shard = ec_raw_to_shard(pi, do_div(first, k));
-	if (shard < 0 || shard >= acting->size ||
-	    acting->osds[shard] == CRUSH_ITEM_NONE)
+	if (shard < 0)
 		return -1;
 
-	return shard;
+	return ec_choose_read_shard(pi, acting,
+				    ec_read_zone(osdc, t, pi, acting), shard);
 }
 
 enum calc_target_result {
@@ -1939,7 +2020,7 @@ static enum calc_target_result calc_target(struct ceph_osd_client *osdc,
 			t->spgid.shard = shard;
 			t->used_replica = true;
 		} else {
-			int shard = ec_direct_read_shard(t, pi, &acting);
+			int shard = ec_direct_read_shard(osdc, t, pi, &acting);
 
 			if (shard >= 0) {
 				t->osd = acting.osds[shard];
@@ -3431,7 +3512,7 @@ static bool submit_ec_split_read(struct ceph_osd_request *req, bool wrlocked)
 	struct ceph_ec_split *sp;
 	u32 k, chunk, count, num_subs, i;
 	u64 first, last;
-	int ref = -1;
+	int zone, ref = -1;
 	bool v1;
 
 	verify_osdc_locked(osdc);
@@ -3458,13 +3539,16 @@ static bool submit_ec_split_read(struct ceph_osd_request *req, bool wrlocked)
 		return false;	/* a direct read of one chunk */
 
 	count = min_t(u64, k, last - first + 1);
+	zone = ec_read_zone(osdc, t, pi, &t->acting);
 	for (i = 0; i < count; i++) {
 		u64 c = first + i;
 		u32 raw = do_div(c, k);
 		int shard = ec_raw_to_shard(pi, raw);
 
-		if (shard < 0 || shard >= t->acting.size ||
-		    t->acting.osds[shard] == CRUSH_ITEM_NONE)
+		if (shard >= 0)
+			shard = ec_choose_read_shard(pi, &t->acting, zone,
+						     shard);
+		if (shard < 0)
 			return false;
 		shards[raw] = shard;
 		if (shard == t->spgid.shard)
