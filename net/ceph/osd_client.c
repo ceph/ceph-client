@@ -402,6 +402,7 @@ static void osd_req_op_data_release(struct ceph_osd_request *osd_req,
 		ceph_osd_data_release(&op->xattr.osd_data);
 		break;
 	case CEPH_OSD_OP_STAT:
+	case CEPH_OSD_OP_GET_INTERNAL_VERSIONS_V2:
 		ceph_osd_data_release(&op->raw_data_in);
 		break;
 	case CEPH_OSD_OP_NOTIFY_ACK:
@@ -689,6 +690,7 @@ static void get_num_data_items(struct ceph_osd_request *req,
 		case CEPH_OSD_OP_READ:
 		case CEPH_OSD_OP_SPARSE_READ:
 		case CEPH_OSD_OP_LIST_WATCHERS:
+		case CEPH_OSD_OP_GET_INTERNAL_VERSIONS_V2:
 			*num_reply_data_items += 1;
 			break;
 
@@ -982,6 +984,7 @@ static u32 osd_req_encode_op(struct ceph_osd_op *dst,
 {
 	switch (src->op) {
 	case CEPH_OSD_OP_STAT:
+	case CEPH_OSD_OP_GET_INTERNAL_VERSIONS_V2:
 		break;
 	case CEPH_OSD_OP_READ:
 	case CEPH_OSD_OP_SPARSE_READ:
@@ -2372,6 +2375,7 @@ static void setup_request_data(struct ceph_osd_request *req)
 
 		/* reply */
 		case CEPH_OSD_OP_STAT:
+		case CEPH_OSD_OP_GET_INTERNAL_VERSIONS_V2:
 			ceph_osdc_msg_data_add(reply_msg,
 					       &op->raw_data_in);
 			break;
@@ -2797,12 +2801,17 @@ static void account_request(struct ceph_osd_request *req)
 	req->r_start_latency = ktime_get();
 }
 
+static bool submit_ec_split_read(struct ceph_osd_request *req, bool wrlocked);
+
 static void submit_request(struct ceph_osd_request *req, bool wrlocked)
 {
 	req->r_start_stamp = jiffies;
 
 	ceph_osdc_get_request(req);
 	account_request(req);
+	if (submit_ec_split_read(req, wrlocked))
+		return;
+
 	__submit_request(req, wrlocked);
 }
 
@@ -2888,6 +2897,549 @@ static void cancel_request(struct ceph_osd_request *req)
 	finish_request(req);
 	complete_all(&req->r_completion);
 	ceph_osdc_put_request(req);
+}
+
+/*
+ * EC split reads: a direct read of more than one chunk goes to each data
+ * shard that it touches, each sub-read with GET_INTERNAL_VERSIONS_V2, and
+ * the data is put together in the request's buffer if the shards agree on
+ * the versions, so that a write racing with the sub-reads is noticed.  On
+ * an error, -EAGAIN or a version mismatch the request goes to the primary
+ * as usual; it fails with -ENOENT if every shard said so.
+ *
+ * The request stays accounted but isn't linked to an OSD while its
+ * sub-reads run.  The last one to finish completes or resubmits it, unless
+ * ceph_osdc_cancel_request() took it over first.
+ */
+enum {
+	EC_SPLIT_RUNNING,
+	EC_SPLIT_FINISHING,
+	EC_SPLIT_CANCELLED,
+};
+
+struct ec_version {
+	u64 version;
+	u32 epoch;
+};
+
+struct ec_split_sub {
+	struct ceph_ec_split *split;
+	struct ceph_osd_request *req;
+	int shard;
+	u64 len;			/* bytes of the read in its chunks */
+	u64 used;			/* ... put together so far */
+	struct ec_version version;	/* its own shard's */
+};
+
+struct ceph_ec_split {
+	struct ceph_osd_client *osdc;
+	struct ceph_osd_request *req;
+	atomic_t pending;
+	atomic_t state;
+	u32 chunk;
+	u32 k;
+	int raw_sub[CEPH_PG_MAX_SIZE];	/* data shard -> subs[] */
+	int num_subs;
+	struct ec_split_sub subs[] __counted_by(num_subs);
+};
+
+/*
+ * The bytes of [0, @end) in the chunks of data shard @raw.  @chunk * @k is
+ * the pool's stripe_width, so it and the offsets within a stripe fit in 32
+ * bits.
+ */
+static u64 ec_bytes_up_to(u64 end, u32 chunk, u32 k, u32 raw)
+{
+	u32 start = raw * chunk;
+	u32 rem;
+	u64 stripes = div_u64_rem(end, chunk * k, &rem);
+
+	return stripes * chunk + clamp(rem, start, start + chunk) - start;
+}
+
+/* The bytes of [@off, @off + @len) in the chunks of data shard @raw. */
+static u64 ec_shard_bytes(u64 off, u64 len, u32 chunk, u32 k, u32 raw)
+{
+	return ec_bytes_up_to(off + len, chunk, k, raw) -
+	       ec_bytes_up_to(off, chunk, k, raw);
+}
+
+static bool ec_split_data_ok(struct ceph_osd_data *osd_data)
+{
+	switch (osd_data->type) {
+	case CEPH_OSD_DATA_TYPE_PAGES:
+	case CEPH_OSD_DATA_TYPE_BVECS:
+#ifdef CONFIG_BLOCK
+	case CEPH_OSD_DATA_TYPE_BIO:
+#endif
+		return true;
+	case CEPH_OSD_DATA_TYPE_ITER:
+		/* copied to from a workqueue */
+		return !user_backed_iter(&osd_data->iter);
+	default:
+		return false;
+	}
+}
+
+static void ec_copy_from_pages(struct page **pages, void *dst, u64 off,
+			       u64 len)
+{
+	ceph_copy_from_page_vector(pages + (off >> PAGE_SHIFT), dst,
+				   offset_in_page(off), len);
+}
+
+/* Copy @len bytes at @src_off of @pages to @off of @osd_data. */
+static void ec_copy_to_osd_data(struct ceph_osd_data *osd_data, u64 off,
+				struct page **pages, u64 src_off, u64 len)
+{
+	switch (osd_data->type) {
+	case CEPH_OSD_DATA_TYPE_PAGES: {
+		u64 pos = osd_data->alignment + off;
+
+		while (len) {
+			u32 poff = offset_in_page(pos);
+			u32 n = min_t(u64, len, PAGE_SIZE - poff);
+			void *p = kmap_local_page(osd_data->pages[pos >>
+								  PAGE_SHIFT]);
+
+			ec_copy_from_pages(pages, p + poff, src_off, n);
+			kunmap_local(p);
+			pos += n;
+			src_off += n;
+			len -= n;
+		}
+		break;
+	}
+	case CEPH_OSD_DATA_TYPE_BVECS: {
+		struct ceph_bvec_iter it = osd_data->bvec_pos;
+
+		ceph_bvec_iter_advance(&it, off);
+		ceph_bvec_iter_advance_step(&it, len, ({
+			void *p = bvec_kmap_local(&bv);
+
+			ec_copy_from_pages(pages, p, src_off, bv.bv_len);
+			kunmap_local(p);
+			src_off += bv.bv_len;
+		}));
+		break;
+	}
+#ifdef CONFIG_BLOCK
+	case CEPH_OSD_DATA_TYPE_BIO: {
+		struct ceph_bio_iter it = osd_data->bio_pos;
+
+		ceph_bio_iter_advance(&it, off);
+		ceph_bio_iter_advance_step(&it, len, ({
+			void *p = bvec_kmap_local(&bv);
+
+			ec_copy_from_pages(pages, p, src_off, bv.bv_len);
+			kunmap_local(p);
+			src_off += bv.bv_len;
+		}));
+		break;
+	}
+#endif
+	case CEPH_OSD_DATA_TYPE_ITER: {
+		struct iov_iter it = osd_data->iter;
+
+		iov_iter_advance(&it, off);
+		while (len) {
+			u32 poff = offset_in_page(src_off);
+			u32 n = min_t(u64, len, PAGE_SIZE - poff);
+
+			copy_page_to_iter(pages[src_off >> PAGE_SHIFT], poff, n,
+					  &it);
+			src_off += n;
+			len -= n;
+		}
+		break;
+	}
+	default:
+		WARN_ON_ONCE(1);
+	}
+}
+
+/* The version of @shard in @req's internal_versions_v2_response_t. */
+static int ec_shard_version(struct ceph_osd_request *req, int shard,
+			    struct ec_version *v)
+{
+	struct ceph_osd_req_op *op = &req->r_ops[1];
+	void *base, *p, *end;
+	u32 struct_len, n, i;
+	u8 struct_v;
+	int ret;
+
+	if (op->outdata_len > PAGE_SIZE)
+		return -EINVAL;
+
+	base = kmap_local_page(op->raw_data_in.pages[0]);
+	p = base;
+	end = p + op->outdata_len;
+	ret = ceph_start_decoding(&p, end, 1, "internal_versions_v2_response_t",
+				  &struct_v, &struct_len);
+	if (ret)
+		goto out;
+
+	ret = -ENOENT;
+	ceph_decode_32_safe(&p, end, n, e_inval);
+	for (i = 0; i < n; i++) {
+		ceph_decode_need(&p, end, 1 + 8 + 4, e_inval);
+		if ((s8)ceph_decode_8(&p) != shard) {
+			p += 8 + 4;
+			continue;
+		}
+
+		v->version = ceph_decode_64(&p);
+		v->epoch = ceph_decode_32(&p);
+		ret = 0;
+		break;
+	}
+out:
+	kunmap_local(base);
+	return ret;
+
+e_inval:
+	ret = -EINVAL;
+	goto out;
+}
+
+static int ec_version_cmp(const struct ec_version *lhs,
+			  const struct ec_version *rhs)
+{
+	if (lhs->epoch != rhs->epoch)
+		return cmp_int(lhs->epoch, rhs->epoch);
+	return cmp_int(lhs->version, rhs->version);
+}
+
+/*
+ * The sub-read whose shard has the newest version is the reference: every
+ * other shard must have the version that the reference has for it.
+ */
+static bool ec_split_versions_match(struct ceph_ec_split *sp)
+{
+	struct ec_split_sub *ref = NULL;
+	struct ec_version v;
+	int i;
+
+	for (i = 0; i < sp->num_subs; i++) {
+		struct ec_split_sub *sub = &sp->subs[i];
+
+		if (ec_shard_version(sub->req, sub->shard, &sub->version))
+			return false;
+		if (!ref || ec_version_cmp(&sub->version, &ref->version) > 0)
+			ref = sub;
+	}
+
+	for (i = 0; i < sp->num_subs; i++) {
+		struct ec_split_sub *sub = &sp->subs[i];
+
+		if (sub == ref)
+			continue;
+		if (ec_shard_version(ref->req, sub->shard, &v) ||
+		    ec_version_cmp(&sub->version, &v))
+			return false;
+	}
+	return true;
+}
+
+/*
+ * Put the shards' data together in the request's buffer, in chunk order.
+ * The first chunk a shard ran short on ends the read: the object ends
+ * there.  Returns the length read.
+ */
+static u64 ec_split_assemble(struct ceph_ec_split *sp)
+{
+	struct ceph_osd_req_op *op = &sp->req->r_ops[0];
+	u64 off = op->extent.offset, end = off + op->extent.length;
+	u64 c, len = 0;
+
+	for (c = div_u64(off, sp->chunk); c * sp->chunk < end; c++) {
+		u64 s = max(off, c * sp->chunk);
+		u64 n = min(end, (c + 1) * sp->chunk) - s;
+		u64 r = c;
+		struct ec_split_sub *sub;
+		struct ceph_osd_req_op *sop;
+		u64 avail;
+
+		sub = &sp->subs[sp->raw_sub[do_div(r, sp->k)]];
+		sop = &sub->req->r_ops[0];
+		avail = sop->outdata_len - sub->used;
+		if (!avail)
+			break;
+
+		ec_copy_to_osd_data(&op->extent.osd_data, s - off,
+				    sop->extent.osd_data.pages, sub->used,
+				    min(n, avail));
+		sub->used += min(n, avail);
+		len = s - off + min(n, avail);
+		if (avail < n)
+			break;
+	}
+	return len;
+}
+
+static struct ceph_ec_split *alloc_ec_split(struct ceph_osd_request *req,
+					    u32 chunk, u32 k, int num_subs)
+{
+	struct ceph_ec_split *sp;
+	int i;
+
+	sp = kzalloc_flex(*sp, subs, num_subs, GFP_NOIO);
+	if (!sp)
+		return NULL;
+
+	sp->num_subs = num_subs;
+	sp->osdc = req->r_osdc;
+	sp->req = req;
+	sp->chunk = chunk;
+	sp->k = k;
+	atomic_set(&sp->pending, num_subs);
+	for (i = 0; i < num_subs; i++)
+		sp->subs[i].split = sp;
+	return sp;
+}
+
+static void ec_split_release(struct ceph_ec_split *sp)
+{
+	int i;
+
+	for (i = 0; i < sp->num_subs; i++) {
+		if (sp->subs[i].req)
+			ceph_osdc_put_request(sp->subs[i].req);
+	}
+	kfree(sp);
+}
+
+static void ec_split_complete(struct ceph_osd_request *req, int result)
+{
+	struct ceph_osd_req_op *op = &req->r_ops[0];
+
+	if (result > 0 && op->op == CEPH_OSD_OP_SPARSE_READ) {
+		/* one extent, in the array the caller gave us if any */
+		if (op->extent.sparse_ext ||
+		    !__ceph_alloc_sparse_ext_map(op, 1)) {
+			op->extent.sparse_ext_cnt = 1;
+			op->extent.sparse_ext[0].off = op->extent.offset;
+			op->extent.sparse_ext[0].len = result;
+		} else {
+			result = -ENOMEM;
+		}
+	} else if (op->op == CEPH_OSD_OP_SPARSE_READ) {
+		op->extent.sparse_ext_cnt = 0;
+	}
+	if (result >= 0) {
+		op->rval = 0;
+		op->outdata_len = result;
+	} else {
+		op->rval = result;
+	}
+
+	req->r_result = result;
+	req->r_ec_split = NULL;
+	finish_request(req);
+}
+
+static void ec_split_finish(struct ceph_ec_split *sp)
+{
+	struct ceph_osd_client *osdc = sp->osdc;
+	struct ceph_osd_request *req = sp->req;
+	int i, ok = 0, enoent = 0;
+	bool done, absent;
+
+	for (i = 0; i < sp->num_subs; i++) {
+		struct ceph_osd_request *sreq = sp->subs[i].req;
+
+		dout("%s req %p sub %d shard %d result %d rval %d/%d len %u\n",
+		     __func__, req, i, sp->subs[i].shard, sreq->r_result,
+		     sreq->r_ops[0].rval, sreq->r_ops[1].rval,
+		     sreq->r_ops[0].outdata_len);
+		if (sreq->r_result >= 0 && !sreq->r_ops[0].rval &&
+		    !sreq->r_ops[1].rval)
+			ok++;
+		else if (sreq->r_result == -ENOENT)
+			enoent++;
+	}
+
+	done = ok == sp->num_subs && ec_split_versions_match(sp);
+	absent = enoent == sp->num_subs;
+
+	/*
+	 * ceph_osdc_cancel_request() cancels the read either before this or
+	 * after it has been completed or resent to the primary.  Resending
+	 * takes osdc->lock for write, so that it can't be promoted to it.
+	 */
+	if (done || absent)
+		down_read(&osdc->lock);
+	else
+		down_write(&osdc->lock);
+
+	/* a cancelled read may have been freed already */
+	if (atomic_cmpxchg(&sp->state, EC_SPLIT_RUNNING,
+			   EC_SPLIT_FINISHING) != EC_SPLIT_RUNNING) {
+		req = NULL;
+	} else if (done) {
+		ec_split_complete(req, ec_split_assemble(sp));
+	} else if (absent) {
+		ec_split_complete(req, -ENOENT);
+	} else {
+		dout("%s req %p to the primary\n", __func__, req);
+		req->r_ec_split = NULL;
+		req->r_flags &= ~(CEPH_OSD_FLAG_BALANCE_READS |
+				  CEPH_OSD_FLAG_LOCALIZE_READS);
+		req->r_t.pgid.pool = 0;
+		req->r_t.pgid.seed = 0;
+		__submit_request(req, true);
+		req = NULL;
+	}
+
+	if (done || absent)
+		up_read(&osdc->lock);
+	else
+		up_write(&osdc->lock);
+	if (req)
+		__complete_request(req);
+	ec_split_release(sp);
+}
+
+static void ec_split_sub_cb(struct ceph_osd_request *sreq)
+{
+	struct ec_split_sub *sub = sreq->r_priv;
+
+	if (atomic_dec_and_test(&sub->split->pending))
+		ec_split_finish(sub->split);
+}
+
+static void ec_split_cancel(struct ceph_osd_request *req)
+{
+	struct ceph_ec_split *sp = req->r_ec_split;
+
+	verify_osdc_wrlocked(req->r_osdc);
+
+	if (atomic_cmpxchg(&sp->state, EC_SPLIT_RUNNING,
+			   EC_SPLIT_CANCELLED) != EC_SPLIT_RUNNING)
+		return;
+
+	req->r_ec_split = NULL;
+	cancel_request(req);
+}
+
+/* A sub-read of @req's range from @sub's shard, with its versions. */
+static int init_ec_split_sub(struct ceph_osd_request *req,
+			     struct ec_split_sub *sub)
+{
+	struct ceph_osd_req_op *op = &req->r_ops[0];
+	struct ceph_osd_request *sreq;
+	struct page **pages;
+
+	sreq = ceph_osdc_alloc_request(req->r_osdc, NULL, 2, false, GFP_NOIO);
+	if (!sreq)
+		return -ENOMEM;
+
+	sub->req = sreq;
+	ceph_oid_copy(&sreq->r_base_oid, &req->r_base_oid);
+	ceph_oloc_copy(&sreq->r_base_oloc, &req->r_base_oloc);
+	sreq->r_flags = CEPH_OSD_FLAG_READ | CEPH_OSD_FLAG_EC_DIRECT_READ |
+			CEPH_OSD_FLAG_FAIL_ON_EAGAIN | CEPH_OSD_FLAG_FORCE_OSD;
+	sreq->r_t.ec_forced_shard = sub->shard;
+	sreq->r_multi_data = true;
+	sreq->r_callback = ec_split_sub_cb;
+	sreq->r_priv = sub;
+
+	pages = ceph_alloc_page_vector(calc_pages_for(0, sub->len), GFP_NOIO);
+	if (IS_ERR(pages))
+		return PTR_ERR(pages);
+
+	osd_req_op_extent_init(sreq, 0, CEPH_OSD_OP_READ, op->extent.offset,
+			       op->extent.length, op->extent.truncate_size,
+			       op->extent.truncate_seq);
+	osd_req_op_extent_osd_data_pages(sreq, 0, pages, sub->len, 0, false,
+					 true);
+
+	pages = ceph_alloc_page_vector(1, GFP_NOIO);
+	if (IS_ERR(pages))
+		return PTR_ERR(pages);
+
+	osd_req_op_init(sreq, 1, CEPH_OSD_OP_GET_INTERNAL_VERSIONS_V2, 0);
+	osd_req_op_raw_data_in_pages(sreq, 1, pages, PAGE_SIZE, 0, false,
+				     true);
+
+	return ceph_osdc_alloc_messages(sreq, GFP_NOIO);
+}
+
+/*
+ * Send @req as an EC split read if it is one, rather than submit it.
+ * Not while the pool takes part in a migration: the shards are chosen once,
+ * and the object may move to a pool with another layout in the meantime.
+ */
+static bool submit_ec_split_read(struct ceph_osd_request *req, bool wrlocked)
+{
+	struct ceph_osd_client *osdc = req->r_osdc;
+	struct ceph_osd_request_target *t = &req->r_t;
+	u64 off = t->ec_read_off, len = t->ec_read_len;
+	struct ceph_pg_pool_info *pi;
+	int shards[CEPH_PG_MAX_SIZE];
+	struct ceph_ec_split *sp;
+	u32 k, chunk, count, i;
+	u64 first, last;
+
+	verify_osdc_locked(osdc);
+
+	if (!len || req->r_linger || osdc->abort_err ||
+	    !ec_split_data_ok(&req->r_ops[0].extent.osd_data))
+		return false;
+	if (calc_target(osdc, t, false) == CALC_TARGET_POOL_DNE || t->paused)
+		return false;
+
+	pi = ceph_pg_pool_by_id(osdc->osdmap, t->target_oloc.pool);
+	if (!pi || !ec_direct_read_pool(t, pi) ||
+	    pi->migration_src >= 0 || pi->migration_target >= 0)
+		return false;
+
+	k = ec_data_shards(pi);
+	if (k > CEPH_PG_MAX_SIZE || !pi->stripe_width || pi->stripe_width % k)
+		return false;
+
+	chunk = pi->stripe_width / k;
+	first = div_u64(off, chunk);
+	last = div_u64(off + len - 1, chunk);
+	if (first == last)
+		return false;	/* a direct read of one chunk */
+
+	count = min_t(u64, k, last - first + 1);
+	for (i = 0; i < count; i++) {
+		u64 c = first + i;
+		u32 raw = do_div(c, k);
+		int shard = ec_raw_to_shard(pi, raw);
+
+		if (shard < 0 || shard >= t->acting.size ||
+		    t->acting.osds[shard] == CRUSH_ITEM_NONE)
+			return false;
+		shards[raw] = shard;
+	}
+
+	sp = alloc_ec_split(req, chunk, k, count);
+	if (!sp)
+		return false;
+
+	for (i = 0; i < count; i++) {
+		struct ec_split_sub *sub = &sp->subs[i];
+		u64 c = first + i;
+		u32 raw = do_div(c, k);
+
+		sp->raw_sub[raw] = i;
+		sub->shard = shards[raw];
+		sub->len = ec_shard_bytes(off, len, chunk, k, raw);
+		if (init_ec_split_sub(req, sub)) {
+			ec_split_release(sp);
+			return false;
+		}
+	}
+
+	dout("%s req %p %llu~%llu over %u shards\n", __func__, req, off, len,
+	     count);
+	req->r_ec_split = sp;
+	for (i = 0; i < count; i++)
+		submit_request(sp->subs[i].req, wrlocked);
+	return true;
 }
 
 static void abort_request(struct ceph_osd_request *req, int err)
@@ -5244,6 +5796,8 @@ void ceph_osdc_cancel_request(struct ceph_osd_request *req)
 	down_write(&osdc->lock);
 	if (req->r_osd)
 		cancel_request(req);
+	else if (req->r_ec_split)
+		ec_split_cancel(req);
 	up_write(&osdc->lock);
 }
 EXPORT_SYMBOL(ceph_osdc_cancel_request);
