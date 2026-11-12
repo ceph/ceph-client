@@ -2,6 +2,7 @@
 #ifndef _FS_CEPH_OSDMAP_H
 #define _FS_CEPH_OSDMAP_H
 
+#include <linux/bitmap.h>
 #include <linux/rbtree.h>
 #include <linux/ceph/types.h>
 #include <linux/ceph/decode.h>
@@ -41,6 +42,8 @@ int ceph_spg_compare(const struct ceph_spg *lhs, const struct ceph_spg *rhs);
 							will set FULL too */
 #define CEPH_POOL_FLAG_NEARFULL		(1ULL << 11) /* pool is nearfull */
 
+#define CEPH_POOL_MAX_SHARDS		128 /* shard_id_set */
+
 struct ceph_pg_pool_info {
 	struct rb_node node;
 	s64 id;
@@ -56,6 +59,12 @@ struct ceph_pg_pool_info {
 	s64 write_tier; /* wins for read+write ops */
 	u64 flags; /* CEPH_POOL_FLAG_* */
 	char *name;
+	u32 stripe_width;
+
+	DECLARE_BITMAP(nonprimary_shards, CEPH_POOL_MAX_SHARDS);
+	u32 shard_mapping_len;
+	s8 shard_mapping[CEPH_PG_MAX_SIZE];
+	u8 ec_data_shard_count; /* 0 if not set */
 
 	bool was_full;  /* for handle_one_map() */
 };

@@ -811,11 +811,27 @@ static void __remove_pg_pool(struct rb_root *root, struct ceph_pg_pool_info *pi)
 	kfree(pi);
 }
 
+/* shard_id_set: two varint-encoded words */
+static int decode_shard_id_set(void **p, void *end, unsigned long *bits)
+{
+	u64 words[CEPH_POOL_MAX_SHARDS / 64];
+	int i, ret;
+
+	for (i = 0; i < ARRAY_SIZE(words); i++) {
+		ret = ceph_decode_varint64(p, end, &words[i]);
+		if (ret)
+			return ret;
+	}
+	bitmap_from_arr64(bits, words, CEPH_POOL_MAX_SHARDS);
+	return 0;
+}
+
 static int decode_pool(void **p, void *end, struct ceph_pg_pool_info *pi)
 {
 	u8 ev, cv;
 	unsigned len, num;
 	void *pool_end;
+	int ret;
 
 	ceph_decode_need(p, end, 2 + 4, bad);
 	ev = ceph_decode_8(p);  /* encoding version */
@@ -900,8 +916,9 @@ static int decode_pool(void **p, void *end, struct ceph_pg_pool_info *pi)
 	}
 
 	if (ev >= 12)
-		/* stripe_width */
-		ceph_decode_skip_32(p, end, bad);
+		ceph_decode_32_safe(p, end, pi->stripe_width, bad);
+	else
+		pi->stripe_width = 0;
 
 	if (ev >= 13)
 		/* target_max_*, cache_target_*, cache_min_* */
@@ -956,6 +973,77 @@ static int decode_pool(void **p, void *end, struct ceph_pg_pool_info *pi)
 
 	if (ev >= 25)
 		ceph_decode_32_safe(p, end, pi->last_force_request_resend, bad);
+
+	if (ev >= 26)
+		/* application_metadata */
+		ceph_decode_skip_map_of_map(p, end, string, string, string,
+					    bad);
+
+	if (ev >= 27)
+		/* create_time */
+		ceph_decode_skip_64(p, end, bad);
+
+	if (ev >= 28)
+		/*
+		 * pg_num_target, pgp_num_target, pg_num_pending,
+		 * old_merge_last_epoch_started, old_merge_last_epoch_clean,
+		 * last_force_op_resend, pg_autoscale_mode
+		 */
+		ceph_decode_skip_n(p, end, 6 * 4 + 1, bad);
+
+	if (ev >= 29) {
+		/* last_pg_merge_meta (with versions) */
+		ceph_decode_skip_n(p, end, 2, bad);
+		ceph_decode_skip_string(p, end, bad);
+	}
+
+	if (ev == 30)
+		/* peering_crush_* */
+		ceph_decode_skip_n(p, end, 4 * 4, bad);
+
+	if (ev >= 31) {
+		u8 present;
+
+		/* peering_crush_* */
+		ceph_decode_8_safe(p, end, present, bad);
+		if (present)
+			ceph_decode_skip_n(p, end, 4 * 4, bad);
+	}
+
+	if (ev >= 32) {
+		ret = decode_shard_id_set(p, end, pi->nonprimary_shards);
+		if (ret)
+			return ret;
+	} else {
+		bitmap_zero(pi->nonprimary_shards, CEPH_POOL_MAX_SHARDS);
+	}
+
+	if (ev >= 33) {
+		u8 present;
+
+		ceph_decode_32_safe(p, end, pi->shard_mapping_len, bad);
+		ceph_decode_need(p, end, pi->shard_mapping_len, bad);
+		if (pi->shard_mapping_len <= CEPH_PG_MAX_SIZE)
+			ceph_decode_copy(p, pi->shard_mapping,
+					 pi->shard_mapping_len);
+		else
+			*p += pi->shard_mapping_len;
+
+		ceph_decode_8_safe(p, end, present, bad);
+		if (present)
+			ceph_decode_8_safe(p, end, pi->ec_data_shard_count,
+					   bad);
+		else
+			pi->ec_data_shard_count = 0;
+
+		/* ec_coding_shard_count */
+		ceph_decode_8_safe(p, end, present, bad);
+		if (present)
+			ceph_decode_skip_8(p, end, bad);
+	} else {
+		pi->shard_mapping_len = 0;
+		pi->ec_data_shard_count = 0;
+	}
 
 	/* ignore the rest */
 
