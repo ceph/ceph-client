@@ -226,6 +226,9 @@ extern const char *ceph_osd_state_name(int s);
 									    \
 	f(LIST_SNAPS,	__CEPH_OSD_OP(RD, DATA, 10),	"list-snaps")	    \
 									    \
+	f(GET_INTERNAL_VERSIONS_V2, __CEPH_OSD_OP(RD, DATA, 34),	    \
+	  "get-internal-versions-v2")					    \
+									    \
 	/* sync */							    \
 	f(SYNC_READ,	__CEPH_OSD_OP(RD, DATA, 11),	"sync_read")	    \
 									    \
@@ -413,6 +416,9 @@ enum {
 	CEPH_OSD_FLAG_KNOWN_REDIR = 0x400000,  /* redirect bit is authoritative */
 	CEPH_OSD_FLAG_FULL_TRY =    0x800000,  /* try op despite full flag */
 	CEPH_OSD_FLAG_FULL_FORCE = 0x1000000,  /* force op despite full flag */
+	CEPH_OSD_FLAG_EC_DIRECT_READ = 0x10000000, /* EC read of one shard */
+	CEPH_OSD_FLAG_FAIL_ON_EAGAIN = 0x20000000, /* fail op on -EAGAIN */
+	CEPH_OSD_FLAG_FORCE_OSD = 0x40000000,  /* target OSD is forced */
 };
 
 enum {
