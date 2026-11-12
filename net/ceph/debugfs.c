@@ -83,6 +83,17 @@ static int osdmap_show(struct seq_file *s, void *p)
 			   pi->pg_num, pi->pg_num_mask, pi->flags,
 			   pi->last_force_request_resend, pi->read_tier,
 			   pi->write_tier);
+		if (pi->migration_src < 0 && pi->migration_target < 0 &&
+		    pi->migration_root < 0)
+			continue;
+
+		seq_printf(s, "pool_migration %lld src %lld target %lld root %lld lowest_migrated_pg %x migrating_pgs [",
+			   pi->id, pi->migration_src, pi->migration_target,
+			   pi->migration_root, pi->lowest_migrated_pg);
+		for (i = 0; i < pi->num_migrating_pgs; i++)
+			seq_printf(s, "%s%x", (i == 0 ? "" : ","),
+				   pi->migrating_pgs[i]);
+		seq_puts(s, "]\n");
 	}
 	for (i = 0; i < map->max_osd; i++) {
 		struct ceph_entity_addr *addr = &map->osd_addr[i];
