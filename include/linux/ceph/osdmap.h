@@ -59,6 +59,9 @@ struct ceph_pg_pool_info {
 	int pg_num_mask, pgp_num_mask;
 	s64 read_tier;
 	s64 write_tier; /* wins for read+write ops */
+	s64 tier_of;	/* the base pool of a tier, -1 if none */
+	s64 dedup_tier;	/* 0 if none */
+	bool has_tiers;
 	u64 flags; /* CEPH_POOL_FLAG_* */
 	char *name;
 	u32 stripe_width;
