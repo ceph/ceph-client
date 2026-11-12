@@ -2628,6 +2628,10 @@ bool ceph_is_new_interval(const struct ceph_osds *old_acting,
 			  bool new_recovery_deletes,
 			  bool old_ec_optimizations,
 			  bool new_ec_optimizations,
+			  bool old_pg_migrating,
+			  bool new_pg_migrating,
+			  bool old_pool_pgs_migrating,
+			  bool new_pool_pgs_migrating,
 			  const struct ceph_pg *pgid)
 {
 	return !osds_equal(old_acting, new_acting) ||
@@ -2637,7 +2641,9 @@ bool ceph_is_new_interval(const struct ceph_osds *old_acting,
 	       ceph_pg_is_split(pgid, old_pg_num, new_pg_num) ||
 	       old_sort_bitwise != new_sort_bitwise ||
 	       old_recovery_deletes != new_recovery_deletes ||
-	       old_ec_optimizations != new_ec_optimizations;
+	       old_ec_optimizations != new_ec_optimizations ||
+	       old_pg_migrating != new_pg_migrating ||
+	       old_pool_pgs_migrating != new_pool_pgs_migrating;
 }
 
 static int calc_pg_rank(int osd, const struct ceph_osds *acting)

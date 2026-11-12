@@ -41,6 +41,7 @@ int ceph_spg_compare(const struct ceph_spg *lhs, const struct ceph_spg *rhs);
 #define CEPH_POOL_FLAG_FULL_QUOTA	(1ULL << 10) /* pool ran out of quota,
 							will set FULL too */
 #define CEPH_POOL_FLAG_NEARFULL		(1ULL << 11) /* pool is nearfull */
+#define CEPH_POOL_FLAG_EIO		(1ULL << 16) /* fail all ops with EIO */
 #define CEPH_POOL_FLAG_EC_OPTIMIZATIONS	(1ULL << 19) /* optimized EC */
 
 #define CEPH_POOL_MAX_SHARDS		128 /* shard_id_set */
@@ -306,6 +307,10 @@ bool ceph_is_new_interval(const struct ceph_osds *old_acting,
 			  bool new_recovery_deletes,
 			  bool old_ec_optimizations,
 			  bool new_ec_optimizations,
+			  bool old_pg_migrating,
+			  bool new_pg_migrating,
+			  bool old_pool_pgs_migrating,
+			  bool new_pool_pgs_migrating,
 			  const struct ceph_pg *pgid);
 bool ceph_osds_changed(const struct ceph_osds *old_acting,
 		       const struct ceph_osds *new_acting,
