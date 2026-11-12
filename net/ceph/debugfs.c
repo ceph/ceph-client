@@ -138,6 +138,13 @@ static int osdmap_show(struct seq_file *s, void *p)
 				   pg->pg_upmap_items.from_to[i][1]);
 		seq_printf(s, "]\n");
 	}
+	for (n = rb_first(&map->pg_upmap_primaries); n; n = rb_next(n)) {
+		struct ceph_pg_mapping *pg =
+			rb_entry(n, struct ceph_pg_mapping, node);
+
+		seq_printf(s, "pg_upmap_primary %llu.%x %d\n", pg->pgid.pool,
+			   pg->pgid.seed, pg->pg_upmap_primary.osd);
+	}
 
 out_unlock:
 	up_read(&osdc->lock);
