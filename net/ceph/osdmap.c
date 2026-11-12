@@ -3074,6 +3074,27 @@ static void apply_primary_affinity(struct ceph_osdmap *osdmap,
 }
 
 /*
+ * Optimized EC pools keep pg_temp with the shards that can be primary
+ * first and the non-primary shards after them.
+ */
+static bool is_nonprimary_shard(struct ceph_pg_pool_info *pi, int shard)
+{
+	return test_bit(shard, pi->nonprimary_shards);
+}
+
+static int num_nonprimary_shards(struct ceph_pg_pool_info *pi)
+{
+	return bitmap_weight(pi->nonprimary_shards, pi->size);
+}
+
+static bool is_primaryfirst_pg_temp(struct ceph_pg_pool_info *pi,
+				    struct ceph_pg_mapping *pg)
+{
+	return (pi->flags & CEPH_POOL_FLAG_EC_OPTIMIZATIONS) &&
+	       !ceph_can_shift_osds(pi) && pg->pg_temp.len == pi->size;
+}
+
+/*
  * Get pg_temp and primary_temp mappings for given PG.
  *
  * Note that a PG may have none, only pg_temp, only primary_temp or
@@ -3110,6 +3131,20 @@ static void get_temp_osds(struct ceph_osdmap *osdmap,
 			if (temp->osds[i] != CRUSH_ITEM_NONE) {
 				temp->primary = temp->osds[i];
 				break;
+			}
+		}
+
+		/* back to shard order */
+		if (is_primaryfirst_pg_temp(pi, pg)) {
+			struct ceph_osds pf = *temp;
+			int primary = 0;
+			int nonprimary = pf.size - num_nonprimary_shards(pi);
+
+			for (i = 0; i < pf.size; i++) {
+				if (is_nonprimary_shard(pi, i))
+					temp->osds[i] = pf.osds[nonprimary++];
+				else
+					temp->osds[i] = pf.osds[primary++];
 			}
 		}
 	}
@@ -3161,6 +3196,9 @@ bool ceph_pg_to_primary_shard(struct ceph_osdmap *osdmap,
 {
 	struct ceph_pg pgid;
 	struct ceph_osds up, acting;
+	struct ceph_pg_mapping *pg;
+	bool primaryfirst;
+	int shard = -1;
 	int i;
 
 	WARN_ON(pi->id != raw_pgid->pool);
@@ -3173,15 +3211,29 @@ bool ceph_pg_to_primary_shard(struct ceph_osdmap *osdmap,
 	}
 
 	ceph_pg_to_up_acting_osds(osdmap, pi, &pgid, &up, &acting);
+
+	/*
+	 * With a primary-first pg_temp, an OSD with several shards is the
+	 * primary for its first shard that can be primary.
+	 */
+	pg = lookup_pg_mapping(&osdmap->pg_temp, &pgid);
+	primaryfirst = pg && is_primaryfirst_pg_temp(pi, pg);
 	for (i = 0; i < acting.size; i++) {
-		if (acting.osds[i] == acting.primary) {
-			spgid->pgid = pgid; /* struct */
-			spgid->shard = i;
-			return true;
+		if (acting.osds[i] != acting.primary)
+			continue;
+		if (shard < 0)
+			shard = i;
+		if (!primaryfirst || !is_nonprimary_shard(pi, i)) {
+			shard = i;
+			break;
 		}
 	}
+	if (shard < 0)
+		return false;
 
-	return false;
+	spgid->pgid = pgid; /* struct */
+	spgid->shard = shard;
+	return true;
 }
 
 /*
