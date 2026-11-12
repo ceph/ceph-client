@@ -1183,6 +1183,18 @@ static int decode_pool(void **p, void *end, struct ceph_pg_pool_info *pi)
 		pi->lowest_migrated_pg = 0;
 	}
 
+	if (ev >= 35) {
+		/* replica */
+		ceph_decode_skip_8(p, end, bad);
+
+		ceph_decode_8_safe(p, end, pi->num_zones, bad);
+	} else {
+		pi->num_zones = 1;
+	}
+	/* ceph_pool_zone_size() divides by the zone size */
+	if (!pi->size || !pi->num_zones || pi->size % pi->num_zones)
+		goto bad;
+
 	/* ignore the rest */
 
 	*p = pool_end;
@@ -3149,12 +3161,14 @@ static void apply_primary_affinity(struct ceph_osdmap *osdmap,
  */
 static bool is_nonprimary_shard(struct ceph_pg_pool_info *pi, int shard)
 {
-	return test_bit(shard, pi->nonprimary_shards);
+	return test_bit(ceph_pool_relative_shard(pi, shard),
+			pi->nonprimary_shards);
 }
 
 static int num_nonprimary_shards(struct ceph_pg_pool_info *pi)
 {
-	return bitmap_weight(pi->nonprimary_shards, pi->size);
+	return pi->num_zones * bitmap_weight(pi->nonprimary_shards,
+					     ceph_pool_zone_size(pi));
 }
 
 static bool is_primaryfirst_pg_temp(struct ceph_pg_pool_info *pi,
