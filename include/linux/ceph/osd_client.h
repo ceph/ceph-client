@@ -222,6 +222,7 @@ struct ceph_osd_request_target {
 	int min_size;
 	bool sort_bitwise;
 	bool recovery_deletes;
+	bool ec_optimizations;
 
 	unsigned int flags;                /* CEPH_OSD_FLAG_* */
 	bool used_replica;
