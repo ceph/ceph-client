@@ -653,6 +653,17 @@ static void ec_split_assemble_test(struct kunit *test)
 	kfree(sp);
 }
 
+/*
+ * A client of the maps of osdmap_kunit.h with a session to every up OSD
+ * that never connects: what is sent to it is dropped.  The tests play the
+ * OSDs' replies through handle_reply() and new maps through
+ * handle_one_map(), as the messenger would.
+ */
+struct test_client {
+	struct ceph_client client;
+	struct ceph_options opt;
+};
+
 #define TEST_POOL_REP		1
 #define TEST_POOL_EC		2	/* 2+1, 4 KiB chunks */
 #define TEST_POOL_EC_ZONES	3	/* 2+1 in each of the datacenters */
@@ -660,6 +671,581 @@ static void ec_split_assemble_test(struct kunit *test)
 
 #define TEST_CHUNK		4096
 #define TEST_USER_VERSION	1234
+
+static const struct test_osdmap client_map = {
+	.epoch = 1,
+	.num_pools = 4,
+	.pools = {
+		{ .id = TEST_POOL_REP, .v = 35, .type = CEPH_POOL_TYPE_REP,
+		  .size = 3, .crush_rule = TEST_RULE_REP, .pg_num = 8,
+		  .ec_data_shard_count = -1, .migration_src = -1,
+		  .migration_target = -1, .migration_root = -1,
+		  .lowest_migrated_pg = 8, .num_zones = 1 },
+		{ .id = TEST_POOL_EC, .v = 35, .type = CEPH_POOL_TYPE_EC,
+		  .size = 3, .crush_rule = TEST_RULE_EC, .pg_num = 8,
+		  .flags = CEPH_POOL_FLAG_EC_OPTIMIZATIONS |
+			   CEPH_POOL_FLAG_CLIENT_SPLIT_READS,
+		  .stripe_width = 2 * TEST_CHUNK,
+		  .nonprimary_shards = { BIT(1) },
+		  .ec_data_shard_count = 2, .migration_src = -1,
+		  .migration_target = -1, .migration_root = -1,
+		  .lowest_migrated_pg = 8, .num_zones = 1 },
+		{ .id = TEST_POOL_EC_ZONES, .v = 35, .type = CEPH_POOL_TYPE_EC,
+		  .size = 6, .crush_rule = TEST_RULE_EC_ZONES, .pg_num = 8,
+		  .flags = CEPH_POOL_FLAG_EC_OPTIMIZATIONS |
+			   CEPH_POOL_FLAG_CLIENT_SPLIT_READS,
+		  .stripe_width = 2 * TEST_CHUNK,
+		  .nonprimary_shards = { BIT(1) | BIT(4) },
+		  .ec_data_shard_count = 2, .migration_src = -1,
+		  .migration_target = -1, .migration_root = -1,
+		  .lowest_migrated_pg = 8, .num_zones = 2 },
+		{ .id = TEST_POOL_DST, .v = 35, .type = CEPH_POOL_TYPE_REP,
+		  .size = 3, .crush_rule = TEST_RULE_REP, .pg_num = 8,
+		  .ec_data_shard_count = -1, .migration_src = -1,
+		  .migration_target = -1, .migration_root = -1,
+		  .lowest_migrated_pg = 8, .num_zones = 1 },
+	},
+};
+
+static void test_osdc_stop(void *arg)
+{
+	struct ceph_osd_client *osdc = arg;
+
+	ceph_clear_crush_locs(&osdc->client->options->crush_locs);
+	ceph_osdc_stop(osdc);
+}
+
+static void test_add_sessions(struct ceph_osd_client *osdc)
+{
+	int o;
+
+	verify_osdc_wrlocked(osdc);
+	for (o = 0; o < osdc->osdmap->max_osd; o++) {
+		if (ceph_osd_is_up(osdc->osdmap, o) &&
+		    !lookup_osd(&osdc->osds, o))
+			insert_osd(&osdc->osds, create_osd(osdc, o));
+	}
+}
+
+/* The next map, @tm with the epoch after the client's. */
+static void test_apply_map(struct kunit *test, struct ceph_osd_client *osdc,
+			   const struct test_osdmap *tm)
+{
+	struct test_osdmap *next = ceph_kunit_osdmap_dup(test, tm);
+	void *buf = kunit_kzalloc(test, TEST_OSDMAP_BUF_LEN, GFP_KERNEL);
+	struct ceph_mon_client *monc = &osdc->client->monc;
+	struct rb_root need_resend = RB_ROOT;
+	LIST_HEAD(need_resend_linger);
+	size_t len;
+	int ret;
+
+	KUNIT_ASSERT_NOT_NULL(test, buf);
+	next->epoch = osdc->osdmap->epoch + 1;
+	len = ceph_kunit_encode_osdmap(buf, next);
+
+	down_write(&osdc->lock);
+	ret = handle_one_map(osdc, buf, buf + len, false, &need_resend,
+			     &need_resend_linger);
+	test_add_sessions(osdc);
+	/* the next map is wanted already: nothing to ask the monitors */
+	monc->subs[CEPH_SUB_OSDMAP].want = true;
+	monc->subs[CEPH_SUB_OSDMAP].item.start =
+	    cpu_to_le64(osdc->osdmap->epoch + 1);
+	monc->subs[CEPH_SUB_OSDMAP].item.flags = CEPH_SUBSCRIBE_ONETIME;
+	kick_requests(osdc, &need_resend, &need_resend_linger);
+	up_write(&osdc->lock);
+
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	kunit_kfree(test, buf);
+	kunit_kfree(test, next);
+}
+
+static struct ceph_osd_client *test_osdc(struct kunit *test,
+					 const struct test_osdmap *tm)
+{
+	struct test_client *tc = kunit_kzalloc(test, sizeof(*tc), GFP_KERNEL);
+	struct ceph_osd_client *osdc;
+
+	KUNIT_ASSERT_NOT_NULL(test, tc);
+	tc->opt.osd_keepalive_timeout = 3600 * HZ;
+	tc->opt.osd_idle_ttl = 3600 * HZ;
+	tc->opt.crush_locs = RB_ROOT;
+	tc->client.options = &tc->opt;
+	mutex_init(&tc->client.monc.mutex);
+
+	osdc = &tc->client.osdc;
+	KUNIT_ASSERT_EQ(test, ceph_osdc_init(osdc, &tc->client), 0);
+	/* no keepalives or idle session checks: nobody to talk to */
+	cancel_delayed_work_sync(&osdc->timeout_work);
+	cancel_delayed_work_sync(&osdc->osds_timeout_work);
+	KUNIT_ASSERT_EQ(test,
+			kunit_add_action_or_reset(test, test_osdc_stop, osdc),
+			0);
+
+	test_apply_map(test, osdc, tm);
+	return osdc;
+}
+
+/* The acting set of object @oid in @pool, and its PG. */
+static void test_acting(struct ceph_osd_client *osdc, s64 pool,
+			const char *oid, struct ceph_pg *pgid,
+			struct ceph_osds *acting)
+{
+	struct ceph_pg_pool_info *pi = ceph_pg_pool_by_id(osdc->osdmap, pool);
+	struct ceph_object_id id;
+	struct ceph_object_locator oloc = { .pool = pool };
+	struct ceph_osds up;
+	struct ceph_pg raw;
+
+	ceph_oid_init(&id);
+	ceph_oid_printf(&id, "%s", oid);
+	__ceph_object_locator_to_pg(pi, &id, &oloc, &raw);
+	pgid->pool = pool;
+	pgid->seed = ceph_stable_mod(raw.seed, pi->pg_num, pi->pg_num_mask);
+	ceph_pg_to_up_acting_osds(osdc->osdmap, pi, &raw, &up, acting);
+	ceph_oid_destroy(&id);
+}
+
+/* The byte at @off of every object in these tests */
+static u8 test_byte(u64 off)
+{
+	return off * 7 + (off >> 12) * 31 + 1;
+}
+
+/* A read of @len bytes at @off of @oid, with its own buffer. */
+static struct ceph_osd_request *test_read(struct kunit *test,
+					  struct ceph_osd_client *osdc,
+					  s64 pool, const char *oid,
+					  int opcode, u64 off, u64 len,
+					  unsigned int flags)
+{
+	struct ceph_osd_request *req;
+	struct page **pages;
+
+	req = ceph_osdc_alloc_request(osdc, NULL, 1, false, GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, req);
+	ceph_oid_printf(&req->r_base_oid, "%s", oid);
+	req->r_base_oloc.pool = pool;
+	req->r_flags = CEPH_OSD_FLAG_READ | flags;
+
+	osd_req_op_extent_init(req, 0, opcode, off, len, 0, 0);
+	pages = ceph_alloc_page_vector(calc_pages_for(0, len), GFP_KERNEL);
+	KUNIT_ASSERT_FALSE(test, IS_ERR(pages));
+	osd_req_op_extent_osd_data_pages(req, 0, pages, len, 0, false, true);
+	KUNIT_ASSERT_EQ(test, ceph_osdc_alloc_messages(req, GFP_KERNEL), 0);
+	return req;
+}
+
+static struct page **test_pages(struct ceph_osd_request *req, int which)
+{
+	struct ceph_osd_req_op *op = &req->r_ops[which];
+
+	if (op->op == CEPH_OSD_OP_READ || op->op == CEPH_OSD_OP_SPARSE_READ)
+		return op->extent.osd_data.pages;
+	return op->raw_data_in.pages;
+}
+
+/* The OSD @req is linked to, -1 if homeless or done. */
+static int test_osd(struct ceph_osd_request *req)
+{
+	return req->r_osd ? req->r_osd->o_osd : -1;
+}
+
+/* @len bytes at @off of the objects are in @pages. */
+static void test_check_data(struct kunit *test, struct page **pages, u64 off,
+			    u64 len)
+{
+	u8 *buf = kunit_kmalloc(test, len, GFP_KERNEL);
+	u64 i;
+
+	KUNIT_ASSERT_NOT_NULL(test, buf);
+	ceph_copy_from_page_vector(pages, buf, 0, len);
+	for (i = 0; i < len; i++) {
+		if (buf[i] != test_byte(off + i)) {
+			KUNIT_FAIL(test, "byte %llu is %02x, not %02x",
+				   off + i, buf[i], test_byte(off + i));
+			break;
+		}
+	}
+	kunit_kfree(test, buf);
+}
+
+/* @len bytes at @off of the objects into @pages, at @at. */
+static void test_fill(struct kunit *test, struct page **pages, u64 at, u64 off,
+		      u64 len)
+{
+	while (len) {
+		u32 poff = offset_in_page(at);
+		u32 n = min_t(u64, len, PAGE_SIZE - poff);
+		u8 *p = kmap_local_page(pages[at >> PAGE_SHIFT]);
+		u32 i;
+
+		for (i = 0; i < n; i++)
+			p[poff + i] = test_byte(off + i);
+		kunmap_local(p);
+		at += n;
+		off += n;
+		len -= n;
+	}
+}
+
+/*
+ * MOSDOpReply v8 for @req into @msg's front: @result, the ops' results
+ * @rvals and data lengths @lens (NULL for 0s), and a pool migration
+ * redirect to watermark @wm if not NULL.  Returns the data length.
+ */
+static u32 test_encode_reply(struct kunit *test, struct ceph_osd_request *req,
+			     struct ceph_msg *msg, int result,
+			     const int *rvals, const u32 *lens,
+			     const struct ceph_hobject_id *wm)
+{
+	void *p = msg->front.iov_base;
+	void *end = p + msg->front_alloc_len;
+	u32 data_len = 0;
+	int i;
+
+	ceph_encode_string(&p, end, req->r_t.target_oid.name,
+			   req->r_t.target_oid.name_len);
+	ceph_encode_8(&p, 1);
+	ceph_encode_64(&p, req->r_t.spgid.pgid.pool);
+	ceph_encode_32(&p, req->r_t.spgid.pgid.seed);
+	ceph_encode_32(&p, -1);
+	ceph_encode_64(&p, CEPH_OSD_FLAG_ONDISK);
+	ceph_encode_32(&p, result);
+	memset(p, 0, sizeof(struct ceph_eversion));	/* bad_replay_version */
+	p += sizeof(struct ceph_eversion);
+	ceph_encode_32(&p, req->r_osdc->osdmap->epoch);
+
+	ceph_encode_32(&p, req->r_num_ops);
+	for (i = 0; i < req->r_num_ops; i++) {
+		struct ceph_osd_op *op = p;
+
+		memset(op, 0, sizeof(*op));
+		op->op = cpu_to_le16(req->r_ops[i].op);
+		op->payload_len = cpu_to_le32(lens ? lens[i] : 0);
+		data_len += lens ? lens[i] : 0;
+		p += sizeof(*op);
+	}
+	ceph_encode_32(&p, req->r_attempts - 1);	/* retry_attempt */
+	for (i = 0; i < req->r_num_ops; i++)
+		ceph_encode_32(&p, rvals ? rvals[i] : 0);
+	memset(p, 0, sizeof(struct ceph_eversion));	/* replay_version */
+	p += sizeof(struct ceph_eversion);
+	ceph_encode_64(&p, TEST_USER_VERSION);
+
+	ceph_encode_8(&p, !!wm);
+	if (wm) {
+		void *redir, *oloc;
+
+		ceph_encode_8(&p, 2);
+		ceph_encode_8(&p, 1);
+		redir = p;
+		p += 4;
+		ceph_encode_8(&p, 6);
+		ceph_encode_8(&p, 3);
+		oloc = p;
+		p += 4;
+		ceph_encode_64(&p, wm->pool);
+		ceph_encode_32(&p, -1);			/* preferred */
+		ceph_encode_32(&p, 0);			/* key */
+		ceph_encode_32(&p, 0);			/* nspace */
+		ceph_encode_64(&p, -1);			/* hash */
+		put_unaligned_le32(p - oloc - 4, oloc);
+		ceph_encode_32(&p, 0);			/* object_name */
+		ceph_encode_32(&p, 0);			/* osd_instructions */
+		ceph_encode_8(&p, 1);
+		encode_hoid(&p, end, wm);
+		put_unaligned_le32(p - redir - 4, redir);
+	}
+	KUNIT_ASSERT_TRUE(test, p <= end);
+
+	msg->front.iov_len = p - msg->front.iov_base;
+	msg->hdr.front_len = cpu_to_le32(msg->front.iov_len);
+	msg->hdr.data_len = cpu_to_le32(data_len);
+	msg->hdr.tid = cpu_to_le64(req->r_tid);
+	msg->hdr.version = cpu_to_le16(8);
+	msg->hdr.src.num = cpu_to_le64(req->r_osd->o_osd);
+	return data_len;
+}
+
+/*
+ * The reply of @req's OSD, its data in the request's buffers already as
+ * the messenger leaves it.  @req may be gone when this returns, unless the
+ * caller holds a reference.
+ */
+static void test_reply(struct kunit *test, struct ceph_osd_request *req,
+		       int result, const int *rvals, const u32 *lens,
+		       const struct ceph_hobject_id *wm)
+{
+	struct ceph_osd *osd = req->r_osd;
+	struct ceph_msg *msg;
+
+	KUNIT_ASSERT_NOT_NULL(test, osd);
+	KUNIT_ASSERT_FALSE(test, osd_homeless(osd));
+	msg = ceph_msg_get(req->r_reply);
+	test_encode_reply(test, req, msg, result, rvals, lens, wm);
+	handle_reply(osd, msg);
+	ceph_msg_put(msg);
+}
+
+/* A whole read's reply with the objects' bytes. */
+static void test_read_reply(struct kunit *test, struct ceph_osd_request *req)
+{
+	struct ceph_osd_req_op *op = &req->r_ops[0];
+	u32 len = op->extent.length;
+
+	test_fill(test, op->extent.osd_data.pages, 0, op->extent.offset, len);
+	test_reply(test, req, 0, NULL, &len, NULL);
+}
+
+/* Fail the sub-reads of cancelled split reads that are still out. */
+static void test_drain(struct kunit *test, struct ceph_osd_client *osdc)
+{
+	int i;
+
+	for (i = 0; i < 64; i++) {
+		struct ceph_osd_request *req = NULL;
+		struct rb_node *n, *m;
+
+		down_read(&osdc->lock);
+		for (n = rb_first(&osdc->osds); n && !req; n = rb_next(n)) {
+			struct ceph_osd *osd = rb_entry(n, struct ceph_osd,
+							o_node);
+
+			for (m = rb_first(&osd->o_requests); m && !req;
+			     m = rb_next(m)) {
+				req = rb_entry(m, struct ceph_osd_request,
+					       r_node);
+				if (req->r_callback != ec_split_sub_cb)
+					req = NULL;
+			}
+		}
+		if (req)
+			ceph_osdc_get_request(req);
+		up_read(&osdc->lock);
+		if (!req)
+			return;
+
+		test_reply(test, req, -EIO, NULL, NULL, NULL);
+		ceph_osdc_put_request(req);
+	}
+	KUNIT_FAIL(test, "sub-reads left in flight");
+}
+
+/*
+ * Done with @req, whether or not it completed: cancelled, and a split
+ * read's sub-reads answered before the reference goes.
+ */
+static void test_put(struct kunit *test, struct ceph_osd_request *req)
+{
+	ceph_osdc_cancel_request(req);
+	test_drain(test, req->r_osdc);
+	ceph_osdc_put_request(req);
+}
+
+/*
+ * As in Objecter (pg_pool_t::allows_nonprimary_reads()), no direct reads
+ * from a pool that is a tier, has tiers or has a dedup tier.
+ */
+static void direct_read_tier_test(struct kunit *test)
+{
+	struct test_osdmap *tm = ceph_kunit_osdmap_dup(test, &client_map);
+	struct ceph_osd_client *osdc = test_osdc(test, &client_map);
+	struct ceph_osd_request *req;
+	struct ceph_osds acting;
+	struct ceph_pg pgid;
+	int i;
+
+	for (i = 0; i < 3; i++) {
+		tm->pools[1].tier_of = i == 0 ? TEST_POOL_REP : 0;
+		tm->pools[1].tier = i == 1 ? TEST_POOL_DST : 0;
+		tm->pools[1].dedup_tier = i == 2 ? TEST_POOL_DST : 0;
+		test_apply_map(test, osdc, tm);
+
+		test_acting(osdc, TEST_POOL_EC, "obj", &pgid, &acting);
+		req = test_read(test, osdc, TEST_POOL_EC, "obj",
+				CEPH_OSD_OP_READ, TEST_CHUNK, 1000,
+				CEPH_OSD_FLAG_BALANCE_READS);
+		ceph_osdc_start_request(osdc, req);
+		KUNIT_EXPECT_EQ_MSG(test, test_osd(req), acting.primary,
+				    "case %d", i);
+		KUNIT_EXPECT_FALSE(test,
+				   req->r_flags & CEPH_OSD_FLAG_EC_DIRECT_READ);
+		test_put(test, req);
+	}
+}
+
+/* Direct reads go to the shard's OSD, everything else to the primary. */
+static void direct_read_target_test(struct kunit *test)
+{
+	struct ceph_osd_client *osdc = test_osdc(test, &client_map);
+	struct test_osdmap *tm = ceph_kunit_osdmap_dup(test, &client_map);
+	struct ceph_osd_request *req;
+	struct ceph_osds acting;
+	struct ceph_pg pgid;
+	int shard;
+
+	test_acting(osdc, TEST_POOL_EC, "obj", &pgid, &acting);
+	for (shard = 0; shard < 2; shard++) {
+		req = test_read(test, osdc, TEST_POOL_EC, "obj",
+				CEPH_OSD_OP_READ, shard * TEST_CHUNK + 100,
+				1000, CEPH_OSD_FLAG_BALANCE_READS);
+		ceph_osdc_start_request(osdc, req);
+		KUNIT_EXPECT_EQ(test, test_osd(req), acting.osds[shard]);
+		KUNIT_EXPECT_EQ(test, req->r_t.spgid.shard, shard);
+		KUNIT_EXPECT_TRUE(test, req->r_flags &
+					CEPH_OSD_FLAG_EC_DIRECT_READ);
+		test_read_reply(test, req);
+		KUNIT_EXPECT_EQ(test, req->r_result, 1000);
+		test_check_data(test, test_pages(req, 0),
+				shard * TEST_CHUNK + 100, 1000);
+		test_put(test, req);
+	}
+
+	/* without read_from_replica: the primary */
+	req = test_read(test, osdc, TEST_POOL_EC, "obj", CEPH_OSD_OP_READ,
+			TEST_CHUNK, 1000, 0);
+	ceph_osdc_start_request(osdc, req);
+	KUNIT_EXPECT_EQ(test, test_osd(req), acting.primary);
+	KUNIT_EXPECT_FALSE(test, req->r_flags & CEPH_OSD_FLAG_EC_DIRECT_READ);
+	test_put(test, req);
+
+	/* a shard with no OSD: the primary */
+	tm->down = BIT(acting.osds[1]);
+	test_apply_map(test, osdc, tm);
+	test_acting(osdc, TEST_POOL_EC, "obj", &pgid, &acting);
+	KUNIT_ASSERT_EQ(test, acting.osds[1], CRUSH_ITEM_NONE);
+	req = test_read(test, osdc, TEST_POOL_EC, "obj", CEPH_OSD_OP_READ,
+			TEST_CHUNK, 1000, CEPH_OSD_FLAG_BALANCE_READS);
+	ceph_osdc_start_request(osdc, req);
+	KUNIT_EXPECT_EQ(test, test_osd(req), acting.primary);
+	KUNIT_EXPECT_FALSE(test, req->r_flags & CEPH_OSD_FLAG_EC_DIRECT_READ);
+	test_put(test, req);
+}
+
+/*
+ * F2: a localized read of a pool over zones reads in the client's zone
+ * only: with the shard's OSD there missing, it goes to the primary, not to
+ * the shard's copy in the other zone.
+ */
+static void localize_zone_test(struct kunit *test)
+{
+	struct ceph_osd_client *osdc = test_osdc(test, &client_map);
+	struct ceph_options *opt = osdc->client->options;
+	struct test_osdmap *tm = ceph_kunit_osdmap_dup(test, &client_map);
+	struct ceph_osd_request *req;
+	struct ceph_osds acting;
+	struct ceph_pg pgid;
+	char loc[] = "datacenter:dc1";
+	int local;
+
+	KUNIT_ASSERT_EQ(test, ceph_parse_crush_location(loc, &opt->crush_locs),
+			0);
+	test_acting(osdc, TEST_POOL_EC_ZONES, "obj", &pgid, &acting);
+	local = acting.osds[0] >= 6 ? 0 : 3;	/* dc1 holds osd.6..11 */
+
+	req = test_read(test, osdc, TEST_POOL_EC_ZONES, "obj",
+			CEPH_OSD_OP_READ, TEST_CHUNK, 1000,
+			CEPH_OSD_FLAG_LOCALIZE_READS);
+	ceph_osdc_start_request(osdc, req);
+	KUNIT_EXPECT_EQ(test, test_osd(req), acting.osds[local + 1]);
+	KUNIT_EXPECT_TRUE(test, req->r_flags & CEPH_OSD_FLAG_EC_DIRECT_READ);
+	test_put(test, req);
+
+	/* split: every shard from the local zone */
+	req = test_read(test, osdc, TEST_POOL_EC_ZONES, "obj",
+			CEPH_OSD_OP_READ, 0, 2 * TEST_CHUNK,
+			CEPH_OSD_FLAG_LOCALIZE_READS);
+	ceph_osdc_start_request(osdc, req);
+	KUNIT_ASSERT_NOT_NULL(test, req->r_ec_split);
+	KUNIT_EXPECT_EQ(test, test_osd(req->r_ec_split->subs[0].req),
+			acting.osds[local]);
+	KUNIT_EXPECT_EQ(test, test_osd(req->r_ec_split->subs[1].req),
+			acting.osds[local + 1]);
+	test_put(test, req);
+
+	/* the local copy of shard 1 down: the primary, not the other zone */
+	tm->down = BIT(acting.osds[local + 1]);
+	test_apply_map(test, osdc, tm);
+	test_acting(osdc, TEST_POOL_EC_ZONES, "obj", &pgid, &acting);
+	KUNIT_ASSERT_EQ(test, acting.osds[local + 1], CRUSH_ITEM_NONE);
+	req = test_read(test, osdc, TEST_POOL_EC_ZONES, "obj",
+			CEPH_OSD_OP_READ, TEST_CHUNK, 1000,
+			CEPH_OSD_FLAG_LOCALIZE_READS);
+	ceph_osdc_start_request(osdc, req);
+	KUNIT_EXPECT_EQ(test, test_osd(req), acting.primary);
+	KUNIT_EXPECT_FALSE(test, req->r_flags & CEPH_OSD_FLAG_EC_DIRECT_READ);
+	test_put(test, req);
+
+	/* and a split read that needs it goes to the primary too */
+	req = test_read(test, osdc, TEST_POOL_EC_ZONES, "obj",
+			CEPH_OSD_OP_READ, 0, 2 * TEST_CHUNK,
+			CEPH_OSD_FLAG_LOCALIZE_READS);
+	ceph_osdc_start_request(osdc, req);
+	KUNIT_EXPECT_NULL(test, req->r_ec_split);
+	KUNIT_EXPECT_EQ(test, test_osd(req), acting.primary);
+	test_put(test, req);
+}
+
+/* Balanced reads of a pool over zones use both zones. */
+static void balance_zones_test(struct kunit *test)
+{
+	struct ceph_osd_client *osdc = test_osdc(test, &client_map);
+	struct ceph_osd_request *req;
+	struct ceph_osds acting;
+	struct ceph_pg pgid;
+	bool seen[2] = {};
+	int i;
+
+	test_acting(osdc, TEST_POOL_EC_ZONES, "obj", &pgid, &acting);
+	for (i = 0; i < 64 && !(seen[0] && seen[1]); i++) {
+		req = test_read(test, osdc, TEST_POOL_EC_ZONES, "obj",
+				CEPH_OSD_OP_READ, TEST_CHUNK, 1000,
+				CEPH_OSD_FLAG_BALANCE_READS);
+		ceph_osdc_start_request(osdc, req);
+		if (test_osd(req) == acting.osds[1])
+			seen[0] = true;
+		else if (test_osd(req) == acting.osds[4])
+			seen[1] = true;
+		else
+			KUNIT_FAIL(test, "read of shard 1 sent to osd%d",
+				   test_osd(req));
+		test_put(test, req);
+	}
+	KUNIT_EXPECT_TRUE(test, seen[0] && seen[1]);
+}
+
+/*
+ * F3: a single-chunk direct read whose PG changes goes to the primary, as
+ * Objecter redrives it, rather than to a newly chosen shard.
+ */
+static void direct_read_pg_change_test(struct kunit *test)
+{
+	struct ceph_osd_client *osdc = test_osdc(test, &client_map);
+	struct test_osdmap *tm = ceph_kunit_osdmap_dup(test, &client_map);
+	struct ceph_osd_request *req;
+	struct ceph_osds acting;
+	struct ceph_pg pgid;
+
+	test_acting(osdc, TEST_POOL_EC, "obj", &pgid, &acting);
+	req = test_read(test, osdc, TEST_POOL_EC, "obj", CEPH_OSD_OP_READ,
+			TEST_CHUNK, 1000, CEPH_OSD_FLAG_BALANCE_READS);
+	ceph_osdc_start_request(osdc, req);
+	KUNIT_ASSERT_EQ(test, test_osd(req), acting.osds[1]);
+
+	/* the parity shard's OSD goes down; shard 1's stays */
+	tm->down = BIT(acting.osds[2]);
+	test_apply_map(test, osdc, tm);
+	test_acting(osdc, TEST_POOL_EC, "obj", &pgid, &acting);
+	KUNIT_EXPECT_EQ(test, test_osd(req), acting.primary);
+	KUNIT_EXPECT_EQ(test, req->r_attempts, 2);
+	KUNIT_EXPECT_FALSE(test, req->r_flags &
+				 (CEPH_OSD_FLAG_EC_DIRECT_READ |
+				  CEPH_OSD_FLAG_BALANCE_READS));
+	test_read_reply(test, req);
+	KUNIT_EXPECT_EQ(test, req->r_result, 1000);
+	test_put(test, req);
+}
 
 static struct kunit_case ceph_osd_client_test_cases[] = {
 	KUNIT_CASE(ec_direct_read_pool_test),
@@ -678,4 +1264,19 @@ static struct kunit_suite ceph_osd_client_test_suite = {
 	.test_cases = ceph_osd_client_test_cases,
 };
 
-kunit_test_suites(&ceph_osd_client_test_suite);
+static struct kunit_case ceph_osd_client_target_test_cases[] = {
+	KUNIT_CASE(direct_read_target_test),
+	KUNIT_CASE(direct_read_tier_test),
+	KUNIT_CASE(localize_zone_test),
+	KUNIT_CASE(balance_zones_test),
+	KUNIT_CASE(direct_read_pg_change_test),
+	{}
+};
+
+static struct kunit_suite ceph_osd_client_target_test_suite = {
+	.name = "ceph_osd_client_target",
+	.test_cases = ceph_osd_client_target_test_cases,
+};
+
+kunit_test_suites(&ceph_osd_client_test_suite,
+		  &ceph_osd_client_target_test_suite);
