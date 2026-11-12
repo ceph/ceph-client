@@ -304,6 +304,8 @@ bool ceph_is_new_interval(const struct ceph_osds *old_acting,
 			  bool new_sort_bitwise,
 			  bool old_recovery_deletes,
 			  bool new_recovery_deletes,
+			  bool old_ec_optimizations,
+			  bool new_ec_optimizations,
 			  const struct ceph_pg *pgid);
 bool ceph_osds_changed(const struct ceph_osds *old_acting,
 		       const struct ceph_osds *new_acting,
