@@ -235,6 +235,7 @@ struct ceph_osd_request_target {
 	bool used_replica;
 	u64 ec_read_off;                   /* the read of a 1-op request */
 	u64 ec_read_len;                   /* ditto */
+	int ec_forced_shard;               /* for CEPH_OSD_FLAG_FORCE_OSD */
 	bool paused;
 
 	u32 epoch;
