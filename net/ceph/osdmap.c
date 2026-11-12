@@ -1317,6 +1317,7 @@ struct ceph_osdmap *ceph_osdmap_alloc(void)
 	map->primary_temp = RB_ROOT;
 	map->pg_upmap = RB_ROOT;
 	map->pg_upmap_items = RB_ROOT;
+	map->pg_upmap_primaries = RB_ROOT;
 
 	init_workspace_manager(&map->crush_wsm);
 
@@ -1357,6 +1358,13 @@ void ceph_osdmap_destroy(struct ceph_osdmap *map)
 			rb_entry(rb_first(&map->pg_upmap_items),
 				 struct ceph_pg_mapping, node);
 		rb_erase(&pg->node, &map->pg_upmap_items);
+		kfree(pg);
+	}
+	while (!RB_EMPTY_ROOT(&map->pg_upmap_primaries)) {
+		struct ceph_pg_mapping *pg =
+			rb_entry(rb_first(&map->pg_upmap_primaries),
+				 struct ceph_pg_mapping, node);
+		rb_erase(&pg->node, &map->pg_upmap_primaries);
 		kfree(pg);
 	}
 	while (!RB_EMPTY_ROOT(&map->pg_pools)) {
@@ -1843,6 +1851,45 @@ static int decode_old_pg_upmap_items(void **p, void *end,
 	return decode_pg_mapping(p, end, &map->pg_upmap_items, NULL, true);
 }
 
+static struct ceph_pg_mapping *__decode_pg_upmap_primary(void **p, void *end,
+							 bool __unused)
+{
+	struct ceph_pg_mapping *pg;
+	u32 osd;
+
+	ceph_decode_32_safe(p, end, osd, e_inval);
+	pg = alloc_pg_mapping(0);
+	if (!pg)
+		return ERR_PTR(-ENOMEM);
+
+	pg->pg_upmap_primary.osd = osd;
+	return pg;
+
+e_inval:
+	return ERR_PTR(-EINVAL);
+}
+
+static int decode_pg_upmap_primaries(void **p, void *end,
+				     struct ceph_osdmap *map)
+{
+	return decode_pg_mapping(p, end, &map->pg_upmap_primaries,
+				 __decode_pg_upmap_primary, false);
+}
+
+static int decode_new_pg_upmap_primaries(void **p, void *end,
+					 struct ceph_osdmap *map)
+{
+	return decode_pg_mapping(p, end, &map->pg_upmap_primaries,
+				 __decode_pg_upmap_primary, true);
+}
+
+static int decode_old_pg_upmap_primaries(void **p, void *end,
+					 struct ceph_osdmap *map)
+{
+	return decode_pg_mapping(p, end, &map->pg_upmap_primaries, NULL,
+				 true);
+}
+
 /*
  * decode a full map.
  */
@@ -1975,6 +2022,28 @@ static int osdmap_decode(void **p, void *end, bool msgr2,
 	} else {
 		WARN_ON(!RB_EMPTY_ROOT(&map->pg_upmap));
 		WARN_ON(!RB_EMPTY_ROOT(&map->pg_upmap_items));
+	}
+
+	if (struct_v >= 6)
+		/* crush_version */
+		ceph_decode_skip_32(p, end, e_inval);
+
+	if (struct_v >= 7) {
+		/* new_removed_snaps, new_purged_snaps */
+		ceph_decode_skip_map_of_map(p, end, 64, 64, 64, e_inval);
+		ceph_decode_skip_map_of_map(p, end, 64, 64, 64, e_inval);
+	}
+
+	if (struct_v >= 9)
+		/* last_up_change, last_in_change */
+		ceph_decode_skip_n(p, end, 8 + 8, e_inval);
+
+	if (struct_v >= 10) {
+		err = decode_pg_upmap_primaries(p, end, map);
+		if (err)
+			goto bad;
+	} else {
+		WARN_ON(!RB_EMPTY_ROOT(&map->pg_upmap_primaries));
 	}
 
 	/* ignore the rest */
@@ -2288,6 +2357,26 @@ struct ceph_osdmap *osdmap_apply_incremental(void **p, void *end, bool msgr2,
 			goto bad;
 
 		err = decode_old_pg_upmap_items(p, end, map);
+		if (err)
+			goto bad;
+	}
+
+	if (struct_v >= 6) {
+		/* new_removed_snaps, new_purged_snaps */
+		ceph_decode_skip_map_of_map(p, end, 64, 64, 64, e_inval);
+		ceph_decode_skip_map_of_map(p, end, 64, 64, 64, e_inval);
+	}
+
+	if (struct_v >= 8)
+		/* new_last_up_change, new_last_in_change */
+		ceph_decode_skip_n(p, end, 8 + 8, e_inval);
+
+	if (struct_v >= 9) {
+		err = decode_new_pg_upmap_primaries(p, end, map);
+		if (err)
+			goto bad;
+
+		err = decode_old_pg_upmap_primaries(p, end, map);
 		if (err)
 			goto bad;
 	}
@@ -2853,6 +2942,23 @@ static void apply_upmap(struct ceph_osdmap *osdmap,
 			}
 			if (!exists && pos >= 0)
 				raw->osds[pos] = to;
+		}
+	}
+
+	pg = lookup_pg_mapping(&osdmap->pg_upmap_primaries, pgid);
+	if (pg) {
+		int osd = pg->pg_upmap_primary.osd;
+
+		/* make sure the new primary isn't marked out */
+		if (osd >= 0 && osd < osdmap->max_osd &&
+		    osdmap->osd_weight[osd] != 0) {
+			for (i = 1; i < raw->size; i++) {
+				if (raw->osds[i] == osd) {
+					raw->osds[i] = raw->osds[0];
+					raw->osds[0] = osd;
+					break;
+				}
+			}
 		}
 	}
 }
