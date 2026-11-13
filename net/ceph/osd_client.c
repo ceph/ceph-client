@@ -3053,6 +3053,7 @@ static void linger_reg_commit_complete(struct ceph_osd_linger_request *lreq,
 static void linger_commit_cb(struct ceph_osd_request *req)
 {
 	struct ceph_osd_linger_request *lreq = req->r_priv;
+	bool listed;
 
 	mutex_lock(&lreq->lock);
 	dout("%s lreq %p linger_id %llu result %d\n", __func__, lreq,
@@ -3078,10 +3079,13 @@ static void linger_commit_cb(struct ceph_osd_request *req)
 		}
 	}
 
+	listed = !list_empty(&req->r_private_item);
 	list_del_init(&req->r_private_item);
 	mutex_unlock(&lreq->lock);
 
-	ceph_osdc_put_request(req);
+	/* unless send_linger() or __linger_cancel() took it off */
+	if (listed)
+		ceph_osdc_put_request(req);
 	linger_put(lreq);
 }
 
@@ -3101,6 +3105,7 @@ static int normalize_watch_error(int err)
 static void linger_reconnect_cb(struct ceph_osd_request *req)
 {
 	struct ceph_osd_linger_request *lreq = req->r_priv;
+	bool listed;
 
 	mutex_lock(&lreq->lock);
 	dout("%s lreq %p linger_id %llu result %d last_error %d\n", __func__,
@@ -3112,10 +3117,13 @@ static void linger_reconnect_cb(struct ceph_osd_request *req)
 		}
 	}
 
+	listed = !list_empty(&req->r_private_item);
 	list_del_init(&req->r_private_item);
 	mutex_unlock(&lreq->lock);
 
-	ceph_osdc_put_request(req);
+	/* unless send_linger() or __linger_cancel() took it off */
+	if (listed)
+		ceph_osdc_put_request(req);
 	linger_put(lreq);
 }
 
@@ -3182,6 +3190,7 @@ static void send_linger(struct ceph_osd_linger_request *lreq)
 static void linger_ping_cb(struct ceph_osd_request *req)
 {
 	struct ceph_osd_linger_request *lreq = req->r_priv;
+	bool listed;
 
 	mutex_lock(&lreq->lock);
 	dout("%s lreq %p linger_id %llu result %d ping_sent %lu last_error %d\n",
@@ -3199,10 +3208,13 @@ static void linger_ping_cb(struct ceph_osd_request *req)
 		     lreq->register_gen, req->r_ops[0].watch.gen);
 	}
 
+	listed = !list_empty(&req->r_private_item);
 	list_del_init(&req->r_private_item);
 	mutex_unlock(&lreq->lock);
 
-	ceph_osdc_put_request(req);
+	/* unless send_linger() or __linger_cancel() took it off */
+	if (listed)
+		ceph_osdc_put_request(req);
 	linger_put(lreq);
 }
 
@@ -3285,6 +3297,7 @@ static void __linger_cancel(struct ceph_osd_linger_request *lreq)
 {
 	struct ceph_osd_request *req;
 
+	mutex_lock(&lreq->lock);
 	while (!list_empty(&lreq->osd_reqs)) {
 		req = list_first_entry(&lreq->osd_reqs,
 				       struct ceph_osd_request, r_private_item);
@@ -3293,6 +3306,7 @@ static void __linger_cancel(struct ceph_osd_linger_request *lreq)
 		list_del_init(&req->r_private_item);
 		ceph_osdc_put_request(req);
 	}
+	mutex_unlock(&lreq->lock);
 
 	cancel_linger_map_check(lreq);
 	unlink_linger(lreq->osd, lreq);
