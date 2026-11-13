@@ -2460,6 +2460,50 @@ static void migration_merge_test(struct kunit *test)
 	test_put(test, req);
 }
 
+/*
+ * A watch cancelled while a pong completes its ping: handle_reply()
+ * finishes the ping under the locks and completes it after dropping them,
+ * and __linger_cancel() can take it off lreq->osd_reqs in between.  The
+ * list's reference must then be dropped once, by __linger_cancel(), and
+ * not again by linger_ping_cb() (KASAN: slab-use-after-free in
+ * complete_all(), seen with rbd after OSD session resets).
+ */
+static void linger_ping_cancel_test(struct kunit *test)
+{
+	struct ceph_osd_client *osdc = test_osdc(test, &client_map);
+	struct ceph_osd_linger_request *lreq;
+	struct ceph_osd_request *ping;
+	struct ceph_osd *osd;
+	unsigned int refs;
+
+	lreq = test_watch(test, osdc, TEST_POOL_REP, "obj");
+
+	down_write(&osdc->lock);
+	send_linger_ping(lreq);
+	ping = list_last_entry(&lreq->osd_reqs, struct ceph_osd_request,
+			       r_private_item);
+	KUNIT_ASSERT_TRUE(test, ping->r_callback == linger_ping_cb);
+	/* two references of our own, so that a double put shows */
+	ceph_osdc_get_request(ping);
+	ceph_osdc_get_request(ping);
+
+	/* handle_reply() takes the pong and finishes the ping... */
+	osd = ping->r_osd;
+	mutex_lock(&osd->lock);
+	finish_request(ping);
+	mutex_unlock(&osd->lock);
+	/* ...and the watch is cancelled before it completes it */
+	__linger_cancel(lreq);
+	up_write(&osdc->lock);
+	__complete_request(ping);
+
+	refs = kref_read(&ping->r_kref);
+	KUNIT_EXPECT_EQ(test, refs, 2);
+	while (refs--)
+		ceph_osdc_put_request(ping);
+	linger_put(lreq);
+}
+
 /* Watches on the redirected OSD follow objects that have migrated. */
 static void migration_linger_test(struct kunit *test)
 {
@@ -2689,6 +2733,7 @@ static struct kunit_case ceph_osd_client_migration_test_cases[] = {
 	KUNIT_CASE(migration_redirect_test),
 	KUNIT_CASE(migration_wm_nomem_test),
 	KUNIT_CASE(migration_linger_test),
+	KUNIT_CASE(linger_ping_cancel_test),
 	KUNIT_CASE(direct_read_migration_redirect_test),
 	KUNIT_CASE(pg_migrating_first_calc_test),
 	KUNIT_CASE(migration_merge_test),
