@@ -1247,6 +1247,166 @@ static void direct_read_pg_change_test(struct kunit *test)
 	test_put(test, req);
 }
 
+/*
+ * A direct read is resent when its PG starts a new interval although its
+ * OSD stays: the shard's OSD drops a direct read of an earlier interval
+ * (PG::can_discard_op()).  Before, only linger requests were checked.
+ */
+static void test_interval_resend(struct kunit *test, const char *what,
+				 void (*change)(struct test_osdmap *tm,
+						u32 seed))
+{
+	struct ceph_osd_client *osdc = test_osdc(test, &client_map);
+	struct test_osdmap *tm = ceph_kunit_osdmap_dup(test, &client_map);
+	struct ceph_osd_request *req;
+	struct ceph_osds acting;
+	struct ceph_pg pgid;
+
+	test_acting(osdc, TEST_POOL_EC, "obj", &pgid, &acting);
+	req = test_read(test, osdc, TEST_POOL_EC, "obj", CEPH_OSD_OP_READ,
+			TEST_CHUNK, 1000, CEPH_OSD_FLAG_BALANCE_READS);
+	ceph_osdc_start_request(osdc, req);
+	KUNIT_ASSERT_EQ(test, test_osd(req), acting.osds[1]);
+
+	change(tm, pgid.seed);
+	test_apply_map(test, osdc, tm);
+	KUNIT_EXPECT_EQ_MSG(test, req->r_attempts, 2, "%s", what);
+	KUNIT_EXPECT_EQ_MSG(test, test_osd(req), acting.primary, "%s", what);
+	test_put(test, req);
+}
+
+static void test_change_min_size(struct test_osdmap *tm, u32 seed)
+{
+	tm->pools[1].min_size = 3;
+}
+
+/* TEST_POOL_EC starts migrating to TEST_POOL_DST, PG @seed first */
+static void test_change_pg_migrating(struct test_osdmap *tm, u32 seed)
+{
+	tm->pools[1].migration_target = TEST_POOL_DST;
+	tm->pools[1].num_migrating_pgs = 1;
+	tm->pools[1].migrating_pgs[0] = seed;
+	tm->pools[3].migration_src = TEST_POOL_EC;
+	tm->pools[3].migration_root = TEST_POOL_EC;
+}
+
+/* ... with another PG first */
+static void test_change_pool_migrating(struct test_osdmap *tm, u32 seed)
+{
+	test_change_pg_migrating(tm, (seed + 1) % 8);
+}
+
+static void direct_read_interval_test(struct kunit *test)
+{
+	test_interval_resend(test, "min_size", test_change_min_size);
+}
+
+static void direct_read_migrating_test(struct kunit *test)
+{
+	test_interval_resend(test, "pg_migrating", test_change_pg_migrating);
+	test_interval_resend(test, "pool_pgs_migrating",
+			     test_change_pool_migrating);
+}
+
+/*
+ * The sub-reads of a split read whose PG starts a new interval fail with
+ * -EAGAIN, as one-shot requests, and the read goes to the primary.  Before,
+ * they waited for replies that the shards would never send.
+ */
+static void split_read_interval_test(struct kunit *test)
+{
+	struct ceph_osd_client *osdc = test_osdc(test, &client_map);
+	struct test_osdmap *tm = ceph_kunit_osdmap_dup(test, &client_map);
+	struct ceph_osd_request *req;
+	struct ceph_osds acting;
+	struct ceph_pg pgid;
+
+	test_acting(osdc, TEST_POOL_EC, "obj", &pgid, &acting);
+	req = test_read(test, osdc, TEST_POOL_EC, "obj", CEPH_OSD_OP_READ, 0,
+			3 * TEST_CHUNK, CEPH_OSD_FLAG_BALANCE_READS);
+	ceph_osdc_start_request(osdc, req);
+	KUNIT_ASSERT_NOT_NULL(test, req->r_ec_split);
+
+	tm->pools[1].min_size = 3;
+	test_apply_map(test, osdc, tm);
+	flush_workqueue(osdc->completion_wq);
+	KUNIT_EXPECT_NULL(test, req->r_ec_split);
+	KUNIT_EXPECT_EQ(test, test_osd(req), acting.primary);
+	if (test_osd(req) == acting.primary) {
+		test_read_reply(test, req);
+		KUNIT_EXPECT_EQ(test, req->r_result, 3 * TEST_CHUNK);
+		test_check_data(test, test_pages(req, 0), 0, 3 * TEST_CHUNK);
+	}
+	test_put(test, req);
+}
+
+/* The request that registers @lreq now, and its tid */
+static u64 test_linger_tid(struct ceph_osd_linger_request *lreq)
+{
+	struct ceph_osd_request *req;
+	u64 tid = 0;
+
+	mutex_lock(&lreq->lock);
+	req = list_first_entry_or_null(&lreq->osd_reqs,
+				       struct ceph_osd_request,
+				       r_private_item);
+	if (req)
+		tid = req->r_tid;
+	mutex_unlock(&lreq->lock);
+	return tid;
+}
+
+static struct ceph_osd_linger_request *
+test_watch(struct kunit *test, struct ceph_osd_client *osdc, s64 pool,
+	   const char *oid)
+{
+	struct ceph_osd_linger_request *lreq = linger_alloc(osdc);
+
+	KUNIT_ASSERT_NOT_NULL(test, lreq);
+	lreq->is_watch = true;
+	ceph_oid_printf(&lreq->t.base_oid, "%s", oid);
+	lreq->t.base_oloc.pool = pool;
+	lreq->t.flags = CEPH_OSD_FLAG_WRITE;
+	ktime_get_real_ts64(&lreq->mtime);
+	linger_submit(lreq);
+	return lreq;
+}
+
+static void test_unwatch(struct ceph_osd_linger_request *lreq)
+{
+	linger_cancel(lreq);
+	linger_put(lreq);
+}
+
+/*
+ * Enabling EC optimizations on a pool starts a new interval
+ * (PastIntervals::is_new_interval()): watches are sent again.
+ */
+static void ec_optimizations_interval_test(struct kunit *test)
+{
+	struct test_osdmap *tm = ceph_kunit_osdmap_dup(test, &client_map);
+	struct ceph_osd_client *osdc;
+	struct ceph_osd_linger_request *lreq;
+	u64 tid;
+
+	tm->pools[1].flags = 0;
+	tm->pools[1].nonprimary_shards[0] = 0;
+	osdc = test_osdc(test, tm);
+	lreq = test_watch(test, osdc, TEST_POOL_EC, "obj");
+	tid = test_linger_tid(lreq);
+	KUNIT_ASSERT_NE(test, tid, 0);
+
+	/* an unrelated change keeps it */
+	tm->pools[0].min_size = 1;
+	test_apply_map(test, osdc, tm);
+	KUNIT_EXPECT_EQ(test, test_linger_tid(lreq), tid);
+
+	tm->pools[1].flags = CEPH_POOL_FLAG_EC_OPTIMIZATIONS;
+	test_apply_map(test, osdc, tm);
+	KUNIT_EXPECT_GT(test, test_linger_tid(lreq), tid);
+	test_unwatch(lreq);
+}
+
 static struct kunit_case ceph_osd_client_test_cases[] = {
 	KUNIT_CASE(ec_direct_read_pool_test),
 	KUNIT_CASE(ec_direct_read_shard_test),
@@ -1270,6 +1430,10 @@ static struct kunit_case ceph_osd_client_target_test_cases[] = {
 	KUNIT_CASE(localize_zone_test),
 	KUNIT_CASE(balance_zones_test),
 	KUNIT_CASE(direct_read_pg_change_test),
+	KUNIT_CASE(direct_read_interval_test),
+	KUNIT_CASE(direct_read_migrating_test),
+	KUNIT_CASE(split_read_interval_test),
+	KUNIT_CASE(ec_optimizations_interval_test),
 	{}
 };
 
