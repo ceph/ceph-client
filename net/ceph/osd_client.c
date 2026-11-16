@@ -1092,7 +1092,7 @@ struct ceph_osd_request *ceph_osdc_new_request(struct ceph_osd_client *osdc,
 		osd_req_op_init(req, which, opcode, 0);
 	} else {
 		u32 object_size = layout->object_size;
-		u32 object_base = off - objoff;
+		u64 object_base = off - objoff;
 		if (!(truncate_seq == 1 && truncate_size == -1ULL)) {
 			if (truncate_size <= object_base) {
 				truncate_size = 0;
