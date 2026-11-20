@@ -425,6 +425,10 @@ more:
 		if (dfi->last_name) {
 			int len = strlen(dfi->last_name);
 
+			if (WARN_ON_ONCE(len > NAME_MAX)) {
+				ceph_mdsc_put_request(req);
+				return -EIO;
+			}
 			req->r_path2 = kzalloc(NAME_MAX + 1, GFP_KERNEL);
 			if (!req->r_path2) {
 				ceph_mdsc_put_request(req);

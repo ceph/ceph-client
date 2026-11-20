@@ -450,6 +450,8 @@ static int parse_reply_info_trace(void **p, void *end,
 			goto out_bad;
 
 		ceph_decode_32_safe(p, end, info->dname_len, bad);
+		if (info->dname_len > NAME_MAX)
+			goto bad;
 		ceph_decode_need(p, end, info->dname_len, bad);
 		info->dname = *p;
 		*p += info->dname_len;
@@ -526,6 +528,11 @@ static int parse_reply_info_readdir(void **p, void *end,
 
 		/* dentry */
 		ceph_decode_32_safe(p, end, _name_len, bad);
+		if (_name_len > NAME_MAX) {
+			pr_err_client(cl, "dir entry name too long (%u)\n",
+				      _name_len);
+			goto bad;
+		}
 		ceph_decode_need(p, end, _name_len, bad);
 		_name = *p;
 		*p += _name_len;
@@ -6273,6 +6280,11 @@ void ceph_mdsc_lease_send_msg(struct ceph_mds_session *session,
 	lease->seq = cpu_to_le32(seq);
 
 	spin_lock(&dentry->d_lock);
+	if (WARN_ON_ONCE(dentry->d_name.len > NAME_MAX)) {
+		spin_unlock(&dentry->d_lock);
+		ceph_msg_put(msg);
+		return;
+	}
 	dir = d_inode(dentry->d_parent);
 	lease->ino = cpu_to_le64(ceph_ino(dir));
 	lease->first = lease->last = cpu_to_le64(ceph_snap(dir));
