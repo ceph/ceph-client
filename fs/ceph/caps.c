@@ -4652,6 +4652,21 @@ static void handle_cap_import(struct ceph_mds_client *mdsc,
 		peer = -1;
 	}
 
+	/*
+	 * A cap moves from the exporting MDS to the importing one, so the
+	 * export peer can never be the MDS that sends the IMPORT.  Caps are
+	 * kept one per MDS, so a peer naming the sender itself would make
+	 * the export cap removed below the very cap this IMPORT adds or
+	 * updates, and handle_cap_grant() would then write the freed cap.
+	 */
+	if (peer == mds) {
+		pr_warn_ratelimited_client(cl,
+			"%llx.%llx mds%d names itself as cap export peer, ignoring it\n",
+			ceph_vinop(inode), mds);
+		p_cap_id = 0;
+		peer = -1;
+	}
+
 	boutc(cl, " cap %llx.%llx import from peer %d piseq %u pmseq %u\n",
 	      ceph_vinop(inode), peer, piseq, pmseq);
 retry:
