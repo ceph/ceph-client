@@ -49,15 +49,11 @@ static LIST_HEAD(ceph_fsc_list);
 static void ceph_put_super(struct super_block *s)
 {
 	struct ceph_fs_client *fsc = ceph_sb_to_fs_client(s);
-	struct ceph_journal_info __ji;
 
-	ceph_blog_enter(fsc, &__ji);
-
-	boutc(fsc->client, "begin\n");
+	doutc(fsc->client, "begin\n");
 	ceph_fscrypt_free_dummy_policy(fsc);
 	ceph_mdsc_close_sessions(fsc->mdsc);
-	boutc(fsc->client, "done\n");
-	ceph_blog_exit(&__ji);
+	doutc(fsc->client, "done\n");
 }
 
 static int ceph_statfs(struct dentry *dentry, struct kstatfs *buf)
@@ -68,11 +64,8 @@ static int ceph_statfs(struct dentry *dentry, struct kstatfs *buf)
 	struct ceph_statfs st;
 	int i, err;
 	u64 data_pool;
-	struct ceph_journal_info __ji;
 
-	ceph_blog_enter(fsc, &__ji);
-
-	boutc(fsc->client, "begin\n");
+	doutc(fsc->client, "begin\n");
 	if (fsc->mdsc->mdsmap->m_num_data_pg_pools == 1) {
 		data_pool = fsc->mdsc->mdsmap->m_data_pg_pools[0];
 	} else {
@@ -80,10 +73,8 @@ static int ceph_statfs(struct dentry *dentry, struct kstatfs *buf)
 	}
 
 	err = ceph_monc_do_statfs(monc, data_pool, &st);
-	if (err < 0) {
-		ceph_blog_exit(&__ji);
+	if (err < 0)
 		return err;
-	}
 
 	/* fill in kstatfs */
 	buf->f_type = CEPH_SUPER_MAGIC;  /* ?? */
@@ -130,8 +121,7 @@ static int ceph_statfs(struct dentry *dentry, struct kstatfs *buf)
 	/* fold the fs_cluster_id into the upper bits */
 	buf->f_fsid.val[1] = monc->fs_cluster_id;
 
-	boutc(fsc->client, "done\n");
-	ceph_blog_exit(&__ji);
+	doutc(fsc->client, "done\n");
 	return 0;
 }
 
@@ -139,24 +129,19 @@ static int ceph_sync_fs(struct super_block *sb, int wait)
 {
 	struct ceph_fs_client *fsc = ceph_sb_to_fs_client(sb);
 	struct ceph_client *cl = fsc->client;
-	struct ceph_journal_info __ji;
-
-	ceph_blog_enter(fsc, &__ji);
 
 	if (!wait) {
-		boutc(cl, "(non-blocking)\n");
+		doutc(cl, "(non-blocking)\n");
 		ceph_flush_dirty_caps(fsc->mdsc);
 		ceph_flush_cap_releases(fsc->mdsc);
-		boutc(cl, "(non-blocking) done\n");
-		ceph_blog_exit(&__ji);
+		doutc(cl, "(non-blocking) done\n");
 		return 0;
 	}
 
-	boutc(cl, "(blocking)\n");
+	doutc(cl, "(blocking)\n");
 	ceph_osdc_sync(&fsc->client->osdc);
 	ceph_mdsc_sync(fsc->mdsc);
-	boutc(cl, "(blocking) done\n");
-	ceph_blog_exit(&__ji);
+	doutc(cl, "(blocking) done\n");
 	return 0;
 }
 
@@ -902,18 +887,12 @@ static struct ceph_fs_client *create_fs_client(struct ceph_mount_options *fsopt,
 	hash_init(fsc->async_unlink_conflict);
 	spin_lock_init(&fsc->async_unlink_conflict_lock);
 
-	err = ceph_blog_fsc_init(fsc);
-	if (err)
-		goto fail_cap_wq;
-
 	spin_lock(&ceph_fsc_lock);
 	list_add_tail(&fsc->metric_wakeup, &ceph_fsc_list);
 	spin_unlock(&ceph_fsc_lock);
 
 	return fsc;
 
-fail_cap_wq:
-	destroy_workqueue(fsc->cap_wq);
 fail_inode_wq:
 	destroy_workqueue(fsc->inode_wq);
 fail_client:
@@ -943,8 +922,6 @@ static void destroy_fs_client(struct ceph_fs_client *fsc)
 	ceph_mdsc_destroy(fsc);
 	destroy_workqueue(fsc->inode_wq);
 	destroy_workqueue(fsc->cap_wq);
-	ceph_blog_release_client_id(fsc->client);
-	ceph_blog_fsc_cleanup(fsc);
 
 	destroy_mount_options(fsc->mount_options);
 
@@ -1079,15 +1056,11 @@ static void __ceph_umount_begin(struct ceph_fs_client *fsc)
 void ceph_umount_begin(struct super_block *sb)
 {
 	struct ceph_fs_client *fsc = ceph_sb_to_fs_client(sb);
-	struct ceph_journal_info __ji;
 
-	ceph_blog_enter(fsc, &__ji);
-
-	boutc(fsc->client, "starting forced umount\n");
+	doutc(fsc->client, "starting forced umount\n");
 
 	fsc->mount_state = CEPH_MOUNT_SHUTDOWN;
 	__ceph_umount_begin(fsc);
-	ceph_blog_exit(&__ji);
 }
 
 static const struct super_operations ceph_super_ops = {
@@ -1718,15 +1691,9 @@ int ceph_force_reconnect(struct super_block *sb)
 
 static int __init init_ceph(void)
 {
-	int ret;
-
-	ret = ceph_blog_init();
+	int ret = init_caches();
 	if (ret)
-		pr_warn("BLOG initialization failed (%d); binary logging unavailable\n", ret);
-
-	ret = init_caches();
-	if (ret)
-		goto out_blog;
+		goto out;
 
 	ceph_flock_init();
 	ret = register_filesystem(&ceph_fs_type);
@@ -1739,8 +1706,7 @@ static int __init init_ceph(void)
 
 out_caches:
 	destroy_caches();
-out_blog:
-	ceph_blog_cleanup();
+out:
 	return ret;
 }
 
@@ -1749,7 +1715,6 @@ static void __exit exit_ceph(void)
 	dout("exit_ceph\n");
 	unregister_filesystem(&ceph_fs_type);
 	destroy_caches();
-	ceph_blog_cleanup();
 }
 
 static int param_set_metrics(const char *val, const struct kernel_param *kp)
