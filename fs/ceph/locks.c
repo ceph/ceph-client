@@ -34,6 +34,10 @@ void __init ceph_flock_init(void)
 static void ceph_fl_copy_lock(struct file_lock *dst, struct file_lock *src)
 {
 	struct inode *inode = file_inode(dst->c.flc_file);
+
+	if (dst->fl_u.ceph.inode)
+		return;
+
 	atomic_inc(&ceph_inode(inode)->i_filelock_ref);
 	dst->fl_u.ceph.inode = igrab(inode);
 }
