@@ -2896,9 +2896,7 @@ again:
 			if (*result < obj_req->ex.oe_len)
 				rbd_obj_zero_range(obj_req, *result,
 						obj_req->ex.oe_len - *result);
-			else
-				rbd_assert(*result == obj_req->ex.oe_len);
-			*result = 0;
+			*result = *result <= obj_req->ex.oe_len ? 0 : -EIO;
 		}
 		return true;
 	case RBD_OBJ_READ_PARENT:
