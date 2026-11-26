@@ -3027,6 +3027,7 @@ struct ceph_ec_split {
 	atomic_t state;
 	u32 chunk;
 	u32 k;
+	u32 epoch;			/* osdmap epoch this split was built at */
 	int raw_sub[CEPH_PG_MAX_SIZE];	/* data shard -> subs[] */
 	bool v1;			/* GET_INTERNAL_VERSIONS */
 	int ref;			/* v1: the primary's subs[] */
@@ -3383,9 +3384,12 @@ static void ec_split_finish(struct ceph_ec_split *sp)
 	}
 
 	/* an OSD from before GET_INTERNAL_VERSIONS_V2 */
-	if (opnotsupp && !READ_ONCE(osdc->ec_split_v1)) {
-		WRITE_ONCE(osdc->ec_split_v1, true);
-		pr_notice("OSDs don't support get-internal-versions-v2; split reads will use get-internal-versions\n");
+	if (opnotsupp) {
+		WRITE_ONCE(osdc->ec_split_v1_epoch, sp->epoch);
+		if (!READ_ONCE(osdc->ec_split_v1)) {
+			WRITE_ONCE(osdc->ec_split_v1, true);
+			pr_notice("OSDs don't support get-internal-versions-v2; split reads will use get-internal-versions\n");
+		}
 	}
 
 	done = ok == sp->num_subs && ec_split_versions_match(sp);
@@ -3566,7 +3570,8 @@ static bool submit_ec_split_read(struct ceph_osd_request *req, bool wrlocked)
 
 	/* GET_INTERNAL_VERSIONS: the primary's versions are the reference */
 	num_subs = count;
-	v1 = READ_ONCE(osdc->ec_split_v1);
+	v1 = READ_ONCE(osdc->ec_split_v1) &&
+	     osdc->osdmap->epoch <= READ_ONCE(osdc->ec_split_v1_epoch);
 	if (v1 && ref < 0) {
 		if (t->spgid.shard < 0 || t->spgid.shard >= t->acting.size ||
 		    t->acting.osds[t->spgid.shard] != t->acting.primary)
@@ -3580,6 +3585,7 @@ static bool submit_ec_split_read(struct ceph_osd_request *req, bool wrlocked)
 
 	sp->v1 = v1;
 	sp->ref = ref;
+	sp->epoch = osdc->osdmap->epoch;
 	for (i = 0; i < num_subs; i++) {
 		struct ec_split_sub *sub = &sp->subs[i];
 
@@ -3603,6 +3609,8 @@ static bool submit_ec_split_read(struct ceph_osd_request *req, bool wrlocked)
 	     count, v1 ? " (v1)" : "");
 	req->r_ec_split = sp;
 	atomic64_inc(&osdc->ec_split_reads);
+	if (v1)
+		atomic64_inc(&osdc->ec_split_v1_reads);
 	for (i = 0; i < num_subs; i++)
 		submit_request(sp->subs[i].req, wrlocked);
 	return true;
