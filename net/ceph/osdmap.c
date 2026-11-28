@@ -920,10 +920,12 @@ static int decode_pool_opts(void **p, void *end, struct ceph_pg_pool_info *pi)
 			ceph_decode_skip_64(p, opts_end, e_inval);
 			break;
 		default:
-			goto e_inval;
+			/* its length is unknown: skip the rest */
+			goto out;
 		}
 	}
 
+out:
 	*p = opts_end;
 	return 0;
 
