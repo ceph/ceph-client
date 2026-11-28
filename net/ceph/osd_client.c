@@ -3479,6 +3479,9 @@ static bool submit_ec_split_read(struct ceph_osd_request *req, bool wrlocked)
 
 	verify_osdc_locked(osdc);
 
+	if (!(t->flags & (CEPH_OSD_FLAG_BALANCE_READS |
+			  CEPH_OSD_FLAG_LOCALIZE_READS)))
+		return false;
 	if (!len || req->r_linger || osdc->abort_err ||
 	    !ec_split_data_ok(&req->r_ops[0].extent.osd_data))
 		return false;
