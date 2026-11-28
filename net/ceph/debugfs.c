@@ -381,6 +381,11 @@ static int osdc_show(struct seq_file *s, void *pp)
 	struct rb_node *n;
 
 	down_read(&osdc->lock);
+	seq_printf(s, "EC_DIRECT_READS %lld eagain %lld split %lld fallback %lld\n",
+		   atomic64_read(&osdc->ec_direct_reads),
+		   atomic64_read(&osdc->ec_direct_eagain),
+		   atomic64_read(&osdc->ec_split_reads),
+		   atomic64_read(&osdc->ec_split_fallbacks));
 	seq_printf(s, "REQUESTS %d homeless %d\n",
 		   atomic_read(&osdc->num_requests),
 		   atomic_read(&osdc->num_homeless));

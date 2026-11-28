@@ -2707,6 +2707,9 @@ static void send_request(struct ceph_osd_request *req)
 	if (should_plug_request(req))
 		return;
 
+	if (req->r_flags & CEPH_OSD_FLAG_EC_DIRECT_READ)
+		atomic64_inc(&req->r_osdc->ec_direct_reads);
+
 	/*
 	 * We may have a previously queued request message hanging
 	 * around.  Cancel it to avoid corrupting the msgr.
@@ -3377,6 +3380,7 @@ static void ec_split_finish(struct ceph_ec_split *sp)
 		ec_split_complete(req, -ENOENT);
 	} else {
 		dout("%s req %p to the primary\n", __func__, req);
+		atomic64_inc(&osdc->ec_split_fallbacks);
 		req->r_ec_split = NULL;
 		req->r_flags &= ~(CEPH_OSD_FLAG_BALANCE_READS |
 				  CEPH_OSD_FLAG_LOCALIZE_READS);
@@ -3539,6 +3543,7 @@ static bool submit_ec_split_read(struct ceph_osd_request *req, bool wrlocked)
 	dout("%s req %p %llu~%llu over %u shards\n", __func__, req, off, len,
 	     count);
 	req->r_ec_split = sp;
+	atomic64_inc(&osdc->ec_split_reads);
 	for (i = 0; i < count; i++)
 		submit_request(sp->subs[i].req, wrlocked);
 	return true;
@@ -5015,6 +5020,8 @@ static void handle_reply(struct ceph_osd *osd, struct ceph_msg *msg)
 		req->r_t.pgid.pool = 0;
 		req->r_t.pgid.seed = 0;
 		WARN_ON(!req->r_t.used_replica);
+		if (req->r_flags & CEPH_OSD_FLAG_EC_DIRECT_READ)
+			atomic64_inc(&osdc->ec_direct_eagain);
 		req->r_flags &= ~(CEPH_OSD_FLAG_BALANCE_READS |
 				  CEPH_OSD_FLAG_LOCALIZE_READS |
 				  CEPH_OSD_FLAG_EC_DIRECT_READ);
