@@ -1155,7 +1155,7 @@ static int decode_pool(void **p, void *end, struct ceph_pg_pool_info *pi)
 		pi->ec_data_shard_count = 0;
 	}
 
-	if (ev >= 33) {
+	if (ev >= 34) {
 		ret = decode_optional_pool_id(p, end, &pi->migration_src);
 		if (ret)
 			return ret;
@@ -1183,7 +1183,7 @@ static int decode_pool(void **p, void *end, struct ceph_pg_pool_info *pi)
 		pi->lowest_migrated_pg = 0;
 	}
 
-	if (ev >= 34) {
+	if (ev >= 35) {
 		/* replica */
 		ceph_decode_skip_8(p, end, bad);
 
