@@ -433,6 +433,7 @@ struct ceph_osd_client {
 	struct rb_root         map_checks;
 	struct rb_root         linger_map_checks;
 	struct rb_root         migration_wms; /* PG -> migration watermark */
+	bool                   ec_split_v2_unsupported; /* an OSD lacks V2 */
 	atomic_t               num_requests;
 	atomic_t               num_homeless;
 	int                    abort_err;

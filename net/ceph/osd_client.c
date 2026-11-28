@@ -3326,7 +3326,7 @@ static void ec_split_finish(struct ceph_ec_split *sp)
 	struct ceph_osd_client *osdc = sp->osdc;
 	struct ceph_osd_request *req = sp->req;
 	int i, ok = 0, enoent = 0;
-	bool done, absent;
+	bool done, absent, opnotsupp = false;
 
 	for (i = 0; i < sp->num_subs; i++) {
 		struct ceph_osd_request *sreq = sp->subs[i].req;
@@ -3335,11 +3335,23 @@ static void ec_split_finish(struct ceph_ec_split *sp)
 		     __func__, req, i, sp->subs[i].shard, sreq->r_result,
 		     sreq->r_ops[0].rval, sreq->r_ops[1].rval,
 		     sreq->r_ops[0].outdata_len);
+		if (sreq->r_ops[1].rval == -EOPNOTSUPP)
+			opnotsupp = true;
 		if (sreq->r_result >= 0 && !sreq->r_ops[0].rval &&
 		    !sreq->r_ops[1].rval)
 			ok++;
 		else if (sreq->r_result == -ENOENT)
 			enoent++;
+	}
+
+	/*
+	 * An OSD from before GET_INTERNAL_VERSIONS_V2.  Latch it globally and
+	 * send later split reads to the primary; the latch is not cleared, so a
+	 * remount re-probes after a cluster upgrade.
+	 */
+	if (opnotsupp && !READ_ONCE(osdc->ec_split_v2_unsupported)) {
+		WRITE_ONCE(osdc->ec_split_v2_unsupported, true);
+		pr_notice("libceph: OSDs don't support get-internal-versions-v2; EC split reads will go to the primary until remount\n");
 	}
 
 	done = ok == sp->num_subs && ec_split_versions_match(sp);
@@ -3487,6 +3499,9 @@ static bool submit_ec_split_read(struct ceph_osd_request *req, bool wrlocked)
 	last = div_u64(off + len - 1, chunk);
 	if (first == last)
 		return false;	/* a direct read of one chunk */
+
+	if (READ_ONCE(osdc->ec_split_v2_unsupported))
+		return false;	/* an OSD lacks GET_INTERNAL_VERSIONS_V2 */
 
 	count = min_t(u64, k, last - first + 1);
 	zone = ec_read_zone(osdc, t, pi, &t->acting);
